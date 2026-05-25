@@ -1,0 +1,30 @@
+{
+	"name": "mn",
+	"dest": "dist/mn",
+	"source": "src/mn",
+	"index": "src/mn/index.js",
+	"spec": "src/mn/test.js",
+	"testDest": "tests/",
+	"router": "server/mn/index.js",
+	"template": {
+		"source": "src/mn/templates/index.html",
+		"destination": "dist/mn/index.html"
+	},
+	"resources": [
+		{
+			"dest": "images",
+			"cwd": "images",
+			"glob": "**/*.{png,jpg,gif,svn}",
+			"keepNest": true
+		}
+	],
+	"css": [
+		{
+			"dest": "styles",
+			"cwd": "styles",
+			"glob": "**/*.css",
+			"keepNest": true
+		}
+	],
+	"features": ["features/app", "features/editor"]
+}

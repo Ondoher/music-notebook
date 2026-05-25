@@ -1,0 +1,58 @@
+{
+  "name": "polylith-project",
+  "version": "0.1.0",
+  "description": "Initial setup for a polylith project",
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@fontsource/comic-neue": "^5.2.7",
+    "@mui/icons-material": "^9.0.1",
+    "@mui/material": "^9.0.1",
+    "@music-i18n/musicxml-player": "^1.4.3",
+    "@polylith/browser": "^1.0.5",
+    "@polylith/builder": "^1.0.5",
+    "@polylith/config-store": "^1.0.5",
+    "@polylith/core": "^1.0.5",
+    "@tabler/icons-react": "^3.44.0",
+    "html-react-parser": "^6.1.2",
+    "nodemon": "^3.0.1",
+    "opensheetmusicdisplay": "^1.9.9",
+    "polylith": "^1.0.6",
+    "quill": "^2.0.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-piano": "^3.1.3",
+    "tonal": "^6.4.3"
+  },
+  "devDependencies": {
+    "@polylith/server": "^1.0.5",
+    "jasmine": "^4.5.0",
+    "jasmine-core": "^4.5.0",
+    "karma": "^6.4.1",
+    "karma-chrome-launcher": "^3.1.1",
+    "karma-jasmine": "^5.1.0",
+    "karma-jasmine-html-reporter": "^2.0.0",
+    "karma-spec-reporter": "^0.0.36",
+    "puppeteer": "^19.4.1"
+  },
+  "nodemonConfig": {
+    "delay": 2500,
+    "watch": [
+      "server",
+      "config"
+    ],
+    "exec": "npm start"
+  },
+  "scripts": {
+    "test": "npm run test:ui",
+    "test:ui": "polylith test mn && karma start --browsers ChromeHeadless karma.conf.cjs",
+    "dev": "start polylith watch --all -v false&start npm run dev:serve",
+    "karma": "karma start --browsers ChromeHeadless karma.conf.cjs",
+    "dev:tests": "polylith test mn -w",
+    "dev:watch": "polylith watch --all -v false",
+    "dev:serve": "nodemon",
+    "build": "polylith build --all",
+    "start": "polylith serve --all"
+  },
+  "type": "module"
+}

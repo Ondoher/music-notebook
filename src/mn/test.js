@@ -1,0 +1,10 @@
+import './common/_tests/TranslatorSpec.js';
+import './components/_tests/HelperTextSpec.js';
+import './components/_tests/LocaleStringSpec.js';
+import './shared/chords/_tests/ChordBuilderSpec.js';
+import './shared/progressions/_tests/ProgressionBuilderSpec.js';
+import './shared/scales/_tests/ScaleBuilderSpec.js';
+import './testing/_tests/TestHarnessSpec.js';
+import './features/app/components/_tests/AppShellSpec.js';
+import './features/editor/quill/_tests/EditorToolbarSpec.js';
+import './features/editor/quill/_tests/KeyboardEmbedSpec.js';

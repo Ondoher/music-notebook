@@ -1,0 +1,15 @@
+{
+    "apps": [
+        {
+            "name": "mn",
+            "filename": "mn.json",
+            "code": false,
+            "default": false
+        }
+    ],
+    "builds": "builds",
+    "dest": "dist",
+    "multiple": false,
+    "react": true,
+    "src": "src"
+}

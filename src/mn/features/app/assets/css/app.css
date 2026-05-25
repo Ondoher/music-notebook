@@ -1,0 +1,31 @@
+html,
+body,
+.main-content,
+.mn-app,
+.mn-shell {
+	min-height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--mui-palette-background-default);
+	color: var(--mui-palette-text-primary);
+	font-family: Arial, Helvetica, sans-serif;
+}
+
+.mn-shell {
+	display: grid;
+	grid-template-rows: minmax(0, 1fr);
+	height: 100vh;
+	overflow: hidden;
+}
+
+.mn-shell-editor {
+	min-height: 0;
+	overflow: auto;
+	background: var(--mui-palette-background-default);
+}
+
+.mn-empty-editor {
+	margin: 24px;
+}

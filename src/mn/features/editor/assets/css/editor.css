@@ -1,0 +1,519 @@
+:root {
+	--mn-font-application: "Roboto", "Helvetica", "Arial", sans-serif;
+	--mn-font-notebook: "Comic Neue", "Segoe Print", "Comic Sans MS", cursive;
+}
+
+.editor-page {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+	gap: 12px;
+	min-height: 100%;
+	box-sizing: border-box;
+	padding: 16px;
+}
+
+.editor-page-meta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	max-width: 980px;
+	width: 100%;
+	margin: 0 auto;
+}
+
+.editor-page-meta > div {
+	display: grid;
+	gap: 4px;
+}
+
+.editor-page-meta h2 {
+	margin: 0;
+	color: var(--mui-palette-text-primary);
+	font-size: 16px;
+	line-height: 1.2;
+}
+
+.editor-page-meta span {
+	color: var(--mui-palette-text-secondary);
+	font-size: 13px;
+}
+
+.editor-page-surface {
+	max-width: 980px;
+	width: 100%;
+	min-height: 0;
+	margin: 0 auto;
+	box-sizing: border-box;
+	border: 1px solid var(--mui-palette-divider);
+	background: var(--mui-palette-background-paper);
+	box-shadow: 0 12px 32px rgba(31, 35, 42, 0.08);
+}
+
+.editor-page-surface .ql-toolbar.ql-snow {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	border: 0;
+	border-bottom: 1px solid var(--mui-palette-divider);
+	background: var(--mui-palette-background-paper);
+}
+
+.editor-page-surface .ql-container.ql-snow {
+	min-height: calc(100vh - 162px);
+	border: 0;
+	font-size: 16px;
+}
+
+.editor-page-surface .ql-editor {
+	min-height: calc(100vh - 162px);
+	padding: 28px 34px;
+	font-family: var(--mn-font-notebook);
+	font-size: 20px;
+	line-height: 1.58;
+}
+
+.editor-page-surface .ql-editor::after {
+	display: block;
+	clear: both;
+	content: "";
+}
+
+.music-keyboard-embed {
+	display: block;
+	float: left;
+	position: relative;
+	width: var(--music-embed-width, 456px);
+	height: var(--music-embed-height, 266px);
+	max-width: calc(100% - 18px);
+	box-sizing: border-box;
+	margin: 8px 18px 12px 0;
+	border: 0;
+	border-radius: 0;
+	padding: 0;
+	overflow: hidden;
+	background: transparent;
+}
+
+.music-keyboard-embed-content {
+	height: 100%;
+	min-height: 0;
+}
+
+.music-embed-resize-handle {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	z-index: 20;
+	width: 18px;
+	height: 18px;
+	box-sizing: border-box;
+	border: 0;
+	border-radius: 4px 0 0;
+	padding: 0;
+	background:
+		linear-gradient(135deg, transparent 0 48%, rgba(32, 36, 44, 0.72) 50% 54%, transparent 56%),
+		linear-gradient(135deg, transparent 0 64%, rgba(32, 36, 44, 0.72) 66% 70%, transparent 72%),
+		rgba(255, 254, 250, 0.84);
+	cursor: nwse-resize;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.music-keyboard-embed:hover .music-embed-resize-handle,
+.music-keyboard-embed:focus-within .music-embed-resize-handle {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.music-embed-resize-handle:focus-visible {
+	opacity: 1;
+	outline: 2px solid rgba(var(--mui-palette-primary-mainChannel) / 0.34);
+	outline-offset: 2px;
+}
+
+.music-embed-resize-label {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+.music-embed-toolbar {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.music-keyboard-edit-button,
+.music-keyboard-play-button {
+	min-height: 28px;
+	border: 1px solid var(--mui-palette-divider);
+	border-radius: 6px;
+	padding: 0 10px;
+	background: var(--mui-palette-background-paper);
+	color: var(--mui-palette-primary-main);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.music-keyboard-play-button:disabled {
+	cursor: wait;
+	opacity: 0.72;
+}
+
+.music-keyboard-embed:hover .music-embed-toolbar,
+.music-keyboard-embed:focus-within .music-embed-toolbar {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.music-keyboard-edit-button:hover,
+.music-keyboard-edit-button:focus-visible,
+.music-keyboard-play-button:hover,
+.music-keyboard-play-button:focus-visible {
+	border-color: var(--mui-palette-primary-main);
+	outline: 2px solid rgba(var(--mui-palette-primary-mainChannel) / 0.24);
+	outline-offset: 2px;
+}
+
+.music-xml-playback-host {
+	position: absolute;
+	left: -10000px;
+	top: -10000px;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+}
+
+.music-keyboard-editor-dialog {
+	display: grid;
+	gap: 14px;
+	padding-top: 4px;
+	font-family: var(--mn-font-application);
+}
+
+.music-keyboard-dialog .MuiDialog-paper {
+	font-family: var(--mn-font-application);
+}
+
+.music-key-control-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 8px;
+	align-items: end;
+}
+
+.music-key-control-row-single {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.music-keyboard-edit-mode,
+.music-display-options,
+.music-display-options-field,
+.music-display-key-field,
+.music-keyboard-editor-dialog .mn-chord-builder,
+.music-keyboard-editor-dialog .mn-chord-builder-field,
+.music-keyboard-editor-dialog .mn-progression-builder,
+.music-keyboard-editor-dialog .mn-progression-builder-field,
+.music-keyboard-editor-dialog .mn-scale-builder,
+.music-keyboard-editor-dialog .mn-scale-builder-field {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+	color: var(--mui-palette-text-secondary);
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.music-keyboard-edit-mode select,
+.music-display-options input,
+.music-display-options select,
+.music-display-key-field input,
+.music-keyboard-editor-dialog .mn-chord-builder input,
+.music-keyboard-editor-dialog .mn-chord-builder select,
+.music-keyboard-editor-dialog .mn-progression-builder input,
+.music-keyboard-editor-dialog .mn-progression-builder select,
+.music-keyboard-editor-dialog .mn-scale-builder input,
+.music-keyboard-editor-dialog .mn-scale-builder select {
+	min-height: 28px;
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	border: 1px solid var(--mui-palette-divider);
+	border-radius: 6px;
+	padding: 0 8px;
+	background: var(--mui-palette-background-paper);
+	color: var(--mui-palette-text-primary);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.music-keyboard-edit-mode select:focus-visible,
+.music-display-options input:focus-visible,
+.music-display-options select:focus-visible,
+.music-display-key-field input:focus-visible,
+.music-keyboard-editor-dialog .mn-chord-builder input:focus-visible,
+.music-keyboard-editor-dialog .mn-chord-builder select:focus-visible,
+.music-keyboard-editor-dialog .mn-progression-builder input:focus-visible,
+.music-keyboard-editor-dialog .mn-progression-builder select:focus-visible,
+.music-keyboard-editor-dialog .mn-scale-builder input:focus-visible,
+.music-keyboard-editor-dialog .mn-scale-builder select:focus-visible {
+	border-color: var(--mui-palette-primary-main);
+	outline: 2px solid rgba(var(--mui-palette-primary-mainChannel) / 0.24);
+	outline-offset: 2px;
+}
+
+.music-keyboard-editor-dialog .mn-chord-builder.invalid input {
+	border-color: var(--mui-palette-error-main, #b3261e);
+}
+
+.music-keyboard-editor-dialog .mn-progression-builder.invalid input {
+	border-color: var(--mui-palette-error-main, #b3261e);
+}
+
+.music-keyboard-editor-dialog .mn-chord-builder {
+	grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) minmax(110px, max-content);
+	gap: 8px;
+}
+
+.music-keyboard-editor-dialog .mn-chord-builder-helper {
+	grid-column: 1 / -1;
+	min-height: 13px;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.music-keyboard-editor-dialog .mn-scale-builder {
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+}
+
+.music-keyboard-editor-dialog .mn-progression-builder {
+	grid-template-columns: minmax(104px, 132px) minmax(0, 1fr) minmax(150px, 190px) minmax(110px, max-content);
+	gap: 8px;
+}
+
+.music-keyboard-editor-dialog .mn-progression-builder-label,
+.music-keyboard-editor-dialog .mn-progression-builder-helper,
+.music-keyboard-editor-dialog .mn-scale-builder-label,
+.music-keyboard-editor-dialog .mn-scale-builder-helper {
+	grid-column: 1 / -1;
+}
+
+.music-keyboard-editor-dialog .mn-progression-builder-helper,
+.music-keyboard-editor-dialog .mn-scale-builder-helper {
+	min-height: 13px;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.music-display-options {
+	grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+	gap: 8px;
+}
+
+.music-display-options-field-checkbox {
+	align-self: end;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 28px;
+	padding-bottom: 2px;
+}
+
+.music-display-options-field-checkbox input {
+	width: 16px;
+	min-height: 16px;
+	margin: 0;
+}
+
+.music-keyboard-editor-dialog .mn-chord-builder-checkbox input,
+.music-keyboard-editor-dialog .mn-progression-builder-checkbox input {
+	width: 16px;
+	min-width: 16px;
+	min-height: 16px;
+	padding: 0;
+}
+
+.music-key-enharmonic-option {
+	white-space: nowrap;
+}
+
+.music-keyboard-embed-piano {
+	width: 100%;
+	max-width: 100%;
+	overflow: hidden;
+	font-family: var(--mn-font-notebook);
+	pointer-events: none;
+}
+
+.music-keyboard-embed > .music-keyboard-embed-content > .music-keyboard-embed-piano {
+	height: 100%;
+}
+
+.music-keyboard-embed-piano .ReactPiano__Keyboard {
+	height: 118px;
+}
+
+.music-keyboard-embed-piano .ReactPiano__Key--accidental {
+	border-color: #f7f8f6;
+	background: #747474;
+}
+
+.music-keyboard-embed-piano .ReactPiano__Key {
+	cursor: default;
+}
+
+.music-keyboard-embed-has-highlights .ReactPiano__Key--natural {
+	border-color: #c8d0cd;
+	background: #edf0ec;
+}
+
+.music-keyboard-embed-has-highlights .ReactPiano__Key--accidental {
+	border-color: #e6ebe8;
+	background: #d0d7d4;
+}
+
+.music-keyboard-embed-piano .music-keyboard-key-highlighted {
+	border-color: #346f68;
+	background: #477c76;
+	color: #fffefa;
+}
+
+.music-keyboard-embed-piano .ReactPiano__Key--accidental.music-keyboard-key-highlighted {
+	border-color: #346f68;
+	border-top-color: #346f68;
+	background: #477c76;
+}
+
+.music-keyboard-embed-piano .music-keyboard-key-root {
+	box-shadow: inset 0 -4px 0 #20242c;
+}
+
+.music-keyboard-embed-piano .ReactPiano__NoteLabelContainer {
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	padding-bottom: 10px;
+}
+
+.music-keyboard-embed-piano .ReactPiano__NoteLabel {
+	line-height: 1;
+}
+
+.music-keyboard-embed-piano .music-keyboard-key-highlighted .ReactPiano__NoteLabel--natural {
+	color: #fffefa;
+	font-weight: 700;
+}
+
+.music-keyboard-embed-piano .music-keyboard-spelled-label {
+	font: inherit;
+}
+
+.music-keyboard-embed-piano .music-keyboard-note-accidental {
+	font-family: "Bravura Text", "Bravura", "Noto Music", "Noto Sans Symbols 2", "Segoe UI Symbol", "DejaVu Sans", serif;
+	font-size: 0.95em;
+	font-weight: inherit;
+	line-height: 1;
+}
+
+.music-keyboard-embed-piano .music-keyboard-accidental-marker {
+	display: none;
+	color: #fffefa;
+	font: inherit;
+	line-height: 1;
+}
+
+.music-keyboard-embed-piano .music-keyboard-key-highlighted .music-keyboard-accidental-marker {
+	display: inline-block;
+}
+
+.music-staff-preview {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	min-height: 0;
+	overflow: hidden;
+	pointer-events: none;
+	background: rgba(255, 254, 250, 0.74);
+}
+
+.music-keyboard-editor-dialog > .music-staff-preview {
+	height: 260px;
+}
+
+.music-staff-osmd {
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+}
+
+.music-staff-osmd svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	max-height: 100%;
+}
+
+.editor-debug-document {
+	max-width: 980px;
+	width: 100%;
+	margin: 0 auto;
+	color: var(--mui-palette-text-secondary);
+	font-size: 12px;
+}
+
+.editor-debug-document summary {
+	cursor: pointer;
+	font-weight: 700;
+}
+
+.editor-debug-document pre {
+	max-height: 220px;
+	overflow: auto;
+	box-sizing: border-box;
+	border: 1px solid var(--mui-palette-divider);
+	border-radius: 6px;
+	padding: 10px;
+	background: var(--mui-palette-background-paper);
+	color: var(--mui-palette-text-primary);
+	white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+	.editor-page {
+		padding: 10px;
+	}
+
+	.editor-page-meta {
+		display: grid;
+		gap: 4px;
+	}
+
+	.editor-page-surface .ql-editor {
+		padding: 20px 18px;
+	}
+}
