@@ -4430,6 +4430,9 @@ if (process.env.NODE_ENV !== 'production') {
 }
 var FormControlContext$1 = FormControlContext;
 
+function useFormControl() {
+  return reactExports.useContext(FormControlContext$1);
+}
 function useFormControlState({
   props,
   states
@@ -4547,7 +4550,7 @@ function capitalize$3(string) {
 const responsivePropType = process.env.NODE_ENV !== 'production' ? PropTypes.oneOfType([PropTypes.number, PropTypes.string, PropTypes.object, PropTypes.array]) : {};
 var responsivePropType$1 = responsivePropType;
 
-function isObjectEmpty$1(object) {
+function isObjectEmpty$2(object) {
   if (object == null) {
     return true;
   }
@@ -5118,7 +5121,7 @@ function removeUnusedBreakpoints(breakpoints, style) {
   const breakpointKeys = breakpoints.internal_mediaKeys;
   for (let i = 0; i < breakpointKeys.length; i += 1) {
     const key = breakpointKeys[i];
-    if (isObjectEmpty$1(style[key])) {
+    if (isObjectEmpty$2(style[key])) {
       delete style[key];
     }
   }
@@ -7811,6 +7814,7 @@ var syncFallback = function syncFallback(create) {
 };
 var useInsertionEffect = React$2['useInsertion' + 'Effect'] ? React$2['useInsertion' + 'Effect'] : false;
 var useInsertionEffectAlwaysWithSyncFallback = useInsertionEffect || syncFallback;
+var useInsertionEffectWithLayoutFallback = useInsertionEffect || reactExports.useLayoutEffect;
 
 var isDevelopment$1 = false;
 var EmotionCacheContext = /* #__PURE__ */reactExports.createContext(
@@ -7910,6 +7914,65 @@ var jsx = function jsx(type, props) {
   var JSX;
   (function (_JSX) {})(JSX || (JSX = _jsx.JSX || (_jsx.JSX = {})));
 })(jsx || (jsx = {}));
+
+// initial render from browser, insertBefore context.sheet.tags[0] or if a style hasn't been inserted there yet, appendChild
+// initial client-side render from SSR, use place of hydrating tag
+
+var Global = /* #__PURE__ */withEmotionCache(function (props, cache) {
+  var styles = props.styles;
+  var serialized = serializeStyles([styles], undefined, reactExports.useContext(ThemeContext));
+  // but it is based on a constant that will never change at runtime
+  // it's effectively like having two implementations and switching them out
+  // so it's not actually breaking anything
+
+  var sheetRef = reactExports.useRef();
+  useInsertionEffectWithLayoutFallback(function () {
+    var key = cache.key + "-global"; // use case of https://github.com/emotion-js/emotion/issues/2675
+
+    var sheet = new cache.sheet.constructor({
+      key: key,
+      nonce: cache.sheet.nonce,
+      container: cache.sheet.container,
+      speedy: cache.sheet.isSpeedy
+    });
+    var rehydrating = false;
+    var node = document.querySelector("style[data-emotion=\"" + key + " " + serialized.name + "\"]");
+    if (cache.sheet.tags.length) {
+      sheet.before = cache.sheet.tags[0];
+    }
+    if (node !== null) {
+      rehydrating = true; // clear the hash so this node won't be recognizable as rehydratable by other <Global/>s
+
+      node.setAttribute('data-emotion', key);
+      sheet.hydrate([node]);
+    }
+    sheetRef.current = [sheet, rehydrating];
+    return function () {
+      sheet.flush();
+    };
+  }, [cache]);
+  useInsertionEffectWithLayoutFallback(function () {
+    var sheetRefCurrent = sheetRef.current;
+    var sheet = sheetRefCurrent[0],
+      rehydrating = sheetRefCurrent[1];
+    if (rehydrating) {
+      sheetRefCurrent[1] = false;
+      return;
+    }
+    if (serialized.next !== undefined) {
+      // insert keyframes
+      insertStyles(cache, serialized.next, true);
+    }
+    if (sheet.tags.length) {
+      // if this doesn't exist then it will be null so the style element will be appended
+      var element = sheet.tags[sheet.tags.length - 1].nextElementSibling;
+      sheet.before = element;
+      sheet.flush();
+    }
+    cache.insert("", serialized, sheet, false);
+  }, [cache, serialized.name]);
+  return null;
+});
 function css$6() {
   for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
     args[_key] = arguments[_key];
@@ -9285,6 +9348,24 @@ if (browser$1.env.NODE_ENV === 'production') {
 
 var jsxRuntimeExports = jsxRuntime.exports;
 
+function isEmpty$3(obj) {
+  return obj === undefined || obj === null || Object.keys(obj).length === 0;
+}
+function GlobalStyles$2(props) {
+  const {
+    styles,
+    defaultTheme = {}
+  } = props;
+  const globalStyles = typeof styles === 'function' ? themeInput => styles(isEmpty$3(themeInput) ? defaultTheme : themeInput) : styles;
+  return /*#__PURE__*/jsxRuntimeExports.jsx(Global, {
+    styles: globalStyles
+  });
+}
+process.env.NODE_ENV !== "production" ? GlobalStyles$2.propTypes = {
+  defaultTheme: PropTypes.object,
+  styles: PropTypes.oneOfType([PropTypes.array, PropTypes.string, PropTypes.object, PropTypes.func])
+} : void 0;
+
 /**
  * @mui/styled-engine v9.0.0
  *
@@ -9490,18 +9571,72 @@ function createTheme$1(options = {}, ...args) {
   return muiTheme;
 }
 
-function isObjectEmpty(obj) {
+function isObjectEmpty$1(obj) {
   return Object.keys(obj).length === 0;
 }
 function useTheme$2(defaultTheme = null) {
   const contextTheme = reactExports.useContext(ThemeContext);
-  return !contextTheme || isObjectEmpty(contextTheme) ? defaultTheme : contextTheme;
+  return !contextTheme || isObjectEmpty$1(contextTheme) ? defaultTheme : contextTheme;
 }
 
 const systemDefaultTheme$1 = createTheme$1();
 function useTheme$1(defaultTheme = systemDefaultTheme$1) {
   return useTheme$2(defaultTheme);
 }
+
+function wrapGlobalLayer(styles) {
+  const serialized = internal_serializeStyles(styles);
+  if (styles !== serialized && serialized.styles) {
+    if (!serialized.styles.match(/^@layer\s+[^{]*$/)) {
+      // If the styles are not already wrapped in a layer, wrap them in a global layer.
+      serialized.styles = `@layer global{${serialized.styles}}`;
+    }
+    return serialized;
+  }
+  return styles;
+}
+function GlobalStyles$1({
+  styles,
+  themeId,
+  defaultTheme = {}
+}) {
+  const upperTheme = useTheme$1(defaultTheme);
+  const resolvedTheme = themeId ? upperTheme[themeId] || upperTheme : upperTheme;
+  let globalStyles = typeof styles === 'function' ? styles(resolvedTheme) : styles;
+  if (resolvedTheme.modularCssLayers) {
+    if (Array.isArray(globalStyles)) {
+      globalStyles = globalStyles.map(styleArg => {
+        if (typeof styleArg === 'function') {
+          return wrapGlobalLayer(styleArg(resolvedTheme));
+        }
+        return wrapGlobalLayer(styleArg);
+      });
+    } else {
+      globalStyles = wrapGlobalLayer(globalStyles);
+    }
+  }
+  return /*#__PURE__*/jsxRuntimeExports.jsx(GlobalStyles$2, {
+    styles: globalStyles
+  });
+}
+process.env.NODE_ENV !== "production" ? GlobalStyles$1.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * @ignore
+   */
+  defaultTheme: PropTypes.object,
+  /**
+   * @ignore
+   */
+  styles: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.array, PropTypes.func, PropTypes.number, PropTypes.object, PropTypes.string, PropTypes.bool]),
+  /**
+   * @ignore
+   */
+  themeId: PropTypes.string
+} : void 0;
 
 const defaultGenerator = componentName => componentName;
 const createClassNameGenerator = () => {
@@ -9635,7 +9770,7 @@ function defaultOverridesResolver(slot) {
   return (_props, styles) => styles[slot];
 }
 function attachTheme(props, themeId, defaultTheme) {
-  props.theme = isObjectEmpty$1(props.theme) ? defaultTheme : props.theme[themeId] || props.theme;
+  props.theme = isObjectEmpty$2(props.theme) ? defaultTheme : props.theme[themeId] || props.theme;
 }
 function processStyle(props, style, layerName) {
   /*
@@ -10282,6 +10417,16 @@ function exactProp(propTypes) {
   };
 }
 
+const RtlContext = /*#__PURE__*/reactExports.createContext();
+process.env.NODE_ENV !== "production" ? {
+  children: PropTypes.node,
+  value: PropTypes.bool
+} : void 0;
+const useRtl = () => {
+  const value = reactExports.useContext(RtlContext);
+  return value ?? false;
+};
+
 const PropsContext = /*#__PURE__*/reactExports.createContext(undefined);
 process.env.NODE_ENV !== "production" ? {
   // ┌────────────────────────────── Warning ──────────────────────────────┐
@@ -10741,6 +10886,14 @@ function createGetColorSchemeSelector(selector) {
     }
     return '&';
   };
+}
+
+function isMuiElement(element, muiNames) {
+  return /*#__PURE__*/reactExports.isValidElement(element) && muiNames.indexOf(
+  // For server components `muiName` is available in element.type._payload.value.muiName
+  // relevant info - https://github.com/facebook/react/blob/2807d781a08db8e9873687fccc25c0f12b4fb3d4/packages/react/src/ReactLazy.js#L45
+  // eslint-disable-next-line no-underscore-dangle
+  element.type.muiName ?? element.type?._payload?.value?.muiName) !== -1;
 }
 
 const common = {
@@ -12263,6 +12416,24 @@ function useTheme() {
   return theme[THEME_ID] || theme;
 }
 
+function GlobalStyles(props) {
+  return /*#__PURE__*/jsxRuntimeExports.jsx(GlobalStyles$1, {
+    ...props,
+    defaultTheme: defaultTheme$1,
+    themeId: THEME_ID
+  });
+}
+process.env.NODE_ENV !== "production" ? GlobalStyles.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The styles you want to apply globally.
+   */
+  styles: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.array, PropTypes.func, PropTypes.number, PropTypes.object, PropTypes.string, PropTypes.bool])
+} : void 0;
+
 // copied from @mui/system/createStyled
 function slotShouldForwardProp(prop) {
   return prop !== 'ownerState' && prop !== 'theme' && prop !== 'sx' && prop !== 'as';
@@ -12277,6 +12448,21 @@ const styled = createStyled({
   rootShouldForwardProp: rootShouldForwardProp$1
 });
 var styled$1 = styled;
+
+function globalCss(styles) {
+  return function GlobalStylesWrapper(props) {
+    return (
+      /*#__PURE__*/
+      // Pigment CSS `globalCss` support callback with theme inside an object but `GlobalStyles` support theme as a callback value.
+      jsxRuntimeExports.jsx(GlobalStyles, {
+        styles: typeof styles === 'function' ? theme => styles({
+          theme,
+          ...props
+        }) : styles
+      })
+    );
+  };
+}
 
 const memoTheme = unstable_memoTheme;
 var memoTheme$1 = memoTheme;
@@ -12305,8 +12491,8 @@ function getFormHelperTextUtilityClasses(slot) {
 const formHelperTextClasses = generateUtilityClasses('MuiFormHelperText', ['root', 'error', 'disabled', 'sizeSmall', 'sizeMedium', 'contained', 'focused', 'filled', 'required']);
 var formHelperTextClasses$1 = formHelperTextClasses;
 
-var _span;
-const useUtilityClasses$b = ownerState => {
+var _span$2;
+const useUtilityClasses$x = ownerState => {
   const {
     classes,
     contained,
@@ -12401,7 +12587,7 @@ const FormHelperText = /*#__PURE__*/reactExports.forwardRef(function FormHelperT
 
   // This issue explains why this is required: https://github.com/mui/material-ui/issues/42184
   delete ownerState.ownerState;
-  const classes = useUtilityClasses$b(ownerState);
+  const classes = useUtilityClasses$x(ownerState);
   return /*#__PURE__*/jsxRuntimeExports.jsx(FormHelperTextRoot, {
     as: component,
     className: clsx(classes.root, className),
@@ -12409,7 +12595,7 @@ const FormHelperText = /*#__PURE__*/reactExports.forwardRef(function FormHelperT
     ...other,
     ownerState: ownerState,
     children: children === ' ' ? // notranslate needed while Google Translate will not fix zero-width space issue
-    _span || (_span = /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+    _span$2 || (_span$2 = /*#__PURE__*/jsxRuntimeExports.jsx("span", {
       className: "notranslate",
       "aria-hidden": true,
       children: "\u200B"
@@ -29475,7 +29661,7 @@ describe('HelperText', function () {
   });
 });
 
-function makeLocalizeMock$1(overrides = {}) {
+function makeLocalizeMock$2(overrides = {}) {
   return {
     getLocale() {
       return 'en-US-u-ms-ussystem';
@@ -29507,7 +29693,7 @@ describe('LocaleString', function () {
     harness = null;
   });
   it('renders a translated phrase from the localize service', function () {
-    const localize = makeLocalizeMock$1();
+    const localize = makeLocalizeMock$2();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -29517,7 +29703,7 @@ describe('LocaleString', function () {
     expect(result.container.textContent).toBe('Hello world');
   });
   it('uses the locale-specific translation path when locale is provided', function () {
-    const localize = makeLocalizeMock$1();
+    const localize = makeLocalizeMock$2();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -29528,7 +29714,7 @@ describe('LocaleString', function () {
     expect(result.container.textContent).toBe('es-ES:greeting');
   });
   it('parses html output when html is true', function () {
-    const localize = makeLocalizeMock$1();
+    const localize = makeLocalizeMock$2();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -29539,7 +29725,7 @@ describe('LocaleString', function () {
     expect(result.container.querySelector('strong').textContent).toBe('Hello html');
   });
   it('suppresses output when hideEmpty is true and translation is empty', function () {
-    const localize = makeLocalizeMock$1();
+    const localize = makeLocalizeMock$2();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -29559,6 +29745,14842 @@ describe('LocaleString', function () {
     expect(result.container.textContent).toBe('Edit mode');
   });
 });
+
+function useControlled(props) {
+  const {
+    controlled,
+    default: defaultProp,
+    name,
+    state = 'value'
+  } = props;
+  // isControlled is ignored in the hook dependency lists as it should never change.
+  const {
+    current: isControlled
+  } = reactExports.useRef(controlled !== undefined);
+  const [valueState, setValue] = reactExports.useState(defaultProp);
+  const value = isControlled ? controlled : valueState;
+  if (process.env.NODE_ENV !== 'production') {
+    reactExports.useEffect(() => {
+      if (isControlled !== (controlled !== undefined)) {
+        console.error([`MUI: A component is changing the ${isControlled ? '' : 'un'}controlled ${state} state of ${name} to be ${isControlled ? 'un' : ''}controlled.`, 'Elements should not switch from uncontrolled to controlled (or vice versa).', `Decide between using a controlled or uncontrolled ${name} ` + 'element for the lifetime of the component.', "The nature of the state is determined during the first render. It's considered controlled if the value is not `undefined`.", 'More info: https://fb.me/react-controlled-components'].join('\n'));
+      }
+    }, [state, name, controlled]);
+    const {
+      current: defaultValue
+    } = reactExports.useRef(defaultProp);
+    reactExports.useEffect(() => {
+      if (!isControlled && JSON.stringify(defaultProp) !== JSON.stringify(defaultValue)) {
+        console.error([`MUI: A component is changing the default ${state} state of an uncontrolled ${name} after being initialized. ` + `To suppress this warning opt to use a controlled ${name}.`].join('\n'));
+      }
+    }, [JSON.stringify(defaultProp)]);
+  }
+  const setValueIfUncontrolled = reactExports.useCallback(newValue => {
+    if (!isControlled) {
+      setValue(newValue);
+    }
+  }, []);
+
+  // TODO: provide overloads for the useControlled function to account for the case where either
+  // controlled or default is not undefined.
+  // In that case the return type should be [T, React.Dispatch<React.SetStateAction<T>>]
+  // otherwise it should be [T | undefined, React.Dispatch<React.SetStateAction<T | undefined>>]
+  return [value, setValueIfUncontrolled];
+}
+
+const refType = PropTypes.oneOfType([PropTypes.func, PropTypes.object]);
+var refType$1 = refType;
+
+function chainPropTypes(propType1, propType2) {
+  if (process.env.NODE_ENV === 'production') {
+    return () => null;
+  }
+  return function validate(...args) {
+    return propType1(...args) || propType2(...args);
+  };
+}
+
+function isClassComponent$1(elementType) {
+  // elementType.prototype?.isReactComponent
+  const {
+    prototype = {}
+  } = elementType;
+  return Boolean(prototype.isReactComponent);
+}
+function elementTypeAcceptingRef(props, propName, componentName, location, propFullName) {
+  const propValue = props[propName];
+  const safePropName = propFullName || propName;
+  if (propValue == null ||
+  // When server-side rendering React doesn't warn either.
+  // This is not an accurate check for SSR.
+  // This is only in place for emotion compat.
+  // TODO: Revisit once https://github.com/facebook/react/issues/20047 is resolved.
+  typeof window === 'undefined') {
+    return null;
+  }
+  let warningHint;
+
+  /**
+   * Blacklisting instead of whitelisting
+   *
+   * Blacklisting will miss some components, such as React.Fragment. Those will at least
+   * trigger a warning in React.
+   * We can't whitelist because there is no safe way to detect React.forwardRef
+   * or class components. "Safe" means there's no public API.
+   *
+   */
+  if (typeof propValue === 'function' && !isClassComponent$1(propValue)) {
+    warningHint = 'Did you accidentally provide a plain function component instead?';
+  }
+  if (propValue === reactExports.Fragment) {
+    warningHint = 'Did you accidentally provide a React.Fragment instead?';
+  }
+  if (warningHint !== undefined) {
+    // #host-reference
+    return new Error(`Invalid ${location} \`${safePropName}\` supplied to \`${componentName}\`. ` + `Expected an element type that can hold a ref. ${warningHint} ` + 'For more information see https://mui.com/r/caveat-with-refs-guide');
+  }
+  return null;
+}
+var elementTypeAcceptingRef$1 = chainPropTypes(PropTypes.elementType, elementTypeAcceptingRef);
+
+/**
+ * Returns a boolean indicating if the event's target has :focus-visible
+ */
+function isFocusVisible(element) {
+  try {
+    return element.matches(':focus-visible');
+  } catch (error) {
+    // Do not warn on jsdom tests, otherwise all tests that rely on focus have to be skipped
+    // Tests that rely on `:focus-visible` will still have to be skipped in jsdom
+    if (process.env.NODE_ENV !== 'production' && !window.navigator.userAgent.includes('jsdom')) {
+      console.warn(['MUI: The `:focus-visible` pseudo class is not supported in this browser.', 'Some components rely on this feature to work properly.'].join('\n'));
+    }
+  }
+  return false;
+}
+
+/**
+ * Merges refs into a single memoized callback ref or `null`.
+ *
+ * ```tsx
+ * const rootRef = React.useRef<Instance>(null);
+ * const refFork = useForkRef(rootRef, props.ref);
+ *
+ * return (
+ *   <Root {...props} ref={refFork} />
+ * );
+ * ```
+ *
+ * @param {Array<React.Ref<Instance> | undefined>} refs The ref array.
+ * @returns {React.RefCallback<Instance> | null} The new ref callback.
+ */
+function useForkRef(...refs) {
+  const cleanupRef = reactExports.useRef(undefined);
+  const refEffect = reactExports.useCallback(instance => {
+    const cleanups = refs.map(ref => {
+      if (ref == null) {
+        return null;
+      }
+      if (typeof ref === 'function') {
+        const refCallback = ref;
+        const refCleanup = refCallback(instance);
+        return typeof refCleanup === 'function' ? refCleanup : () => {
+          refCallback(null);
+        };
+      }
+      ref.current = instance;
+      return () => {
+        ref.current = null;
+      };
+    });
+    return () => {
+      cleanups.forEach(refCleanup => refCleanup?.());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, refs);
+  return reactExports.useMemo(() => {
+    if (refs.every(ref => ref == null)) {
+      return null;
+    }
+    return value => {
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = undefined;
+      }
+      if (value != null) {
+        cleanupRef.current = refEffect(value);
+      }
+    };
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler -- intentionally ignoring that the dependency array must be an array literal
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, refs);
+}
+
+/**
+ * Inspired by https://github.com/facebook/react/issues/14099#issuecomment-440013892
+ * See RFC in https://github.com/reactjs/rfcs/pull/220
+ */
+
+function useEventCallback(fn) {
+  const ref = reactExports.useRef(fn);
+  useEnhancedEffect$1(() => {
+    ref.current = fn;
+  });
+  return reactExports.useRef((...args) =>
+  // @ts-expect-error hide `this`
+  (0, ref.current)(...args)).current;
+}
+
+function useFocusableWhenDisabled(parameters) {
+  const {
+    focusableWhenDisabled,
+    disabled,
+    composite = false,
+    tabIndex: tabIndexProp = 0,
+    isNativeButton
+  } = parameters;
+  const isFocusableComposite = composite && focusableWhenDisabled !== false;
+  const isNonFocusableComposite = composite && focusableWhenDisabled === false;
+
+  // we can't explicitly assign `undefined` to any of these props because it
+  // would otherwise prevent subsequently merged props from setting them
+  const props = reactExports.useMemo(() => {
+    const additionalProps = {
+      // allow Tabbing away from focusableWhenDisabled elements
+      onKeyDown(event) {
+        if (disabled && focusableWhenDisabled && event.key !== 'Tab') {
+          event.preventDefault();
+        }
+      }
+    };
+    if (!composite) {
+      additionalProps.tabIndex = tabIndexProp;
+      if (!isNativeButton && disabled) {
+        additionalProps.tabIndex = focusableWhenDisabled ? tabIndexProp : -1;
+      }
+    }
+    if (isNativeButton && (focusableWhenDisabled || isFocusableComposite) || !isNativeButton && disabled) {
+      additionalProps['aria-disabled'] = disabled;
+    }
+    if (isNativeButton && (!focusableWhenDisabled || isNonFocusableComposite)) {
+      additionalProps.disabled = disabled;
+    }
+    return additionalProps;
+  }, [composite, disabled, focusableWhenDisabled, isFocusableComposite, isNonFocusableComposite, isNativeButton, tabIndexProp]);
+  return props;
+}
+
+const EMPTY$1 = {};
+function useButtonBase(parameters) {
+  const {
+    nativeButton,
+    nativeButtonProp,
+    internalNativeButton = nativeButton,
+    allowInferredHostMismatch = false,
+    disabled,
+    type,
+    hasFormAction = false,
+    tabIndex = 0,
+    focusableWhenDisabled: focusableWhenDisabledParam,
+    stopEventPropagation = false,
+    onBeforeKeyDown,
+    onBeforeKeyUp
+  } = parameters;
+  const rootRef = reactExports.useRef(null);
+  const focusableWhenDisabled = focusableWhenDisabledParam === true;
+  const focusableWhenDisabledProps = useFocusableWhenDisabled({
+    focusableWhenDisabled,
+    disabled,
+    isNativeButton: nativeButton,
+    tabIndex
+  });
+  if (process.env.NODE_ENV !== 'production') {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    reactExports.useEffect(() => {
+      const root = rootRef.current;
+      if (root == null) {
+        return;
+      }
+      const isButtonTag = root.tagName === 'BUTTON';
+      if (nativeButtonProp !== undefined) {
+        if (nativeButtonProp && !isButtonTag) {
+          const message = 'MUI: A component that acts as a button expected a native <button> because the ' + '`nativeButton` prop is true. Rendering a non-<button> removes native button ' + 'semantics, which can impact forms and accessibility. Render a real <button> ' + 'or set `nativeButton` to `false`.';
+          console.error(message);
+        }
+        if (!nativeButtonProp && isButtonTag) {
+          const message = 'MUI: A component that acts as a button expected a non-<button> because the `nativeButton` ' + 'prop is false. Rendering a <button> keeps native behavior while additionally applies ' + 'non-native attributes and handlers, which can add unintended extra attributes (such ' + 'as `role` or `aria-disabled`). Render a non-<button> such as <div>, or set ' + '`nativeButton` to `true`.';
+          console.error(message);
+        }
+        return;
+      }
+      if (allowInferredHostMismatch) {
+        return;
+      }
+
+      // warn when expecting a native <button> element but a non-string `component` prop resolved to a non-button element
+      if (internalNativeButton && !isButtonTag) {
+        const message = 'MUI: A component rendering a native <button> resolved to a non-<button> element, ' + 'but `nativeButton={false}` was not specified and the resolved root is a non-<button>. ' + 'When rendering a custom component, set `nativeButton={false}` explicitly or render a <button> element.';
+        console.error(message);
+      }
+
+      // warn when expecting a non-button but a non-string `component` prop resolved to a native <button> element
+      if (!internalNativeButton && isButtonTag) {
+        const message = 'MUI: A component that acts as a non-native button resolved to a native <button> element, ' + 'but `nativeButton={true}` was not specified. ' + 'When rendering a custom component, set `nativeButton={true}` explicitly or render a non-<button> element.';
+        console.error(message);
+      }
+    }, [allowInferredHostMismatch, internalNativeButton, nativeButtonProp]);
+  }
+
+  // A helper for event handlers to determine whether to use browser-defined keyboard activation
+  // for native elements like <button> and <a href>, or synthesize Enter/Space clicks for non-native
+  // elements like `<div role="button">`.
+  // This is UNSAFE TO USE outside of event handers, e.g. in render.
+  const hasNativeKeyboardActivation = reactExports.useCallback(() => {
+    const root = rootRef.current;
+    if (root == null) {
+      return nativeButton;
+    }
+    if (root.tagName === 'BUTTON') {
+      return true;
+    }
+
+    // Although this hook is not intended for links, this check is for
+    // backward compatibility with `<ButtonBase href="#" />` since ButtonBase
+    // uses the returned event handlers.
+    return Boolean(root.tagName === 'A' && root.href);
+  }, [nativeButton]);
+  const buttonProps = reactExports.useMemo(() => {
+    const resolvedButtonProps = focusableWhenDisabled ? {} : {
+      tabIndex: disabled ? -1 : tabIndex
+    };
+    if (nativeButton) {
+      resolvedButtonProps.type = type === undefined && !hasFormAction ? 'button' : type;
+      if (!focusableWhenDisabled) {
+        resolvedButtonProps.disabled = disabled;
+      }
+    } else {
+      resolvedButtonProps.role = 'button';
+      if (!focusableWhenDisabled && disabled) {
+        resolvedButtonProps['aria-disabled'] = disabled;
+      }
+    }
+    if (focusableWhenDisabled) {
+      return {
+        ...resolvedButtonProps,
+        ...focusableWhenDisabledProps
+      };
+    }
+    return resolvedButtonProps;
+  }, [disabled, focusableWhenDisabled, focusableWhenDisabledProps, hasFormAction, nativeButton, tabIndex, type]);
+  const getButtonProps = reactExports.useCallback((externalProps = EMPTY$1) => {
+    const {
+      onClick: externalOnClick,
+      onKeyDown: externalOnKeyDown,
+      onKeyUp: externalOnKeyUp,
+      ...otherExternalProps
+    } = externalProps;
+    const handleClick = event => {
+      if (stopEventPropagation) {
+        event.stopPropagation();
+      }
+      if (disabled) {
+        event.preventDefault();
+        return;
+      }
+      externalOnClick?.(event);
+    };
+    const handleKeyDown = event => {
+      if (focusableWhenDisabled) {
+        focusableWhenDisabledProps.onKeyDown(event);
+      }
+      if (disabled) {
+        return;
+      }
+      onBeforeKeyDown?.(event);
+      externalOnKeyDown?.(event);
+      if (event.target !== event.currentTarget || hasNativeKeyboardActivation()) {
+        return;
+      }
+      if (event.key === ' ') {
+        event.preventDefault();
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.click();
+      }
+    };
+    const handleKeyUp = event => {
+      if (disabled) {
+        return;
+      }
+      onBeforeKeyUp?.(event);
+      externalOnKeyUp?.(event);
+      if (event.target === event.currentTarget && !hasNativeKeyboardActivation() && event.key === ' ' && !event.defaultPrevented) {
+        event.currentTarget.click();
+      }
+    };
+    return {
+      ...buttonProps,
+      ...otherExternalProps,
+      onClick: handleClick,
+      onKeyDown: handleKeyDown,
+      onKeyUp: handleKeyUp
+    };
+  }, [buttonProps, disabled, focusableWhenDisabled, focusableWhenDisabledProps, hasNativeKeyboardActivation, onBeforeKeyDown, onBeforeKeyUp, stopEventPropagation]);
+  return {
+    getButtonProps,
+    rootRef
+  };
+}
+
+const UNINITIALIZED = {};
+
+/**
+ * A React.useRef() that is initialized lazily with a function. Note that it accepts an optional
+ * initialization argument, so the initialization function doesn't need to be an inline closure.
+ *
+ * @usage
+ *   const ref = useLazyRef(sortColumns, columns)
+ */
+function useLazyRef(init, initArg) {
+  const ref = reactExports.useRef(UNINITIALIZED);
+  if (ref.current === UNINITIALIZED) {
+    ref.current = init(initArg);
+  }
+  return ref;
+}
+
+/**
+ * Lazy initialization container for the Ripple instance. This improves
+ * performance by delaying mounting the ripple until it's needed.
+ */
+class LazyRipple {
+  /** React ref to the ripple instance */
+
+  /** If the ripple component should be mounted */
+
+  /** Promise that resolves when the ripple component is mounted */
+
+  /** If the ripple component has been mounted */
+
+  /** React state hook setter */
+
+  static create() {
+    return new LazyRipple();
+  }
+  static use() {
+    /* eslint-disable */
+    const ripple = useLazyRef(LazyRipple.create).current;
+    const [shouldMount, setShouldMount] = reactExports.useState(false);
+    ripple.shouldMount = shouldMount;
+    ripple.setShouldMount = setShouldMount;
+    reactExports.useEffect(ripple.mountEffect, [shouldMount]);
+    /* eslint-enable */
+
+    return ripple;
+  }
+  constructor() {
+    this.ref = {
+      current: null
+    };
+    this.mounted = null;
+    this.didMount = false;
+    this.shouldMount = false;
+    this.setShouldMount = null;
+  }
+  mount() {
+    if (!this.mounted) {
+      this.mounted = createControlledPromise();
+      this.shouldMount = true;
+      this.setShouldMount(this.shouldMount);
+    }
+    return this.mounted;
+  }
+  mountEffect = () => {
+    if (this.shouldMount && !this.didMount) {
+      if (this.ref.current !== null) {
+        this.didMount = true;
+        this.mounted.resolve();
+      }
+    }
+  };
+
+  /* Ripple API */
+
+  start(...args) {
+    this.mount().then(() => this.ref.current?.start(...args));
+  }
+  stop(...args) {
+    this.mount().then(() => this.ref.current?.stop(...args));
+  }
+  pulsate(...args) {
+    this.mount().then(() => this.ref.current?.pulsate(...args));
+  }
+}
+function useLazyRipple() {
+  return LazyRipple.use();
+}
+function createControlledPromise() {
+  let resolve;
+  let reject;
+  const p = new Promise((resolveFn, rejectFn) => {
+    resolve = resolveFn;
+    reject = rejectFn;
+  });
+  p.resolve = resolve;
+  p.reject = reject;
+  return p;
+}
+
+function _objectWithoutPropertiesLoose$1(r, e) {
+  if (null == r) return {};
+  var t = {};
+  for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+    if (-1 !== e.indexOf(n)) continue;
+    t[n] = r[n];
+  }
+  return t;
+}
+
+function _setPrototypeOf$1(t, e) {
+  return _setPrototypeOf$1 = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) {
+    return t.__proto__ = e, t;
+  }, _setPrototypeOf$1(t, e);
+}
+
+function _inheritsLoose(t, o) {
+  t.prototype = Object.create(o.prototype), t.prototype.constructor = t, _setPrototypeOf$1(t, o);
+}
+
+/**
+ * Checks if a given element has a CSS class.
+ * 
+ * @param element the element
+ * @param className the CSS class name
+ */
+function hasClass(element, className) {
+  if (element.classList) return !!className && element.classList.contains(className);
+  return (" " + (element.className.baseVal || element.className) + " ").indexOf(" " + className + " ") !== -1;
+}
+
+/**
+ * Adds a CSS class to a given element.
+ * 
+ * @param element the element
+ * @param className the CSS class name
+ */
+
+function addClass(element, className) {
+  if (element.classList) element.classList.add(className);else if (!hasClass(element, className)) if (typeof element.className === 'string') element.className = element.className + " " + className;else element.setAttribute('class', (element.className && element.className.baseVal || '') + " " + className);
+}
+
+function replaceClassName(origClass, classToRemove) {
+  return origClass.replace(new RegExp("(^|\\s)" + classToRemove + "(?:\\s|$)", 'g'), '$1').replace(/\s+/g, ' ').replace(/^\s*|\s*$/g, '');
+}
+/**
+ * Removes a CSS class from a given element.
+ * 
+ * @param element the element
+ * @param className the CSS class name
+ */
+
+function removeClass$1(element, className) {
+  if (element.classList) {
+    element.classList.remove(className);
+  } else if (typeof element.className === 'string') {
+    element.className = replaceClassName(element.className, className);
+  } else {
+    element.setAttribute('class', replaceClassName(element.className && element.className.baseVal || '', className));
+  }
+}
+
+var config$3 = {
+  disabled: false
+};
+
+var timeoutsShape = browser$1.env.NODE_ENV !== 'production' ? PropTypes.oneOfType([PropTypes.number, PropTypes.shape({
+  enter: PropTypes.number,
+  exit: PropTypes.number,
+  appear: PropTypes.number
+}).isRequired]) : null;
+var classNamesShape = browser$1.env.NODE_ENV !== 'production' ? PropTypes.oneOfType([PropTypes.string, PropTypes.shape({
+  enter: PropTypes.string,
+  exit: PropTypes.string,
+  active: PropTypes.string
+}), PropTypes.shape({
+  enter: PropTypes.string,
+  enterDone: PropTypes.string,
+  enterActive: PropTypes.string,
+  exit: PropTypes.string,
+  exitDone: PropTypes.string,
+  exitActive: PropTypes.string
+})]) : null;
+
+var TransitionGroupContext = /*#__PURE__*/React$1.createContext(null);
+
+var forceReflow = function forceReflow(node) {
+  return node.scrollTop;
+};
+
+var UNMOUNTED = 'unmounted';
+var EXITED = 'exited';
+var ENTERING = 'entering';
+var ENTERED = 'entered';
+var EXITING = 'exiting';
+/**
+ * The Transition component lets you describe a transition from one component
+ * state to another _over time_ with a simple declarative API. Most commonly
+ * it's used to animate the mounting and unmounting of a component, but can also
+ * be used to describe in-place transition states as well.
+ *
+ * ---
+ *
+ * **Note**: `Transition` is a platform-agnostic base component. If you're using
+ * transitions in CSS, you'll probably want to use
+ * [`CSSTransition`](https://reactcommunity.org/react-transition-group/css-transition)
+ * instead. It inherits all the features of `Transition`, but contains
+ * additional features necessary to play nice with CSS transitions (hence the
+ * name of the component).
+ *
+ * ---
+ *
+ * By default the `Transition` component does not alter the behavior of the
+ * component it renders, it only tracks "enter" and "exit" states for the
+ * components. It's up to you to give meaning and effect to those states. For
+ * example we can add styles to a component when it enters or exits:
+ *
+ * ```jsx
+ * import { Transition } from 'react-transition-group';
+ *
+ * const duration = 300;
+ *
+ * const defaultStyle = {
+ *   transition: `opacity ${duration}ms ease-in-out`,
+ *   opacity: 0,
+ * }
+ *
+ * const transitionStyles = {
+ *   entering: { opacity: 1 },
+ *   entered:  { opacity: 1 },
+ *   exiting:  { opacity: 0 },
+ *   exited:  { opacity: 0 },
+ * };
+ *
+ * const Fade = ({ in: inProp }) => (
+ *   <Transition in={inProp} timeout={duration}>
+ *     {state => (
+ *       <div style={{
+ *         ...defaultStyle,
+ *         ...transitionStyles[state]
+ *       }}>
+ *         I'm a fade Transition!
+ *       </div>
+ *     )}
+ *   </Transition>
+ * );
+ * ```
+ *
+ * There are 4 main states a Transition can be in:
+ *  - `'entering'`
+ *  - `'entered'`
+ *  - `'exiting'`
+ *  - `'exited'`
+ *
+ * Transition state is toggled via the `in` prop. When `true` the component
+ * begins the "Enter" stage. During this stage, the component will shift from
+ * its current transition state, to `'entering'` for the duration of the
+ * transition and then to the `'entered'` stage once it's complete. Let's take
+ * the following example (we'll use the
+ * [useState](https://reactjs.org/docs/hooks-reference.html#usestate) hook):
+ *
+ * ```jsx
+ * function App() {
+ *   const [inProp, setInProp] = useState(false);
+ *   return (
+ *     <div>
+ *       <Transition in={inProp} timeout={500}>
+ *         {state => (
+ *           // ...
+ *         )}
+ *       </Transition>
+ *       <button onClick={() => setInProp(true)}>
+ *         Click to Enter
+ *       </button>
+ *     </div>
+ *   );
+ * }
+ * ```
+ *
+ * When the button is clicked the component will shift to the `'entering'` state
+ * and stay there for 500ms (the value of `timeout`) before it finally switches
+ * to `'entered'`.
+ *
+ * When `in` is `false` the same thing happens except the state moves from
+ * `'exiting'` to `'exited'`.
+ */
+
+var Transition = /*#__PURE__*/function (_React$Component) {
+  _inheritsLoose(Transition, _React$Component);
+  function Transition(props, context) {
+    var _this;
+    _this = _React$Component.call(this, props, context) || this;
+    var parentGroup = context; // In the context of a TransitionGroup all enters are really appears
+
+    var appear = parentGroup && !parentGroup.isMounting ? props.enter : props.appear;
+    var initialStatus;
+    _this.appearStatus = null;
+    if (props.in) {
+      if (appear) {
+        initialStatus = EXITED;
+        _this.appearStatus = ENTERING;
+      } else {
+        initialStatus = ENTERED;
+      }
+    } else {
+      if (props.unmountOnExit || props.mountOnEnter) {
+        initialStatus = UNMOUNTED;
+      } else {
+        initialStatus = EXITED;
+      }
+    }
+    _this.state = {
+      status: initialStatus
+    };
+    _this.nextCallback = null;
+    return _this;
+  }
+  Transition.getDerivedStateFromProps = function getDerivedStateFromProps(_ref, prevState) {
+    var nextIn = _ref.in;
+    if (nextIn && prevState.status === UNMOUNTED) {
+      return {
+        status: EXITED
+      };
+    }
+    return null;
+  } // getSnapshotBeforeUpdate(prevProps) {
+  //   let nextStatus = null
+  //   if (prevProps !== this.props) {
+  //     const { status } = this.state
+  //     if (this.props.in) {
+  //       if (status !== ENTERING && status !== ENTERED) {
+  //         nextStatus = ENTERING
+  //       }
+  //     } else {
+  //       if (status === ENTERING || status === ENTERED) {
+  //         nextStatus = EXITING
+  //       }
+  //     }
+  //   }
+  //   return { nextStatus }
+  // }
+;
+  var _proto = Transition.prototype;
+  _proto.componentDidMount = function componentDidMount() {
+    this.updateStatus(true, this.appearStatus);
+  };
+  _proto.componentDidUpdate = function componentDidUpdate(prevProps) {
+    var nextStatus = null;
+    if (prevProps !== this.props) {
+      var status = this.state.status;
+      if (this.props.in) {
+        if (status !== ENTERING && status !== ENTERED) {
+          nextStatus = ENTERING;
+        }
+      } else {
+        if (status === ENTERING || status === ENTERED) {
+          nextStatus = EXITING;
+        }
+      }
+    }
+    this.updateStatus(false, nextStatus);
+  };
+  _proto.componentWillUnmount = function componentWillUnmount() {
+    this.cancelNextCallback();
+  };
+  _proto.getTimeouts = function getTimeouts() {
+    var timeout = this.props.timeout;
+    var exit, enter, appear;
+    exit = enter = appear = timeout;
+    if (timeout != null && typeof timeout !== 'number') {
+      exit = timeout.exit;
+      enter = timeout.enter; // TODO: remove fallback for next major
+
+      appear = timeout.appear !== undefined ? timeout.appear : enter;
+    }
+    return {
+      exit: exit,
+      enter: enter,
+      appear: appear
+    };
+  };
+  _proto.updateStatus = function updateStatus(mounting, nextStatus) {
+    if (mounting === void 0) {
+      mounting = false;
+    }
+    if (nextStatus !== null) {
+      // nextStatus will always be ENTERING or EXITING.
+      this.cancelNextCallback();
+      if (nextStatus === ENTERING) {
+        if (this.props.unmountOnExit || this.props.mountOnEnter) {
+          var node = this.props.nodeRef ? this.props.nodeRef.current : ReactDOM.findDOMNode(this); // https://github.com/reactjs/react-transition-group/pull/749
+          // With unmountOnExit or mountOnEnter, the enter animation should happen at the transition between `exited` and `entering`.
+          // To make the animation happen,  we have to separate each rendering and avoid being processed as batched.
+
+          if (node) forceReflow(node);
+        }
+        this.performEnter(mounting);
+      } else {
+        this.performExit();
+      }
+    } else if (this.props.unmountOnExit && this.state.status === EXITED) {
+      this.setState({
+        status: UNMOUNTED
+      });
+    }
+  };
+  _proto.performEnter = function performEnter(mounting) {
+    var _this2 = this;
+    var enter = this.props.enter;
+    var appearing = this.context ? this.context.isMounting : mounting;
+    var _ref2 = this.props.nodeRef ? [appearing] : [ReactDOM.findDOMNode(this), appearing],
+      maybeNode = _ref2[0],
+      maybeAppearing = _ref2[1];
+    var timeouts = this.getTimeouts();
+    var enterTimeout = appearing ? timeouts.appear : timeouts.enter; // no enter animation skip right to ENTERED
+    // if we are mounting and running this it means appear _must_ be set
+
+    if (!mounting && !enter || config$3.disabled) {
+      this.safeSetState({
+        status: ENTERED
+      }, function () {
+        _this2.props.onEntered(maybeNode);
+      });
+      return;
+    }
+    this.props.onEnter(maybeNode, maybeAppearing);
+    this.safeSetState({
+      status: ENTERING
+    }, function () {
+      _this2.props.onEntering(maybeNode, maybeAppearing);
+      _this2.onTransitionEnd(enterTimeout, function () {
+        _this2.safeSetState({
+          status: ENTERED
+        }, function () {
+          _this2.props.onEntered(maybeNode, maybeAppearing);
+        });
+      });
+    });
+  };
+  _proto.performExit = function performExit() {
+    var _this3 = this;
+    var exit = this.props.exit;
+    var timeouts = this.getTimeouts();
+    var maybeNode = this.props.nodeRef ? undefined : ReactDOM.findDOMNode(this); // no exit animation skip right to EXITED
+
+    if (!exit || config$3.disabled) {
+      this.safeSetState({
+        status: EXITED
+      }, function () {
+        _this3.props.onExited(maybeNode);
+      });
+      return;
+    }
+    this.props.onExit(maybeNode);
+    this.safeSetState({
+      status: EXITING
+    }, function () {
+      _this3.props.onExiting(maybeNode);
+      _this3.onTransitionEnd(timeouts.exit, function () {
+        _this3.safeSetState({
+          status: EXITED
+        }, function () {
+          _this3.props.onExited(maybeNode);
+        });
+      });
+    });
+  };
+  _proto.cancelNextCallback = function cancelNextCallback() {
+    if (this.nextCallback !== null) {
+      this.nextCallback.cancel();
+      this.nextCallback = null;
+    }
+  };
+  _proto.safeSetState = function safeSetState(nextState, callback) {
+    // This shouldn't be necessary, but there are weird race conditions with
+    // setState callbacks and unmounting in testing, so always make sure that
+    // we can cancel any pending setState callbacks after we unmount.
+    callback = this.setNextCallback(callback);
+    this.setState(nextState, callback);
+  };
+  _proto.setNextCallback = function setNextCallback(callback) {
+    var _this4 = this;
+    var active = true;
+    this.nextCallback = function (event) {
+      if (active) {
+        active = false;
+        _this4.nextCallback = null;
+        callback(event);
+      }
+    };
+    this.nextCallback.cancel = function () {
+      active = false;
+    };
+    return this.nextCallback;
+  };
+  _proto.onTransitionEnd = function onTransitionEnd(timeout, handler) {
+    this.setNextCallback(handler);
+    var node = this.props.nodeRef ? this.props.nodeRef.current : ReactDOM.findDOMNode(this);
+    var doesNotHaveTimeoutOrListener = timeout == null && !this.props.addEndListener;
+    if (!node || doesNotHaveTimeoutOrListener) {
+      setTimeout(this.nextCallback, 0);
+      return;
+    }
+    if (this.props.addEndListener) {
+      var _ref3 = this.props.nodeRef ? [this.nextCallback] : [node, this.nextCallback],
+        maybeNode = _ref3[0],
+        maybeNextCallback = _ref3[1];
+      this.props.addEndListener(maybeNode, maybeNextCallback);
+    }
+    if (timeout != null) {
+      setTimeout(this.nextCallback, timeout);
+    }
+  };
+  _proto.render = function render() {
+    var status = this.state.status;
+    if (status === UNMOUNTED) {
+      return null;
+    }
+    var _this$props = this.props,
+      children = _this$props.children;
+      _this$props.in;
+      _this$props.mountOnEnter;
+      _this$props.unmountOnExit;
+      _this$props.appear;
+      _this$props.enter;
+      _this$props.exit;
+      _this$props.timeout;
+      _this$props.addEndListener;
+      _this$props.onEnter;
+      _this$props.onEntering;
+      _this$props.onEntered;
+      _this$props.onExit;
+      _this$props.onExiting;
+      _this$props.onExited;
+      _this$props.nodeRef;
+      var childProps = _objectWithoutPropertiesLoose$1(_this$props, ["children", "in", "mountOnEnter", "unmountOnExit", "appear", "enter", "exit", "timeout", "addEndListener", "onEnter", "onEntering", "onEntered", "onExit", "onExiting", "onExited", "nodeRef"]);
+    return (/*#__PURE__*/
+      // allows for nested Transitions
+      React$1.createElement(TransitionGroupContext.Provider, {
+        value: null
+      }, typeof children === 'function' ? children(status, childProps) : /*#__PURE__*/React$1.cloneElement(React$1.Children.only(children), childProps))
+    );
+  };
+  return Transition;
+}(React$1.Component);
+Transition.contextType = TransitionGroupContext;
+Transition.propTypes = browser$1.env.NODE_ENV !== "production" ? {
+  /**
+   * A React reference to DOM element that need to transition:
+   * https://stackoverflow.com/a/51127130/4671932
+   *
+   *   - When `nodeRef` prop is used, `node` is not passed to callback functions
+   *      (e.g. `onEnter`) because user already has direct access to the node.
+   *   - When changing `key` prop of `Transition` in a `TransitionGroup` a new
+   *     `nodeRef` need to be provided to `Transition` with changed `key` prop
+   *     (see
+   *     [test/CSSTransition-test.js](https://github.com/reactjs/react-transition-group/blob/13435f897b3ab71f6e19d724f145596f5910581c/test/CSSTransition-test.js#L362-L437)).
+   */
+  nodeRef: PropTypes.shape({
+    current: typeof Element === 'undefined' ? PropTypes.any : function (propValue, key, componentName, location, propFullName, secret) {
+      var value = propValue[key];
+      return PropTypes.instanceOf(value && 'ownerDocument' in value ? value.ownerDocument.defaultView.Element : Element)(propValue, key, componentName, location, propFullName, secret);
+    }
+  }),
+  /**
+   * A `function` child can be used instead of a React element. This function is
+   * called with the current transition status (`'entering'`, `'entered'`,
+   * `'exiting'`, `'exited'`), which can be used to apply context
+   * specific props to a component.
+   *
+   * ```jsx
+   * <Transition in={this.state.in} timeout={150}>
+   *   {state => (
+   *     <MyComponent className={`fade fade-${state}`} />
+   *   )}
+   * </Transition>
+   * ```
+   */
+  children: PropTypes.oneOfType([PropTypes.func.isRequired, PropTypes.element.isRequired]).isRequired,
+  /**
+   * Show the component; triggers the enter or exit states
+   */
+  in: PropTypes.bool,
+  /**
+   * By default the child component is mounted immediately along with
+   * the parent `Transition` component. If you want to "lazy mount" the component on the
+   * first `in={true}` you can set `mountOnEnter`. After the first enter transition the component will stay
+   * mounted, even on "exited", unless you also specify `unmountOnExit`.
+   */
+  mountOnEnter: PropTypes.bool,
+  /**
+   * By default the child component stays mounted after it reaches the `'exited'` state.
+   * Set `unmountOnExit` if you'd prefer to unmount the component after it finishes exiting.
+   */
+  unmountOnExit: PropTypes.bool,
+  /**
+   * By default the child component does not perform the enter transition when
+   * it first mounts, regardless of the value of `in`. If you want this
+   * behavior, set both `appear` and `in` to `true`.
+   *
+   * > **Note**: there are no special appear states like `appearing`/`appeared`, this prop
+   * > only adds an additional enter transition. However, in the
+   * > `<CSSTransition>` component that first enter transition does result in
+   * > additional `.appear-*` classes, that way you can choose to style it
+   * > differently.
+   */
+  appear: PropTypes.bool,
+  /**
+   * Enable or disable enter transitions.
+   */
+  enter: PropTypes.bool,
+  /**
+   * Enable or disable exit transitions.
+   */
+  exit: PropTypes.bool,
+  /**
+   * The duration of the transition, in milliseconds.
+   * Required unless `addEndListener` is provided.
+   *
+   * You may specify a single timeout for all transitions:
+   *
+   * ```jsx
+   * timeout={500}
+   * ```
+   *
+   * or individually:
+   *
+   * ```jsx
+   * timeout={{
+   *  appear: 500,
+   *  enter: 300,
+   *  exit: 500,
+   * }}
+   * ```
+   *
+   * - `appear` defaults to the value of `enter`
+   * - `enter` defaults to `0`
+   * - `exit` defaults to `0`
+   *
+   * @type {number | { enter?: number, exit?: number, appear?: number }}
+   */
+  timeout: function timeout(props) {
+    var pt = timeoutsShape;
+    if (!props.addEndListener) pt = pt.isRequired;
+    for (var _len = arguments.length, args = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+      args[_key - 1] = arguments[_key];
+    }
+    return pt.apply(void 0, [props].concat(args));
+  },
+  /**
+   * Add a custom transition end trigger. Called with the transitioning
+   * DOM node and a `done` callback. Allows for more fine grained transition end
+   * logic. Timeouts are still used as a fallback if provided.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * ```jsx
+   * addEndListener={(node, done) => {
+   *   // use the css transitionend event to mark the finish of a transition
+   *   node.addEventListener('transitionend', done, false);
+   * }}
+   * ```
+   */
+  addEndListener: PropTypes.func,
+  /**
+   * Callback fired before the "entering" status is applied. An extra parameter
+   * `isAppearing` is supplied to indicate if the enter stage is occurring on the initial mount
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement, isAppearing: bool) -> void
+   */
+  onEnter: PropTypes.func,
+  /**
+   * Callback fired after the "entering" status is applied. An extra parameter
+   * `isAppearing` is supplied to indicate if the enter stage is occurring on the initial mount
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement, isAppearing: bool)
+   */
+  onEntering: PropTypes.func,
+  /**
+   * Callback fired after the "entered" status is applied. An extra parameter
+   * `isAppearing` is supplied to indicate if the enter stage is occurring on the initial mount
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement, isAppearing: bool) -> void
+   */
+  onEntered: PropTypes.func,
+  /**
+   * Callback fired before the "exiting" status is applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement) -> void
+   */
+  onExit: PropTypes.func,
+  /**
+   * Callback fired after the "exiting" status is applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement) -> void
+   */
+  onExiting: PropTypes.func,
+  /**
+   * Callback fired after the "exited" status is applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed
+   *
+   * @type Function(node: HtmlElement) -> void
+   */
+  onExited: PropTypes.func
+} : {}; // Name the function so it is clearer in the documentation
+
+function noop$2() {}
+Transition.defaultProps = {
+  in: false,
+  mountOnEnter: false,
+  unmountOnExit: false,
+  appear: false,
+  enter: true,
+  exit: true,
+  onEnter: noop$2,
+  onEntering: noop$2,
+  onEntered: noop$2,
+  onExit: noop$2,
+  onExiting: noop$2,
+  onExited: noop$2
+};
+Transition.UNMOUNTED = UNMOUNTED;
+Transition.EXITED = EXITED;
+Transition.ENTERING = ENTERING;
+Transition.ENTERED = ENTERED;
+Transition.EXITING = EXITING;
+
+var _addClass = function addClass$1(node, classes) {
+  return node && classes && classes.split(' ').forEach(function (c) {
+    return addClass(node, c);
+  });
+};
+var removeClass = function removeClass(node, classes) {
+  return node && classes && classes.split(' ').forEach(function (c) {
+    return removeClass$1(node, c);
+  });
+};
+/**
+ * A transition component inspired by the excellent
+ * [ng-animate](https://docs.angularjs.org/api/ngAnimate) library, you should
+ * use it if you're using CSS transitions or animations. It's built upon the
+ * [`Transition`](https://reactcommunity.org/react-transition-group/transition)
+ * component, so it inherits all of its props.
+ *
+ * `CSSTransition` applies a pair of class names during the `appear`, `enter`,
+ * and `exit` states of the transition. The first class is applied and then a
+ * second `*-active` class in order to activate the CSS transition. After the
+ * transition, matching `*-done` class names are applied to persist the
+ * transition state.
+ *
+ * ```jsx
+ * function App() {
+ *   const [inProp, setInProp] = useState(false);
+ *   return (
+ *     <div>
+ *       <CSSTransition in={inProp} timeout={200} classNames="my-node">
+ *         <div>
+ *           {"I'll receive my-node-* classes"}
+ *         </div>
+ *       </CSSTransition>
+ *       <button type="button" onClick={() => setInProp(true)}>
+ *         Click to Enter
+ *       </button>
+ *     </div>
+ *   );
+ * }
+ * ```
+ *
+ * When the `in` prop is set to `true`, the child component will first receive
+ * the class `example-enter`, then the `example-enter-active` will be added in
+ * the next tick. `CSSTransition` [forces a
+ * reflow](https://github.com/reactjs/react-transition-group/blob/5007303e729a74be66a21c3e2205e4916821524b/src/CSSTransition.js#L208-L215)
+ * between before adding the `example-enter-active`. This is an important trick
+ * because it allows us to transition between `example-enter` and
+ * `example-enter-active` even though they were added immediately one after
+ * another. Most notably, this is what makes it possible for us to animate
+ * _appearance_.
+ *
+ * ```css
+ * .my-node-enter {
+ *   opacity: 0;
+ * }
+ * .my-node-enter-active {
+ *   opacity: 1;
+ *   transition: opacity 200ms;
+ * }
+ * .my-node-exit {
+ *   opacity: 1;
+ * }
+ * .my-node-exit-active {
+ *   opacity: 0;
+ *   transition: opacity 200ms;
+ * }
+ * ```
+ *
+ * `*-active` classes represent which styles you want to animate **to**, so it's
+ * important to add `transition` declaration only to them, otherwise transitions
+ * might not behave as intended! This might not be obvious when the transitions
+ * are symmetrical, i.e. when `*-enter-active` is the same as `*-exit`, like in
+ * the example above (minus `transition`), but it becomes apparent in more
+ * complex transitions.
+ *
+ * **Note**: If you're using the
+ * [`appear`](http://reactcommunity.org/react-transition-group/transition#Transition-prop-appear)
+ * prop, make sure to define styles for `.appear-*` classes as well.
+ */
+
+var CSSTransition = /*#__PURE__*/function (_React$Component) {
+  _inheritsLoose(CSSTransition, _React$Component);
+  function CSSTransition() {
+    var _this;
+    for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+      args[_key] = arguments[_key];
+    }
+    _this = _React$Component.call.apply(_React$Component, [this].concat(args)) || this;
+    _this.appliedClasses = {
+      appear: {},
+      enter: {},
+      exit: {}
+    };
+    _this.onEnter = function (maybeNode, maybeAppearing) {
+      var _this$resolveArgument = _this.resolveArguments(maybeNode, maybeAppearing),
+        node = _this$resolveArgument[0],
+        appearing = _this$resolveArgument[1];
+      _this.removeClasses(node, 'exit');
+      _this.addClass(node, appearing ? 'appear' : 'enter', 'base');
+      if (_this.props.onEnter) {
+        _this.props.onEnter(maybeNode, maybeAppearing);
+      }
+    };
+    _this.onEntering = function (maybeNode, maybeAppearing) {
+      var _this$resolveArgument2 = _this.resolveArguments(maybeNode, maybeAppearing),
+        node = _this$resolveArgument2[0],
+        appearing = _this$resolveArgument2[1];
+      var type = appearing ? 'appear' : 'enter';
+      _this.addClass(node, type, 'active');
+      if (_this.props.onEntering) {
+        _this.props.onEntering(maybeNode, maybeAppearing);
+      }
+    };
+    _this.onEntered = function (maybeNode, maybeAppearing) {
+      var _this$resolveArgument3 = _this.resolveArguments(maybeNode, maybeAppearing),
+        node = _this$resolveArgument3[0],
+        appearing = _this$resolveArgument3[1];
+      var type = appearing ? 'appear' : 'enter';
+      _this.removeClasses(node, type);
+      _this.addClass(node, type, 'done');
+      if (_this.props.onEntered) {
+        _this.props.onEntered(maybeNode, maybeAppearing);
+      }
+    };
+    _this.onExit = function (maybeNode) {
+      var _this$resolveArgument4 = _this.resolveArguments(maybeNode),
+        node = _this$resolveArgument4[0];
+      _this.removeClasses(node, 'appear');
+      _this.removeClasses(node, 'enter');
+      _this.addClass(node, 'exit', 'base');
+      if (_this.props.onExit) {
+        _this.props.onExit(maybeNode);
+      }
+    };
+    _this.onExiting = function (maybeNode) {
+      var _this$resolveArgument5 = _this.resolveArguments(maybeNode),
+        node = _this$resolveArgument5[0];
+      _this.addClass(node, 'exit', 'active');
+      if (_this.props.onExiting) {
+        _this.props.onExiting(maybeNode);
+      }
+    };
+    _this.onExited = function (maybeNode) {
+      var _this$resolveArgument6 = _this.resolveArguments(maybeNode),
+        node = _this$resolveArgument6[0];
+      _this.removeClasses(node, 'exit');
+      _this.addClass(node, 'exit', 'done');
+      if (_this.props.onExited) {
+        _this.props.onExited(maybeNode);
+      }
+    };
+    _this.resolveArguments = function (maybeNode, maybeAppearing) {
+      return _this.props.nodeRef ? [_this.props.nodeRef.current, maybeNode] // here `maybeNode` is actually `appearing`
+      : [maybeNode, maybeAppearing];
+    };
+    _this.getClassNames = function (type) {
+      var classNames = _this.props.classNames;
+      var isStringClassNames = typeof classNames === 'string';
+      var prefix = isStringClassNames && classNames ? classNames + "-" : '';
+      var baseClassName = isStringClassNames ? "" + prefix + type : classNames[type];
+      var activeClassName = isStringClassNames ? baseClassName + "-active" : classNames[type + "Active"];
+      var doneClassName = isStringClassNames ? baseClassName + "-done" : classNames[type + "Done"];
+      return {
+        baseClassName: baseClassName,
+        activeClassName: activeClassName,
+        doneClassName: doneClassName
+      };
+    };
+    return _this;
+  }
+  var _proto = CSSTransition.prototype;
+  _proto.addClass = function addClass(node, type, phase) {
+    var className = this.getClassNames(type)[phase + "ClassName"];
+    var _this$getClassNames = this.getClassNames('enter'),
+      doneClassName = _this$getClassNames.doneClassName;
+    if (type === 'appear' && phase === 'done' && doneClassName) {
+      className += " " + doneClassName;
+    } // This is to force a repaint,
+    // which is necessary in order to transition styles when adding a class name.
+
+    if (phase === 'active') {
+      if (node) forceReflow(node);
+    }
+    if (className) {
+      this.appliedClasses[type][phase] = className;
+      _addClass(node, className);
+    }
+  };
+  _proto.removeClasses = function removeClasses(node, type) {
+    var _this$appliedClasses$ = this.appliedClasses[type],
+      baseClassName = _this$appliedClasses$.base,
+      activeClassName = _this$appliedClasses$.active,
+      doneClassName = _this$appliedClasses$.done;
+    this.appliedClasses[type] = {};
+    if (baseClassName) {
+      removeClass(node, baseClassName);
+    }
+    if (activeClassName) {
+      removeClass(node, activeClassName);
+    }
+    if (doneClassName) {
+      removeClass(node, doneClassName);
+    }
+  };
+  _proto.render = function render() {
+    var _this$props = this.props;
+      _this$props.classNames;
+      var props = _objectWithoutPropertiesLoose$1(_this$props, ["classNames"]);
+    return /*#__PURE__*/React$1.createElement(Transition, _extends$1({}, props, {
+      onEnter: this.onEnter,
+      onEntered: this.onEntered,
+      onEntering: this.onEntering,
+      onExit: this.onExit,
+      onExiting: this.onExiting,
+      onExited: this.onExited
+    }));
+  };
+  return CSSTransition;
+}(React$1.Component);
+CSSTransition.defaultProps = {
+  classNames: ''
+};
+CSSTransition.propTypes = browser$1.env.NODE_ENV !== "production" ? _extends$1({}, Transition.propTypes, {
+  /**
+   * The animation classNames applied to the component as it appears, enters,
+   * exits or has finished the transition. A single name can be provided, which
+   * will be suffixed for each stage, e.g. `classNames="fade"` applies:
+   *
+   * - `fade-appear`, `fade-appear-active`, `fade-appear-done`
+   * - `fade-enter`, `fade-enter-active`, `fade-enter-done`
+   * - `fade-exit`, `fade-exit-active`, `fade-exit-done`
+   *
+   * A few details to note about how these classes are applied:
+   *
+   * 1. They are _joined_ with the ones that are already defined on the child
+   *    component, so if you want to add some base styles, you can use
+   *    `className` without worrying that it will be overridden.
+   *
+   * 2. If the transition component mounts with `in={false}`, no classes are
+   *    applied yet. You might be expecting `*-exit-done`, but if you think
+   *    about it, a component cannot finish exiting if it hasn't entered yet.
+   *
+   * 2. `fade-appear-done` and `fade-enter-done` will _both_ be applied. This
+   *    allows you to define different behavior for when appearing is done and
+   *    when regular entering is done, using selectors like
+   *    `.fade-enter-done:not(.fade-appear-done)`. For example, you could apply
+   *    an epic entrance animation when element first appears in the DOM using
+   *    [Animate.css](https://daneden.github.io/animate.css/). Otherwise you can
+   *    simply use `fade-enter-done` for defining both cases.
+   *
+   * Each individual classNames can also be specified independently like:
+   *
+   * ```js
+   * classNames={{
+   *  appear: 'my-appear',
+   *  appearActive: 'my-active-appear',
+   *  appearDone: 'my-done-appear',
+   *  enter: 'my-enter',
+   *  enterActive: 'my-active-enter',
+   *  enterDone: 'my-done-enter',
+   *  exit: 'my-exit',
+   *  exitActive: 'my-active-exit',
+   *  exitDone: 'my-done-exit',
+   * }}
+   * ```
+   *
+   * If you want to set these classes using CSS Modules:
+   *
+   * ```js
+   * import styles from './styles.css';
+   * ```
+   *
+   * you might want to use camelCase in your CSS file, that way could simply
+   * spread them instead of listing them one by one:
+   *
+   * ```js
+   * classNames={{ ...styles }}
+   * ```
+   *
+   * @type {string | {
+   *  appear?: string,
+   *  appearActive?: string,
+   *  appearDone?: string,
+   *  enter?: string,
+   *  enterActive?: string,
+   *  enterDone?: string,
+   *  exit?: string,
+   *  exitActive?: string,
+   *  exitDone?: string,
+   * }}
+   */
+  classNames: classNamesShape,
+  /**
+   * A `<Transition>` callback fired immediately after the 'enter' or 'appear' class is
+   * applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement, isAppearing: bool)
+   */
+  onEnter: PropTypes.func,
+  /**
+   * A `<Transition>` callback fired immediately after the 'enter-active' or
+   * 'appear-active' class is applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement, isAppearing: bool)
+   */
+  onEntering: PropTypes.func,
+  /**
+   * A `<Transition>` callback fired immediately after the 'enter' or
+   * 'appear' classes are **removed** and the `done` class is added to the DOM node.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
+   *
+   * @type Function(node: HtmlElement, isAppearing: bool)
+   */
+  onEntered: PropTypes.func,
+  /**
+   * A `<Transition>` callback fired immediately after the 'exit' class is
+   * applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed
+   *
+   * @type Function(node: HtmlElement)
+   */
+  onExit: PropTypes.func,
+  /**
+   * A `<Transition>` callback fired immediately after the 'exit-active' is applied.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed
+   *
+   * @type Function(node: HtmlElement)
+   */
+  onExiting: PropTypes.func,
+  /**
+   * A `<Transition>` callback fired immediately after the 'exit' classes
+   * are **removed** and the `exit-done` class is added to the DOM node.
+   *
+   * **Note**: when `nodeRef` prop is passed, `node` is not passed
+   *
+   * @type Function(node: HtmlElement)
+   */
+  onExited: PropTypes.func
+}) : {};
+
+function _assertThisInitialized$1(e) {
+  if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+  return e;
+}
+
+/**
+ * Given `this.props.children`, return an object mapping key to child.
+ *
+ * @param {*} children `this.props.children`
+ * @return {object} Mapping of key to child
+ */
+
+function getChildMapping(children, mapFn) {
+  var mapper = function mapper(child) {
+    return mapFn && /*#__PURE__*/reactExports.isValidElement(child) ? mapFn(child) : child;
+  };
+  var result = Object.create(null);
+  if (children) reactExports.Children.map(children, function (c) {
+    return c;
+  }).forEach(function (child) {
+    // run the map function here instead so that the key is the computed one
+    result[child.key] = mapper(child);
+  });
+  return result;
+}
+/**
+ * When you're adding or removing children some may be added or removed in the
+ * same render pass. We want to show *both* since we want to simultaneously
+ * animate elements in and out. This function takes a previous set of keys
+ * and a new set of keys and merges them with its best guess of the correct
+ * ordering. In the future we may expose some of the utilities in
+ * ReactMultiChild to make this easy, but for now React itself does not
+ * directly have this concept of the union of prevChildren and nextChildren
+ * so we implement it here.
+ *
+ * @param {object} prev prev children as returned from
+ * `ReactTransitionChildMapping.getChildMapping()`.
+ * @param {object} next next children as returned from
+ * `ReactTransitionChildMapping.getChildMapping()`.
+ * @return {object} a key set that contains all keys in `prev` and all keys
+ * in `next` in a reasonable order.
+ */
+
+function mergeChildMappings(prev, next) {
+  prev = prev || {};
+  next = next || {};
+  function getValueForKey(key) {
+    return key in next ? next[key] : prev[key];
+  } // For each key of `next`, the list of keys to insert before that key in
+  // the combined list
+
+  var nextKeysPending = Object.create(null);
+  var pendingKeys = [];
+  for (var prevKey in prev) {
+    if (prevKey in next) {
+      if (pendingKeys.length) {
+        nextKeysPending[prevKey] = pendingKeys;
+        pendingKeys = [];
+      }
+    } else {
+      pendingKeys.push(prevKey);
+    }
+  }
+  var i;
+  var childMapping = {};
+  for (var nextKey in next) {
+    if (nextKeysPending[nextKey]) {
+      for (i = 0; i < nextKeysPending[nextKey].length; i++) {
+        var pendingNextKey = nextKeysPending[nextKey][i];
+        childMapping[nextKeysPending[nextKey][i]] = getValueForKey(pendingNextKey);
+      }
+    }
+    childMapping[nextKey] = getValueForKey(nextKey);
+  } // Finally, add the keys which didn't appear before any key in `next`
+
+  for (i = 0; i < pendingKeys.length; i++) {
+    childMapping[pendingKeys[i]] = getValueForKey(pendingKeys[i]);
+  }
+  return childMapping;
+}
+function getProp(child, prop, props) {
+  return props[prop] != null ? props[prop] : child.props[prop];
+}
+function getInitialChildMapping(props, onExited) {
+  return getChildMapping(props.children, function (child) {
+    return /*#__PURE__*/reactExports.cloneElement(child, {
+      onExited: onExited.bind(null, child),
+      in: true,
+      appear: getProp(child, 'appear', props),
+      enter: getProp(child, 'enter', props),
+      exit: getProp(child, 'exit', props)
+    });
+  });
+}
+function getNextChildMapping(nextProps, prevChildMapping, onExited) {
+  var nextChildMapping = getChildMapping(nextProps.children);
+  var children = mergeChildMappings(prevChildMapping, nextChildMapping);
+  Object.keys(children).forEach(function (key) {
+    var child = children[key];
+    if (! /*#__PURE__*/reactExports.isValidElement(child)) return;
+    var hasPrev = key in prevChildMapping;
+    var hasNext = key in nextChildMapping;
+    var prevChild = prevChildMapping[key];
+    var isLeaving = /*#__PURE__*/reactExports.isValidElement(prevChild) && !prevChild.props.in; // item is new (entering)
+
+    if (hasNext && (!hasPrev || isLeaving)) {
+      // console.log('entering', key)
+      children[key] = /*#__PURE__*/reactExports.cloneElement(child, {
+        onExited: onExited.bind(null, child),
+        in: true,
+        exit: getProp(child, 'exit', nextProps),
+        enter: getProp(child, 'enter', nextProps)
+      });
+    } else if (!hasNext && hasPrev && !isLeaving) {
+      // item is old (exiting)
+      // console.log('leaving', key)
+      children[key] = /*#__PURE__*/reactExports.cloneElement(child, {
+        in: false
+      });
+    } else if (hasNext && hasPrev && /*#__PURE__*/reactExports.isValidElement(prevChild)) {
+      // item hasn't changed transition states
+      // copy over the last transition props;
+      // console.log('unchanged', key)
+      children[key] = /*#__PURE__*/reactExports.cloneElement(child, {
+        onExited: onExited.bind(null, child),
+        in: prevChild.props.in,
+        exit: getProp(child, 'exit', nextProps),
+        enter: getProp(child, 'enter', nextProps)
+      });
+    }
+  });
+  return children;
+}
+
+var values$1 = Object.values || function (obj) {
+  return Object.keys(obj).map(function (k) {
+    return obj[k];
+  });
+};
+var defaultProps = {
+  component: 'div',
+  childFactory: function childFactory(child) {
+    return child;
+  }
+};
+/**
+ * The `<TransitionGroup>` component manages a set of transition components
+ * (`<Transition>` and `<CSSTransition>`) in a list. Like with the transition
+ * components, `<TransitionGroup>` is a state machine for managing the mounting
+ * and unmounting of components over time.
+ *
+ * Consider the example below. As items are removed or added to the TodoList the
+ * `in` prop is toggled automatically by the `<TransitionGroup>`.
+ *
+ * Note that `<TransitionGroup>`  does not define any animation behavior!
+ * Exactly _how_ a list item animates is up to the individual transition
+ * component. This means you can mix and match animations across different list
+ * items.
+ */
+
+var TransitionGroup = /*#__PURE__*/function (_React$Component) {
+  _inheritsLoose(TransitionGroup, _React$Component);
+  function TransitionGroup(props, context) {
+    var _this;
+    _this = _React$Component.call(this, props, context) || this;
+    var handleExited = _this.handleExited.bind(_assertThisInitialized$1(_this)); // Initial children should all be entering, dependent on appear
+
+    _this.state = {
+      contextValue: {
+        isMounting: true
+      },
+      handleExited: handleExited,
+      firstRender: true
+    };
+    return _this;
+  }
+  var _proto = TransitionGroup.prototype;
+  _proto.componentDidMount = function componentDidMount() {
+    this.mounted = true;
+    this.setState({
+      contextValue: {
+        isMounting: false
+      }
+    });
+  };
+  _proto.componentWillUnmount = function componentWillUnmount() {
+    this.mounted = false;
+  };
+  TransitionGroup.getDerivedStateFromProps = function getDerivedStateFromProps(nextProps, _ref) {
+    var prevChildMapping = _ref.children,
+      handleExited = _ref.handleExited,
+      firstRender = _ref.firstRender;
+    return {
+      children: firstRender ? getInitialChildMapping(nextProps, handleExited) : getNextChildMapping(nextProps, prevChildMapping, handleExited),
+      firstRender: false
+    };
+  } // node is `undefined` when user provided `nodeRef` prop
+;
+  _proto.handleExited = function handleExited(child, node) {
+    var currentChildMapping = getChildMapping(this.props.children);
+    if (child.key in currentChildMapping) return;
+    if (child.props.onExited) {
+      child.props.onExited(node);
+    }
+    if (this.mounted) {
+      this.setState(function (state) {
+        var children = _extends$1({}, state.children);
+        delete children[child.key];
+        return {
+          children: children
+        };
+      });
+    }
+  };
+  _proto.render = function render() {
+    var _this$props = this.props,
+      Component = _this$props.component,
+      childFactory = _this$props.childFactory,
+      props = _objectWithoutPropertiesLoose$1(_this$props, ["component", "childFactory"]);
+    var contextValue = this.state.contextValue;
+    var children = values$1(this.state.children).map(childFactory);
+    delete props.appear;
+    delete props.enter;
+    delete props.exit;
+    if (Component === null) {
+      return /*#__PURE__*/React$1.createElement(TransitionGroupContext.Provider, {
+        value: contextValue
+      }, children);
+    }
+    return /*#__PURE__*/React$1.createElement(TransitionGroupContext.Provider, {
+      value: contextValue
+    }, /*#__PURE__*/React$1.createElement(Component, props, children));
+  };
+  return TransitionGroup;
+}(React$1.Component);
+TransitionGroup.propTypes = browser$1.env.NODE_ENV !== "production" ? {
+  /**
+   * `<TransitionGroup>` renders a `<div>` by default. You can change this
+   * behavior by providing a `component` prop.
+   * If you use React v16+ and would like to avoid a wrapping `<div>` element
+   * you can pass in `component={null}`. This is useful if the wrapping div
+   * borks your css styles.
+   */
+  component: PropTypes.any,
+  /**
+   * A set of `<Transition>` components, that are toggled `in` and out as they
+   * leave. the `<TransitionGroup>` will inject specific transition props, so
+   * remember to spread them through if you are wrapping the `<Transition>` as
+   * with our `<Fade>` example.
+   *
+   * While this component is meant for multiple `Transition` or `CSSTransition`
+   * children, sometimes you may want to have a single transition child with
+   * content that you want to be transitioned out and in when you change it
+   * (e.g. routes, images etc.) In that case you can change the `key` prop of
+   * the transition child as you change its content, this will cause
+   * `TransitionGroup` to transition the child out and back in.
+   */
+  children: PropTypes.node,
+  /**
+   * A convenience prop that enables or disables appear animations
+   * for all children. Note that specifying this will override any defaults set
+   * on individual children Transitions.
+   */
+  appear: PropTypes.bool,
+  /**
+   * A convenience prop that enables or disables enter animations
+   * for all children. Note that specifying this will override any defaults set
+   * on individual children Transitions.
+   */
+  enter: PropTypes.bool,
+  /**
+   * A convenience prop that enables or disables exit animations
+   * for all children. Note that specifying this will override any defaults set
+   * on individual children Transitions.
+   */
+  exit: PropTypes.bool,
+  /**
+   * You may need to apply reactive updates to a child as it is exiting.
+   * This is generally done by using `cloneElement` however in the case of an exiting
+   * child the element has already been removed and not accessible to the consumer.
+   *
+   * If you do need to update a child as it leaves you can provide a `childFactory`
+   * to wrap every child, even the ones that are leaving.
+   *
+   * @type Function(child: ReactElement) -> ReactElement
+   */
+  childFactory: PropTypes.func
+} : {};
+TransitionGroup.defaultProps = defaultProps;
+
+/**
+ * The `<ReplaceTransition>` component is a specialized `Transition` component
+ * that animates between two children.
+ *
+ * ```jsx
+ * <ReplaceTransition in>
+ *   <Fade><div>I appear first</div></Fade>
+ *   <Fade><div>I replace the above</div></Fade>
+ * </ReplaceTransition>
+ * ```
+ */
+
+var ReplaceTransition = /*#__PURE__*/function (_React$Component) {
+  _inheritsLoose(ReplaceTransition, _React$Component);
+  function ReplaceTransition() {
+    var _this;
+    for (var _len = arguments.length, _args = new Array(_len), _key = 0; _key < _len; _key++) {
+      _args[_key] = arguments[_key];
+    }
+    _this = _React$Component.call.apply(_React$Component, [this].concat(_args)) || this;
+    _this.handleEnter = function () {
+      for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
+        args[_key2] = arguments[_key2];
+      }
+      return _this.handleLifecycle('onEnter', 0, args);
+    };
+    _this.handleEntering = function () {
+      for (var _len3 = arguments.length, args = new Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
+        args[_key3] = arguments[_key3];
+      }
+      return _this.handleLifecycle('onEntering', 0, args);
+    };
+    _this.handleEntered = function () {
+      for (var _len4 = arguments.length, args = new Array(_len4), _key4 = 0; _key4 < _len4; _key4++) {
+        args[_key4] = arguments[_key4];
+      }
+      return _this.handleLifecycle('onEntered', 0, args);
+    };
+    _this.handleExit = function () {
+      for (var _len5 = arguments.length, args = new Array(_len5), _key5 = 0; _key5 < _len5; _key5++) {
+        args[_key5] = arguments[_key5];
+      }
+      return _this.handleLifecycle('onExit', 1, args);
+    };
+    _this.handleExiting = function () {
+      for (var _len6 = arguments.length, args = new Array(_len6), _key6 = 0; _key6 < _len6; _key6++) {
+        args[_key6] = arguments[_key6];
+      }
+      return _this.handleLifecycle('onExiting', 1, args);
+    };
+    _this.handleExited = function () {
+      for (var _len7 = arguments.length, args = new Array(_len7), _key7 = 0; _key7 < _len7; _key7++) {
+        args[_key7] = arguments[_key7];
+      }
+      return _this.handleLifecycle('onExited', 1, args);
+    };
+    return _this;
+  }
+  var _proto = ReplaceTransition.prototype;
+  _proto.handleLifecycle = function handleLifecycle(handler, idx, originalArgs) {
+    var _child$props;
+    var children = this.props.children;
+    var child = React$1.Children.toArray(children)[idx];
+    if (child.props[handler]) (_child$props = child.props)[handler].apply(_child$props, originalArgs);
+    if (this.props[handler]) {
+      var maybeNode = child.props.nodeRef ? undefined : ReactDOM.findDOMNode(this);
+      this.props[handler](maybeNode);
+    }
+  };
+  _proto.render = function render() {
+    var _this$props = this.props,
+      children = _this$props.children,
+      inProp = _this$props.in,
+      props = _objectWithoutPropertiesLoose$1(_this$props, ["children", "in"]);
+    var _React$Children$toArr = React$1.Children.toArray(children),
+      first = _React$Children$toArr[0],
+      second = _React$Children$toArr[1];
+    delete props.onEnter;
+    delete props.onEntering;
+    delete props.onEntered;
+    delete props.onExit;
+    delete props.onExiting;
+    delete props.onExited;
+    return /*#__PURE__*/React$1.createElement(TransitionGroup, props, inProp ? /*#__PURE__*/React$1.cloneElement(first, {
+      key: 'first',
+      onEnter: this.handleEnter,
+      onEntering: this.handleEntering,
+      onEntered: this.handleEntered
+    }) : /*#__PURE__*/React$1.cloneElement(second, {
+      key: 'second',
+      onEnter: this.handleExit,
+      onEntering: this.handleExiting,
+      onEntered: this.handleExited
+    }));
+  };
+  return ReplaceTransition;
+}(React$1.Component);
+ReplaceTransition.propTypes = browser$1.env.NODE_ENV !== "production" ? {
+  in: PropTypes.bool.isRequired,
+  children: function children(props, propName) {
+    if (React$1.Children.count(props[propName]) !== 2) return new Error("\"" + propName + "\" must be exactly two transition components.");
+    return null;
+  }
+} : {};
+
+var _leaveRenders, _enterRenders;
+function areChildrenDifferent(oldChildren, newChildren) {
+  if (oldChildren === newChildren) return false;
+  if (/*#__PURE__*/React$1.isValidElement(oldChildren) && /*#__PURE__*/React$1.isValidElement(newChildren) && oldChildren.key != null && oldChildren.key === newChildren.key) {
+    return false;
+  }
+  return true;
+}
+/**
+ * Enum of modes for SwitchTransition component
+ * @enum { string }
+ */
+
+var modes$1 = {
+  out: 'out-in',
+  in: 'in-out'
+};
+var callHook = function callHook(element, name, cb) {
+  return function () {
+    var _element$props;
+    element.props[name] && (_element$props = element.props)[name].apply(_element$props, arguments);
+    cb();
+  };
+};
+var leaveRenders = (_leaveRenders = {}, _leaveRenders[modes$1.out] = function (_ref) {
+  var current = _ref.current,
+    changeState = _ref.changeState;
+  return /*#__PURE__*/React$1.cloneElement(current, {
+    in: false,
+    onExited: callHook(current, 'onExited', function () {
+      changeState(ENTERING, null);
+    })
+  });
+}, _leaveRenders[modes$1.in] = function (_ref2) {
+  var current = _ref2.current,
+    changeState = _ref2.changeState,
+    children = _ref2.children;
+  return [current, /*#__PURE__*/React$1.cloneElement(children, {
+    in: true,
+    onEntered: callHook(children, 'onEntered', function () {
+      changeState(ENTERING);
+    })
+  })];
+}, _leaveRenders);
+var enterRenders = (_enterRenders = {}, _enterRenders[modes$1.out] = function (_ref3) {
+  var children = _ref3.children,
+    changeState = _ref3.changeState;
+  return /*#__PURE__*/React$1.cloneElement(children, {
+    in: true,
+    onEntered: callHook(children, 'onEntered', function () {
+      changeState(ENTERED, /*#__PURE__*/React$1.cloneElement(children, {
+        in: true
+      }));
+    })
+  });
+}, _enterRenders[modes$1.in] = function (_ref4) {
+  var current = _ref4.current,
+    children = _ref4.children,
+    changeState = _ref4.changeState;
+  return [/*#__PURE__*/React$1.cloneElement(current, {
+    in: false,
+    onExited: callHook(current, 'onExited', function () {
+      changeState(ENTERED, /*#__PURE__*/React$1.cloneElement(children, {
+        in: true
+      }));
+    })
+  }), /*#__PURE__*/React$1.cloneElement(children, {
+    in: true
+  })];
+}, _enterRenders);
+/**
+ * A transition component inspired by the [vue transition modes](https://vuejs.org/v2/guide/transitions.html#Transition-Modes).
+ * You can use it when you want to control the render between state transitions.
+ * Based on the selected mode and the child's key which is the `Transition` or `CSSTransition` component, the `SwitchTransition` makes a consistent transition between them.
+ *
+ * If the `out-in` mode is selected, the `SwitchTransition` waits until the old child leaves and then inserts a new child.
+ * If the `in-out` mode is selected, the `SwitchTransition` inserts a new child first, waits for the new child to enter and then removes the old child.
+ *
+ * **Note**: If you want the animation to happen simultaneously
+ * (that is, to have the old child removed and a new child inserted **at the same time**),
+ * you should use
+ * [`TransitionGroup`](https://reactcommunity.org/react-transition-group/transition-group)
+ * instead.
+ *
+ * ```jsx
+ * function App() {
+ *  const [state, setState] = useState(false);
+ *  return (
+ *    <SwitchTransition>
+ *      <CSSTransition
+ *        key={state ? "Goodbye, world!" : "Hello, world!"}
+ *        addEndListener={(node, done) => node.addEventListener("transitionend", done, false)}
+ *        classNames='fade'
+ *      >
+ *        <button onClick={() => setState(state => !state)}>
+ *          {state ? "Goodbye, world!" : "Hello, world!"}
+ *        </button>
+ *      </CSSTransition>
+ *    </SwitchTransition>
+ *  );
+ * }
+ * ```
+ *
+ * ```css
+ * .fade-enter{
+ *    opacity: 0;
+ * }
+ * .fade-exit{
+ *    opacity: 1;
+ * }
+ * .fade-enter-active{
+ *    opacity: 1;
+ * }
+ * .fade-exit-active{
+ *    opacity: 0;
+ * }
+ * .fade-enter-active,
+ * .fade-exit-active{
+ *    transition: opacity 500ms;
+ * }
+ * ```
+ */
+
+var SwitchTransition = /*#__PURE__*/function (_React$Component) {
+  _inheritsLoose(SwitchTransition, _React$Component);
+  function SwitchTransition() {
+    var _this;
+    for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+      args[_key] = arguments[_key];
+    }
+    _this = _React$Component.call.apply(_React$Component, [this].concat(args)) || this;
+    _this.state = {
+      status: ENTERED,
+      current: null
+    };
+    _this.appeared = false;
+    _this.changeState = function (status, current) {
+      if (current === void 0) {
+        current = _this.state.current;
+      }
+      _this.setState({
+        status: status,
+        current: current
+      });
+    };
+    return _this;
+  }
+  var _proto = SwitchTransition.prototype;
+  _proto.componentDidMount = function componentDidMount() {
+    this.appeared = true;
+  };
+  SwitchTransition.getDerivedStateFromProps = function getDerivedStateFromProps(props, state) {
+    if (props.children == null) {
+      return {
+        current: null
+      };
+    }
+    if (state.status === ENTERING && props.mode === modes$1.in) {
+      return {
+        status: ENTERING
+      };
+    }
+    if (state.current && areChildrenDifferent(state.current, props.children)) {
+      return {
+        status: EXITING
+      };
+    }
+    return {
+      current: /*#__PURE__*/React$1.cloneElement(props.children, {
+        in: true
+      })
+    };
+  };
+  _proto.render = function render() {
+    var _this$props = this.props,
+      children = _this$props.children,
+      mode = _this$props.mode,
+      _this$state = this.state,
+      status = _this$state.status,
+      current = _this$state.current;
+    var data = {
+      children: children,
+      current: current,
+      changeState: this.changeState,
+      status: status
+    };
+    var component;
+    switch (status) {
+      case ENTERING:
+        component = enterRenders[mode](data);
+        break;
+      case EXITING:
+        component = leaveRenders[mode](data);
+        break;
+      case ENTERED:
+        component = current;
+    }
+    return /*#__PURE__*/React$1.createElement(TransitionGroupContext.Provider, {
+      value: {
+        isMounting: !this.appeared
+      }
+    }, component);
+  };
+  return SwitchTransition;
+}(React$1.Component);
+SwitchTransition.propTypes = browser$1.env.NODE_ENV !== "production" ? {
+  /**
+   * Transition modes.
+   * `out-in`: Current element transitions out first, then when complete, the new element transitions in.
+   * `in-out`: New element transitions in first, then when complete, the current element transitions out.
+   *
+   * @type {'out-in'|'in-out'}
+   */
+  mode: PropTypes.oneOf([modes$1.in, modes$1.out]),
+  /**
+   * Any `Transition` or `CSSTransition` component.
+   */
+  children: PropTypes.oneOfType([PropTypes.element.isRequired])
+} : {};
+SwitchTransition.defaultProps = {
+  mode: modes$1.out
+};
+
+const EMPTY = [];
+
+/**
+ * A React.useEffect equivalent that runs once, when the component is mounted.
+ */
+function useOnMount(fn) {
+  // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler -- no need to put `fn` in the dependency array
+  /* eslint-disable react-hooks/exhaustive-deps */
+  reactExports.useEffect(fn, EMPTY);
+  /* eslint-enable react-hooks/exhaustive-deps */
+}
+
+class Timeout {
+  static create() {
+    return new Timeout();
+  }
+  currentId = null;
+
+  /**
+   * Executes `fn` after `delay`, clearing any previously scheduled call.
+   */
+  start(delay, fn) {
+    this.clear();
+    this.currentId = setTimeout(() => {
+      this.currentId = null;
+      fn();
+    }, delay);
+  }
+  clear = () => {
+    if (this.currentId !== null) {
+      clearTimeout(this.currentId);
+      this.currentId = null;
+    }
+  };
+  disposeEffect = () => {
+    return this.clear;
+  };
+}
+function useTimeout() {
+  const timeout = useLazyRef(Timeout.create).current;
+  useOnMount(timeout.disposeEffect);
+  return timeout;
+}
+
+function Ripple(props) {
+  const {
+    className,
+    classes,
+    pulsate = false,
+    rippleX,
+    rippleY,
+    rippleSize,
+    in: inProp,
+    onExited,
+    timeout
+  } = props;
+  const [leaving, setLeaving] = reactExports.useState(false);
+  const rippleClassName = clsx(className, classes.ripple, classes.rippleVisible, pulsate && classes.ripplePulsate);
+  const rippleStyles = {
+    width: rippleSize,
+    height: rippleSize,
+    top: -(rippleSize / 2) + rippleY,
+    left: -(rippleSize / 2) + rippleX
+  };
+  const childClassName = clsx(classes.child, leaving && classes.childLeaving, pulsate && classes.childPulsate);
+  if (!inProp && !leaving) {
+    setLeaving(true);
+  }
+  reactExports.useEffect(() => {
+    if (!inProp && onExited != null) {
+      // react-transition-group#onExited
+      const timeoutId = setTimeout(onExited, timeout);
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+    return undefined;
+  }, [onExited, inProp, timeout]);
+  return /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+    className: rippleClassName,
+    style: rippleStyles,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+      className: childClassName
+    })
+  });
+}
+process.env.NODE_ENV !== "production" ? Ripple.propTypes /* remove-proptypes */ = {
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object.isRequired,
+  className: PropTypes.string,
+  /**
+   * @ignore - injected from TransitionGroup
+   */
+  in: PropTypes.bool,
+  /**
+   * @ignore - injected from TransitionGroup
+   */
+  onExited: PropTypes.func,
+  /**
+   * If `true`, the ripple pulsates, typically indicating the keyboard focus state of an element.
+   */
+  pulsate: PropTypes.bool,
+  /**
+   * Diameter of the ripple.
+   */
+  rippleSize: PropTypes.number,
+  /**
+   * Horizontal position of the ripple center.
+   */
+  rippleX: PropTypes.number,
+  /**
+   * Vertical position of the ripple center.
+   */
+  rippleY: PropTypes.number,
+  /**
+   * exit delay
+   */
+  timeout: PropTypes.number.isRequired
+} : void 0;
+
+const touchRippleClasses = generateUtilityClasses('MuiTouchRipple', ['root', 'ripple', 'rippleVisible', 'ripplePulsate', 'child', 'childLeaving', 'childPulsate']);
+var touchRippleClasses$1 = touchRippleClasses;
+
+const DURATION = 550;
+const DELAY_RIPPLE = 80;
+const enterKeyframe = keyframes`
+  0% {
+    transform: scale(0);
+    opacity: 0.1;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+`;
+const exitKeyframe = keyframes`
+  0% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+`;
+const pulsateKeyframe = keyframes`
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(0.92);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+`;
+const TouchRippleRoot = styled$1('span', {
+  name: 'MuiTouchRipple',
+  slot: 'Root'
+})({
+  overflow: 'hidden',
+  pointerEvents: 'none',
+  position: 'absolute',
+  zIndex: 0,
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+  borderRadius: 'inherit'
+});
+
+// This `styled()` function invokes keyframes. `styled-components` only supports keyframes
+// in string templates. Do not convert these styles in JS object as it will break.
+const TouchRippleRipple = styled$1(Ripple, {
+  name: 'MuiTouchRipple',
+  slot: 'Ripple'
+})`
+  opacity: 0;
+  position: absolute;
+
+  &.${touchRippleClasses$1.rippleVisible} {
+    opacity: 0.3;
+    transform: scale(1);
+    animation-name: ${enterKeyframe};
+    animation-duration: ${DURATION}ms;
+    animation-timing-function: ${({
+  theme
+}) => theme.transitions.easing.easeInOut};
+  }
+
+  &.${touchRippleClasses$1.ripplePulsate} {
+    animation-duration: ${({
+  theme
+}) => theme.transitions.duration.shorter}ms;
+  }
+
+  & .${touchRippleClasses$1.child} {
+    opacity: 1;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background-color: currentColor;
+  }
+
+  & .${touchRippleClasses$1.childLeaving} {
+    opacity: 0;
+    animation-name: ${exitKeyframe};
+    animation-duration: ${DURATION}ms;
+    animation-timing-function: ${({
+  theme
+}) => theme.transitions.easing.easeInOut};
+  }
+
+  & .${touchRippleClasses$1.childPulsate} {
+    position: absolute;
+    /* @noflip */
+    left: 0px;
+    top: 0;
+    animation-name: ${pulsateKeyframe};
+    animation-duration: 2500ms;
+    animation-timing-function: ${({
+  theme
+}) => theme.transitions.easing.easeInOut};
+    animation-iteration-count: infinite;
+    animation-delay: 200ms;
+  }
+`;
+
+/**
+ * @ignore - internal component.
+ *
+ * TODO v5: Make private
+ */
+const TouchRipple = /*#__PURE__*/reactExports.forwardRef(function TouchRipple(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiTouchRipple'
+  });
+  const {
+    center: centerProp = false,
+    classes = {},
+    className,
+    ...other
+  } = props;
+  const [ripples, setRipples] = reactExports.useState([]);
+  const nextKey = reactExports.useRef(0);
+  const rippleCallback = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (rippleCallback.current) {
+      rippleCallback.current();
+      rippleCallback.current = null;
+    }
+  }, [ripples]);
+
+  // Used to filter out mouse emulated events on mobile.
+  const ignoringMouseDown = reactExports.useRef(false);
+  // We use a timer in order to only show the ripples for touch "click" like events.
+  // We don't want to display the ripple for touch scroll events.
+  const startTimer = useTimeout();
+
+  // This is the hook called once the previous timeout is ready.
+  const startTimerCommit = reactExports.useRef(null);
+  const container = reactExports.useRef(null);
+  const startCommit = reactExports.useCallback(params => {
+    const {
+      pulsate,
+      rippleX,
+      rippleY,
+      rippleSize,
+      cb
+    } = params;
+    setRipples(oldRipples => [...oldRipples, /*#__PURE__*/jsxRuntimeExports.jsx(TouchRippleRipple, {
+      classes: {
+        ripple: clsx(classes.ripple, touchRippleClasses$1.ripple),
+        rippleVisible: clsx(classes.rippleVisible, touchRippleClasses$1.rippleVisible),
+        ripplePulsate: clsx(classes.ripplePulsate, touchRippleClasses$1.ripplePulsate),
+        child: clsx(classes.child, touchRippleClasses$1.child),
+        childLeaving: clsx(classes.childLeaving, touchRippleClasses$1.childLeaving),
+        childPulsate: clsx(classes.childPulsate, touchRippleClasses$1.childPulsate)
+      },
+      timeout: DURATION,
+      pulsate: pulsate,
+      rippleX: rippleX,
+      rippleY: rippleY,
+      rippleSize: rippleSize
+    }, nextKey.current)]);
+    nextKey.current += 1;
+    rippleCallback.current = cb;
+  }, [classes]);
+  const start = reactExports.useCallback((event = {}, options = {}, cb = () => {}) => {
+    const {
+      pulsate = false,
+      center = centerProp || options.pulsate,
+      fakeElement = false // For test purposes
+    } = options;
+    if (event?.type === 'mousedown' && ignoringMouseDown.current) {
+      ignoringMouseDown.current = false;
+      return;
+    }
+    if (event?.type === 'touchstart') {
+      ignoringMouseDown.current = true;
+    }
+    const element = fakeElement ? null : container.current;
+    const rect = element ? element.getBoundingClientRect() : {
+      width: 0,
+      height: 0,
+      left: 0,
+      top: 0
+    };
+
+    // Get the size of the ripple
+    let rippleX;
+    let rippleY;
+    let rippleSize;
+    if (center || event === undefined || event.clientX === 0 && event.clientY === 0 || !event.clientX && !event.touches) {
+      rippleX = Math.round(rect.width / 2);
+      rippleY = Math.round(rect.height / 2);
+    } else {
+      const {
+        clientX,
+        clientY
+      } = event.touches && event.touches.length > 0 ? event.touches[0] : event;
+      rippleX = Math.round(clientX - rect.left);
+      rippleY = Math.round(clientY - rect.top);
+    }
+    if (center) {
+      rippleSize = Math.sqrt((2 * rect.width ** 2 + rect.height ** 2) / 3);
+
+      // For some reason the animation is broken on Mobile Chrome if the size is even.
+      if (rippleSize % 2 === 0) {
+        rippleSize += 1;
+      }
+    } else {
+      const sizeX = Math.max(Math.abs((element ? element.clientWidth : 0) - rippleX), rippleX) * 2 + 2;
+      const sizeY = Math.max(Math.abs((element ? element.clientHeight : 0) - rippleY), rippleY) * 2 + 2;
+      rippleSize = Math.sqrt(sizeX ** 2 + sizeY ** 2);
+    }
+
+    // Touch devices
+    if (event?.touches) {
+      // check that this isn't another touchstart due to multitouch
+      // otherwise we will only clear a single timer when unmounting while two
+      // are running
+      if (startTimerCommit.current === null) {
+        // Prepare the ripple effect.
+        startTimerCommit.current = () => {
+          startCommit({
+            pulsate,
+            rippleX,
+            rippleY,
+            rippleSize,
+            cb
+          });
+        };
+        // Delay the execution of the ripple effect.
+        // We have to make a tradeoff with this delay value.
+        startTimer.start(DELAY_RIPPLE, () => {
+          if (startTimerCommit.current) {
+            startTimerCommit.current();
+            startTimerCommit.current = null;
+          }
+        });
+      }
+    } else {
+      startCommit({
+        pulsate,
+        rippleX,
+        rippleY,
+        rippleSize,
+        cb
+      });
+    }
+  }, [centerProp, startCommit, startTimer]);
+  const pulsate = reactExports.useCallback(() => {
+    start({}, {
+      pulsate: true
+    });
+  }, [start]);
+  const stop = reactExports.useCallback((event, cb) => {
+    startTimer.clear();
+
+    // The touch interaction occurs too quickly.
+    // We still want to show ripple effect.
+    if (event?.type === 'touchend' && startTimerCommit.current) {
+      startTimerCommit.current();
+      startTimerCommit.current = null;
+      startTimer.start(0, () => {
+        stop(event, cb);
+      });
+      return;
+    }
+    startTimerCommit.current = null;
+    setRipples(oldRipples => {
+      if (oldRipples.length > 0) {
+        return oldRipples.slice(1);
+      }
+      return oldRipples;
+    });
+    rippleCallback.current = cb;
+  }, [startTimer]);
+  reactExports.useImperativeHandle(ref, () => ({
+    pulsate,
+    start,
+    stop
+  }), [pulsate, start, stop]);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(TouchRippleRoot, {
+    className: clsx(touchRippleClasses$1.root, classes.root, className),
+    ref: container,
+    ...other,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(TransitionGroup, {
+      component: null,
+      exit: true,
+      children: ripples
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? TouchRipple.propTypes /* remove-proptypes */ = {
+  /**
+   * If `true`, the ripple starts at the center of the component
+   * rather than at the point of interaction.
+   */
+  center: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string
+} : void 0;
+var TouchRipple$1 = TouchRipple;
+
+function getButtonBaseUtilityClass(slot) {
+  return generateUtilityClass('MuiButtonBase', slot);
+}
+const buttonBaseClasses = generateUtilityClasses('MuiButtonBase', ['root', 'disabled', 'focusVisible']);
+var buttonBaseClasses$1 = buttonBaseClasses;
+
+const useUtilityClasses$w = ownerState => {
+  const {
+    disabled,
+    focusVisible,
+    focusVisibleClassName,
+    suppressFocusVisible,
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root', disabled && 'disabled', focusVisible && !suppressFocusVisible && 'focusVisible']
+  };
+  const composedClasses = composeClasses(slots, getButtonBaseUtilityClass, classes);
+  if (focusVisible && !suppressFocusVisible && focusVisibleClassName) {
+    composedClasses.root += ` ${focusVisibleClassName}`;
+  }
+  return composedClasses;
+};
+const ButtonBaseRoot = styled$1('button', {
+  name: 'MuiButtonBase',
+  slot: 'Root'
+})({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  position: 'relative',
+  boxSizing: 'border-box',
+  WebkitTapHighlightColor: 'transparent',
+  backgroundColor: 'transparent',
+  // Reset default value
+  // We disable the focus ring for mouse, touch and keyboard users.
+  outline: 0,
+  border: 0,
+  margin: 0,
+  // Remove the margin in Safari
+  borderRadius: 0,
+  padding: 0,
+  // Remove the padding in Firefox
+  cursor: 'pointer',
+  userSelect: 'none',
+  verticalAlign: 'middle',
+  MozAppearance: 'none',
+  // Reset
+  WebkitAppearance: 'none',
+  // Reset
+  textDecoration: 'none',
+  // So we take precedent over the style of a native <a /> element.
+  color: 'inherit',
+  '&::-moz-focus-inner': {
+    borderStyle: 'none' // Remove Firefox dotted outline.
+  },
+  [`&.${buttonBaseClasses$1.disabled}`]: {
+    pointerEvents: 'none',
+    // Disable link interactions
+    cursor: 'default'
+  },
+  '@media print': {
+    colorAdjust: 'exact'
+  }
+});
+
+/**
+ * `ButtonBase` contains as few styles as possible.
+ * It aims to be a simple building block for creating a button.
+ * It contains a load of style reset and some focus/ripple logic.
+ */
+const ButtonBase = /*#__PURE__*/reactExports.forwardRef(function ButtonBase(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiButtonBase'
+  });
+  const {
+    action,
+    centerRipple = false,
+    children,
+    className,
+    component = 'button',
+    disabled = false,
+    disableRipple = false,
+    disableTouchRipple = false,
+    focusRipple = false,
+    focusVisibleClassName,
+    /* eslint-disable react/prop-types */
+    // replaces internal handling in Chip, other components can opt-in individually to use this in the future
+    focusableWhenDisabled,
+    // escape hatch to suppress the focusVisible state and callback
+    // used by anchored <Menu>s to to suppress focus visible styling when opened with a pointer
+    suppressFocusVisible = false,
+    // private prop to allow native vs non-native button props to be resolved before mount
+    internalNativeButton: internalNativeButtonProp,
+    /* eslint-enable react/prop-types */
+    LinkComponent = 'a',
+    nativeButton: nativeButtonProp,
+    onBlur,
+    onClick: onClickProp,
+    onContextMenu,
+    onDragLeave,
+    onFocus,
+    onFocusVisible,
+    onKeyDown: onKeyDownProp,
+    onKeyUp: onKeyUpProp,
+    onMouseDown,
+    onMouseLeave,
+    onMouseUp,
+    onTouchEnd,
+    onTouchMove,
+    onTouchStart,
+    tabIndex = 0,
+    TouchRippleProps,
+    touchRippleRef,
+    type,
+    ...other
+  } = props;
+  const isLink = Boolean(other.href || other.to);
+  const hasFormAction = Boolean(other.formAction);
+  let ComponentProp = component;
+  if (ComponentProp === 'button' && isLink) {
+    ComponentProp = LinkComponent;
+  }
+  const internalNativeButton = typeof ComponentProp === 'string' ? ComponentProp === 'button' : internalNativeButtonProp ?? false;
+  const nativeButton = nativeButtonProp ?? internalNativeButton;
+  const ripple = useLazyRipple();
+  const handleRippleRef = useForkRef(ripple.ref, touchRippleRef);
+  const [focusVisible, setFocusVisible] = reactExports.useState(false);
+  if ((disabled || suppressFocusVisible) && focusVisible) {
+    setFocusVisible(false);
+  }
+  const handleBeforeKeyDown = useEventCallback(event => {
+    // Check if key is already down to avoid repeats being counted as multiple activations
+    if (focusRipple && !event.repeat && focusVisible && event.key === ' ') {
+      ripple.stop(event, () => {
+        ripple.start(event);
+      });
+    }
+  });
+  const handleBeforeKeyUp = useEventCallback(event => {
+    // calling preventDefault in keyUp on a <button> will not dispatch a click event if Space is pressed
+    // https://codesandbox.io/p/sandbox/button-keyup-preventdefault-dn7f0
+    if (focusRipple && event.key === ' ' && focusVisible && !event.defaultPrevented) {
+      ripple.stop(event, () => {
+        ripple.pulsate(event);
+      });
+    }
+  });
+  const {
+    getButtonProps,
+    rootRef: buttonRef
+  } = useButtonBase({
+    nativeButton,
+    nativeButtonProp,
+    internalNativeButton,
+    allowInferredHostMismatch: isLink || typeof ComponentProp === 'string',
+    disabled,
+    type,
+    hasFormAction,
+    tabIndex,
+    onBeforeKeyDown: handleBeforeKeyDown,
+    onBeforeKeyUp: handleBeforeKeyUp
+  });
+  const {
+    onClick,
+    onKeyDown,
+    onKeyUp,
+    ...buttonProps
+  } = getButtonProps({
+    onClick: onClickProp,
+    onKeyDown: onKeyDownProp,
+    onKeyUp: onKeyUpProp
+  });
+  reactExports.useImperativeHandle(action, () => ({
+    focusVisible: () => {
+      setFocusVisible(true);
+      buttonRef.current.focus();
+    }
+  }), [buttonRef]);
+  const enableTouchRipple = ripple.shouldMount && !disableRipple && !disabled;
+  reactExports.useEffect(() => {
+    if (focusVisible && focusRipple && !disableRipple) {
+      ripple.pulsate();
+    }
+  }, [disableRipple, focusRipple, focusVisible, ripple]);
+  const handleMouseDown = useRippleHandler(ripple, 'start', onMouseDown, disableTouchRipple);
+  const handleContextMenu = useRippleHandler(ripple, 'stop', onContextMenu, disableTouchRipple);
+  const handleDragLeave = useRippleHandler(ripple, 'stop', onDragLeave, disableTouchRipple);
+  const handleMouseUp = useRippleHandler(ripple, 'stop', onMouseUp, disableTouchRipple);
+  const handleMouseLeave = useRippleHandler(ripple, 'stop', event => {
+    if (focusVisible) {
+      event.preventDefault();
+    }
+    if (onMouseLeave) {
+      onMouseLeave(event);
+    }
+  }, disableTouchRipple);
+  const handleTouchStart = useRippleHandler(ripple, 'start', onTouchStart, disableTouchRipple);
+  const handleTouchEnd = useRippleHandler(ripple, 'stop', onTouchEnd, disableTouchRipple);
+  const handleTouchMove = useRippleHandler(ripple, 'stop', onTouchMove, disableTouchRipple);
+  const handleBlur = useRippleHandler(ripple, 'stop', event => {
+    if (!isFocusVisible(event.target)) {
+      setFocusVisible(false);
+    }
+    if (onBlur) {
+      onBlur(event);
+    }
+  }, false);
+  const handleFocus = useEventCallback(event => {
+    // Fix for https://github.com/facebook/react/issues/7769
+    if (!buttonRef.current) {
+      buttonRef.current = event.currentTarget;
+    }
+    if (!suppressFocusVisible && isFocusVisible(event.target)) {
+      setFocusVisible(true);
+      if (onFocusVisible) {
+        onFocusVisible(event);
+      }
+    }
+    if (onFocus) {
+      onFocus(event);
+    }
+  });
+  const linkProps = {};
+  if (isLink) {
+    linkProps.tabIndex = disabled ? -1 : tabIndex;
+    if (disabled) {
+      linkProps['aria-disabled'] = disabled;
+    }
+    linkProps.type = type;
+  }
+  const handleRef = useForkRef(ref, buttonRef);
+  const ownerState = {
+    ...props,
+    centerRipple,
+    component,
+    disabled,
+    disableRipple,
+    disableTouchRipple,
+    focusRipple,
+    suppressFocusVisible,
+    tabIndex,
+    focusVisible
+  };
+  const classes = useUtilityClasses$w(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(ButtonBaseRoot, {
+    as: ComponentProp,
+    className: clsx(classes.root, className),
+    ownerState: ownerState,
+    onBlur: handleBlur,
+    onClick: onClick,
+    onContextMenu: handleContextMenu,
+    onFocus: handleFocus,
+    onKeyDown: onKeyDown,
+    onKeyUp: onKeyUp,
+    onMouseDown: handleMouseDown,
+    onMouseLeave: handleMouseLeave,
+    onMouseUp: handleMouseUp,
+    onDragLeave: handleDragLeave,
+    onTouchEnd: handleTouchEnd,
+    onTouchMove: handleTouchMove,
+    onTouchStart: handleTouchStart,
+    ref: handleRef,
+    ...(isLink ? linkProps : buttonProps),
+    ...other,
+    children: [children, enableTouchRipple ? /*#__PURE__*/jsxRuntimeExports.jsx(TouchRipple$1, {
+      ref: handleRippleRef,
+      center: centerRipple,
+      ...TouchRippleProps
+    }) : null]
+  });
+});
+function useRippleHandler(ripple, rippleAction, eventCallback, skipRippleAction = false) {
+  return useEventCallback(event => {
+    if (eventCallback) {
+      eventCallback(event);
+    }
+    if (!skipRippleAction) {
+      ripple[rippleAction](event);
+    }
+    return true;
+  });
+}
+process.env.NODE_ENV !== "production" ? ButtonBase.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * A ref for imperative actions.
+   * It currently only supports `focusVisible()` action.
+   */
+  action: refType$1,
+  /**
+   * If `true`, the ripples are centered.
+   * They won't start at the cursor interaction position.
+   * @default false
+   */
+  centerRipple: PropTypes.bool,
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: elementTypeAcceptingRef$1,
+  /**
+   * If `true`, the component is disabled.
+   * @default false
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the ripple effect is disabled.
+   *
+   * ⚠️ Without a ripple there is no styling for :focus-visible by default. Be sure
+   * to highlight the element by applying separate styles with the `.Mui-focusVisible` class.
+   * @default false
+   */
+  disableRipple: PropTypes.bool,
+  /**
+   * If `true`, the touch ripple effect is disabled.
+   * @default false
+   */
+  disableTouchRipple: PropTypes.bool,
+  /**
+   * If `true`, the base button will have a keyboard focus ripple.
+   * @default false
+   */
+  focusRipple: PropTypes.bool,
+  /**
+   * This prop can help identify which element has keyboard focus.
+   * The class name will be applied when the element gains the focus through keyboard interaction.
+   * It's a polyfill for the [CSS :focus-visible selector](https://drafts.csswg.org/selectors-4/#the-focus-visible-pseudo).
+   * The rationale for using this feature [is explained here](https://github.com/WICG/focus-visible/blob/HEAD/explainer.md).
+   * A [polyfill can be used](https://github.com/WICG/focus-visible) to apply a `focus-visible` class to other components
+   * if needed.
+   */
+  focusVisibleClassName: PropTypes.string,
+  /**
+   * @ignore
+   */
+  formAction: PropTypes.oneOfType([PropTypes.func, PropTypes.string]),
+  /**
+   * @ignore
+   */
+  href: PropTypes /* @typescript-to-proptypes-ignore */.any,
+  /**
+   * The component used to render a link when the `href` prop is provided.
+   * @default 'a'
+   */
+  LinkComponent: PropTypes.elementType,
+  /**
+   * Whether the custom component is expected to render a native `<button>` element
+   * when passing a React component to the `component` or `slots` prop.
+   */
+  nativeButton: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  onBlur: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onClick: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onContextMenu: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onDragLeave: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onFocus: PropTypes.func,
+  /**
+   * Callback fired when the component is focused with a keyboard.
+   * We trigger a `onFocus` callback too.
+   */
+  onFocusVisible: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onKeyDown: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onKeyUp: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onMouseDown: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onMouseLeave: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onMouseUp: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onTouchEnd: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onTouchMove: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onTouchStart: PropTypes.func,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * @default 0
+   */
+  tabIndex: PropTypes.number,
+  /**
+   * Props applied to the `TouchRipple` element.
+   */
+  TouchRippleProps: PropTypes.object,
+  /**
+   * A ref that points to the `TouchRipple` element.
+   */
+  touchRippleRef: PropTypes.oneOfType([PropTypes.func, PropTypes.shape({
+    current: PropTypes.shape({
+      pulsate: PropTypes.func.isRequired,
+      start: PropTypes.func.isRequired,
+      stop: PropTypes.func.isRequired
+    })
+  })]),
+  /**
+   * The HTML [`type`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#type)
+   * attribute applied to `button` and `a` elements.
+   * Ignored when rendering non-native buttons.
+   * @default 'button'
+   */
+  type: PropTypes.string
+} : void 0;
+var ButtonBase$1 = ButtonBase;
+
+function getSwitchBaseUtilityClass(slot) {
+  return generateUtilityClass('PrivateSwitchBase', slot);
+}
+generateUtilityClasses('PrivateSwitchBase', ['root', 'checked', 'disabled', 'input', 'edgeStart', 'edgeEnd']);
+
+/**
+ * Determines if a given element is a DOM element name (i.e. not a React component).
+ */
+function isHostComponent(element) {
+  return typeof element === 'string';
+}
+
+/**
+ * Type of the ownerState based on the type of an element it applies to.
+ * This resolves to the provided OwnerState for React components and `undefined` for host components.
+ * Falls back to `OwnerState | undefined` when the exact type can't be determined in development time.
+ */
+
+/**
+ * Appends the ownerState object to the props, merging with the existing one if necessary.
+ *
+ * @param elementType Type of the element that owns the `existingProps`. If the element is a DOM node or undefined, `ownerState` is not applied.
+ * @param otherProps Props of the element.
+ * @param ownerState
+ */
+function appendOwnerState(elementType, otherProps, ownerState) {
+  if (elementType === undefined || isHostComponent(elementType)) {
+    return otherProps;
+  }
+  return {
+    ...otherProps,
+    ownerState: {
+      ...otherProps.ownerState,
+      ...ownerState
+    }
+  };
+}
+
+/**
+ * If `componentProps` is a function, calls it with the provided `ownerState`.
+ * Otherwise, just returns `componentProps`.
+ */
+function resolveComponentProps(componentProps, ownerState, slotState) {
+  if (typeof componentProps === 'function') {
+    return componentProps(ownerState, slotState);
+  }
+  return componentProps;
+}
+
+// Brought from [Base UI](https://github.com/mui/base-ui/blob/master/packages/react/src/merge-props/mergeProps.ts#L119)
+// Use it directly from Base UI once it's a package dependency.
+function isEventHandler(key, value) {
+  // This approach is more efficient than using a regex.
+  const thirdCharCode = key.charCodeAt(2);
+  return key[0] === 'o' && key[1] === 'n' && thirdCharCode >= 65 /* A */ && thirdCharCode <= 90 /* Z */ && typeof value === 'function';
+}
+
+/**
+ * Extracts event handlers from a given object.
+ * A prop is considered an event handler if it is a function and its name starts with `on`.
+ *
+ * @param object An object to extract event handlers from.
+ */
+function extractEventHandlers(object) {
+  if (object === undefined) {
+    return {};
+  }
+  const result = {};
+  for (const prop of Object.keys(object)) {
+    if (isEventHandler(prop, object[prop])) {
+      result[prop] = object[prop];
+    }
+  }
+  return result;
+}
+
+/**
+ * Removes event handlers from the given object.
+ * A field is considered an event handler if it is a function with a name beginning with `on`.
+ *
+ * @param object Object to remove event handlers from.
+ * @returns Object with event handlers removed.
+ */
+function omitEventHandlers(object) {
+  if (object === undefined) {
+    return {};
+  }
+  const result = {};
+  Object.keys(object).filter(prop => !(prop.match(/^on[A-Z]/) && typeof object[prop] === 'function')).forEach(prop => {
+    result[prop] = object[prop];
+  });
+  return result;
+}
+
+/**
+ * Merges the slot component internal props (usually coming from a hook)
+ * with the externally provided ones.
+ *
+ * The merge order is (the latter overrides the former):
+ * 1. The internal props (specified as a getter function to work with get*Props hook result)
+ * 2. Additional props (specified internally on a Base UI component)
+ * 3. External props specified on the owner component. These should only be used on a root slot.
+ * 4. External props specified in the `slotProps.*` prop.
+ * 5. The `className` prop - combined from all the above.
+ * @param parameters
+ * @returns
+ */
+function mergeSlotProps$1(parameters) {
+  const {
+    getSlotProps,
+    additionalProps,
+    externalSlotProps,
+    externalForwardedProps,
+    className
+  } = parameters;
+  if (!getSlotProps) {
+    // The simpler case - getSlotProps is not defined, so no internal event handlers are defined,
+    // so we can simply merge all the props without having to worry about extracting event handlers.
+    const joinedClasses = clsx(additionalProps?.className, className, externalForwardedProps?.className, externalSlotProps?.className);
+    const mergedStyle = {
+      ...additionalProps?.style,
+      ...externalForwardedProps?.style,
+      ...externalSlotProps?.style
+    };
+    const props = {
+      ...additionalProps,
+      ...externalForwardedProps,
+      ...externalSlotProps
+    };
+    if (joinedClasses.length > 0) {
+      props.className = joinedClasses;
+    }
+    if (Object.keys(mergedStyle).length > 0) {
+      props.style = mergedStyle;
+    }
+    return {
+      props,
+      internalRef: undefined
+    };
+  }
+
+  // In this case, getSlotProps is responsible for calling the external event handlers.
+  // We don't need to include them in the merged props because of this.
+
+  const eventHandlers = extractEventHandlers({
+    ...externalForwardedProps,
+    ...externalSlotProps
+  });
+  const componentsPropsWithoutEventHandlers = omitEventHandlers(externalSlotProps);
+  const otherPropsWithoutEventHandlers = omitEventHandlers(externalForwardedProps);
+  const internalSlotProps = getSlotProps(eventHandlers);
+
+  // The order of classes is important here.
+  // Emotion (that we use in libraries consuming Base UI) depends on this order
+  // to properly override style. It requires the most important classes to be last
+  // (see https://github.com/mui/material-ui/pull/33205) for the related discussion.
+  const joinedClasses = clsx(internalSlotProps?.className, additionalProps?.className, className, externalForwardedProps?.className, externalSlotProps?.className);
+  const mergedStyle = {
+    ...internalSlotProps?.style,
+    ...additionalProps?.style,
+    ...externalForwardedProps?.style,
+    ...externalSlotProps?.style
+  };
+  const props = {
+    ...internalSlotProps,
+    ...additionalProps,
+    ...otherPropsWithoutEventHandlers,
+    ...componentsPropsWithoutEventHandlers
+  };
+  if (joinedClasses.length > 0) {
+    props.className = joinedClasses;
+  }
+  if (Object.keys(mergedStyle).length > 0) {
+    props.style = mergedStyle;
+  }
+  return {
+    props,
+    internalRef: internalSlotProps.ref
+  };
+}
+
+/**
+ * An internal function to create a Material UI slot.
+ *
+ * This is an advanced version of Base UI `useSlotProps` because Material UI allows leaf component to be customized via `component` prop
+ * while Base UI does not need to support leaf component customization.
+ *
+ * @param {string} name: name of the slot
+ * @param {object} parameters
+ * @returns {[Slot, slotProps]} The slot's React component and the slot's props
+ *
+ * Note: the returned slot's props
+ * - will never contain `component` prop.
+ * - might contain `as` prop.
+ */
+function useSlot(
+/**
+ * The slot's name. All Material UI components should have `root` slot.
+ *
+ * If the name is `root`, the logic behaves differently from other slots,
+ * e.g. the `externalForwardedProps` are spread to `root` slot but not other slots.
+ */
+name, parameters) {
+  const {
+    className,
+    elementType: initialElementType,
+    ownerState,
+    externalForwardedProps,
+    internalForwardedProps,
+    shouldForwardComponentProp = false,
+    ...useSlotPropsParams
+  } = parameters;
+  const {
+    component: rootComponent,
+    slots = {
+      [name]: undefined
+    },
+    slotProps = {
+      [name]: undefined
+    },
+    ...other
+  } = externalForwardedProps;
+  const elementType = slots[name] || initialElementType;
+
+  // `slotProps[name]` can be a callback that receives the component's ownerState.
+  // `resolvedComponentsProps` is always a plain object.
+  const resolvedComponentsProps = resolveComponentProps(slotProps[name], ownerState);
+  const {
+    props: {
+      component: slotComponent,
+      ...mergedProps
+    },
+    internalRef
+  } = mergeSlotProps$1({
+    className,
+    ...useSlotPropsParams,
+    externalForwardedProps: name === 'root' ? other : undefined,
+    externalSlotProps: resolvedComponentsProps
+  });
+  const ref = useForkRef(internalRef, resolvedComponentsProps?.ref, parameters.ref);
+  const LeafComponent = name === 'root' ? slotComponent || rootComponent : slotComponent;
+  const props = appendOwnerState(elementType, {
+    ...(name === 'root' && !rootComponent && !slots[name] && internalForwardedProps),
+    ...(name !== 'root' && !slots[name] && internalForwardedProps),
+    ...mergedProps,
+    ...(LeafComponent && !shouldForwardComponentProp && {
+      as: LeafComponent
+    }),
+    ...(LeafComponent && shouldForwardComponentProp && {
+      component: LeafComponent
+    }),
+    ref
+  }, ownerState);
+  return [elementType, props];
+}
+
+const useUtilityClasses$v = ownerState => {
+  const {
+    classes,
+    checked,
+    disabled,
+    edge
+  } = ownerState;
+  const slots = {
+    root: ['root', checked && 'checked', disabled && 'disabled', edge && `edge${capitalize$3(edge)}`],
+    input: ['input']
+  };
+  return composeClasses(slots, getSwitchBaseUtilityClass, classes);
+};
+const SwitchBaseRoot = styled$1(ButtonBase$1, {
+  name: 'MuiSwitchBase'
+})({
+  padding: 9,
+  borderRadius: '50%',
+  variants: [{
+    props: {
+      edge: 'start',
+      size: 'small'
+    },
+    style: {
+      marginLeft: -3
+    }
+  }, {
+    props: ({
+      edge,
+      ownerState
+    }) => edge === 'start' && ownerState.size !== 'small',
+    style: {
+      marginLeft: -12
+    }
+  }, {
+    props: {
+      edge: 'end',
+      size: 'small'
+    },
+    style: {
+      marginRight: -3
+    }
+  }, {
+    props: ({
+      edge,
+      ownerState
+    }) => edge === 'end' && ownerState.size !== 'small',
+    style: {
+      marginRight: -12
+    }
+  }]
+});
+const SwitchBaseInput = styled$1('input', {
+  name: 'MuiSwitchBase',
+  shouldForwardProp: rootShouldForwardProp$1
+})({
+  cursor: 'inherit',
+  position: 'absolute',
+  opacity: 0,
+  width: '100%',
+  height: '100%',
+  top: 0,
+  left: 0,
+  margin: 0,
+  padding: 0,
+  zIndex: 1
+});
+
+/**
+ * @ignore - internal component.
+ */
+const SwitchBase = /*#__PURE__*/reactExports.forwardRef(function SwitchBase(props, ref) {
+  const {
+    autoFocus,
+    checked: checkedProp,
+    checkedIcon,
+    defaultChecked,
+    disabled: disabledProp,
+    disableFocusRipple = false,
+    edge = false,
+    icon,
+    id,
+    name,
+    onBlur,
+    onChange,
+    onFocus,
+    readOnly,
+    required = false,
+    tabIndex,
+    type,
+    value,
+    slots = {},
+    slotProps = {},
+    ...other
+  } = props;
+  const {
+    nativeButton,
+    ...buttonBaseProps
+  } = other;
+  const [checked, setCheckedState] = useControlled({
+    controlled: checkedProp,
+    default: Boolean(defaultChecked),
+    name: 'SwitchBase',
+    state: 'checked'
+  });
+  const muiFormControl = useFormControl();
+  const handleFocus = event => {
+    if (onFocus) {
+      onFocus(event);
+    }
+    if (muiFormControl && muiFormControl.onFocus) {
+      muiFormControl.onFocus(event);
+    }
+  };
+  const handleBlur = event => {
+    if (onBlur) {
+      onBlur(event);
+    }
+    if (muiFormControl && muiFormControl.onBlur) {
+      muiFormControl.onBlur(event);
+    }
+  };
+  const handleInputChange = event => {
+    // Workaround for https://github.com/facebook/react/issues/9023
+    if (event.nativeEvent.defaultPrevented || readOnly) {
+      return;
+    }
+    const newChecked = event.target.checked;
+    setCheckedState(newChecked);
+    if (onChange) {
+      // TODO v6: remove the second argument.
+      onChange(event, newChecked);
+    }
+  };
+  let disabled = disabledProp;
+  if (muiFormControl) {
+    if (typeof disabled === 'undefined') {
+      disabled = muiFormControl.disabled;
+    }
+  }
+  const hasLabelFor = type === 'checkbox' || type === 'radio';
+  const ownerState = {
+    ...props,
+    checked,
+    disabled,
+    disableFocusRipple,
+    edge
+  };
+  const classes = useUtilityClasses$v(ownerState);
+  const externalForwardedProps = {
+    slots,
+    slotProps
+  };
+  const [RootSlot, rootSlotProps] = useSlot('root', {
+    ref,
+    elementType: SwitchBaseRoot,
+    className: classes.root,
+    shouldForwardComponentProp: true,
+    externalForwardedProps: {
+      ...externalForwardedProps,
+      component: 'span',
+      ...buttonBaseProps
+    },
+    getSlotProps: handlers => ({
+      ...handlers,
+      onFocus: event => {
+        handlers.onFocus?.(event);
+        handleFocus(event);
+      },
+      onBlur: event => {
+        handlers.onBlur?.(event);
+        handleBlur(event);
+      }
+    }),
+    ownerState,
+    additionalProps: {
+      centerRipple: true,
+      focusRipple: !disableFocusRipple,
+      role: undefined,
+      tabIndex: null
+    }
+  });
+  const [InputSlot, inputSlotProps] = useSlot('input', {
+    elementType: SwitchBaseInput,
+    className: classes.input,
+    externalForwardedProps,
+    getSlotProps: handlers => ({
+      ...handlers,
+      onChange: event => {
+        handlers.onChange?.(event);
+        handleInputChange(event);
+      }
+    }),
+    ownerState,
+    additionalProps: {
+      autoFocus,
+      checked: checkedProp,
+      defaultChecked,
+      disabled,
+      id: hasLabelFor ? id : undefined,
+      name,
+      readOnly,
+      required,
+      tabIndex,
+      type,
+      ...(type === 'checkbox' && value === undefined ? {} : {
+        value
+      })
+    }
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(RootSlot, {
+    ...rootSlotProps,
+    children: [/*#__PURE__*/jsxRuntimeExports.jsx(InputSlot, {
+      ...inputSlotProps
+    }), checked ? checkedIcon : icon]
+  });
+});
+
+// NB: If changed, please update Checkbox, Switch and Radio
+// so that the API documentation is updated.
+process.env.NODE_ENV !== "production" ? SwitchBase.propTypes = {
+  /**
+   * If `true`, the `input` element is focused during the first mount.
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * If `true`, the component is checked.
+   */
+  checked: PropTypes.bool,
+  /**
+   * The icon to display when the component is checked.
+   */
+  checkedIcon: PropTypes.node.isRequired,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * @ignore
+   */
+  defaultChecked: PropTypes.bool,
+  /**
+   * If `true`, the component is disabled.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the  keyboard focus ripple is disabled.
+   * @default false
+   */
+  disableFocusRipple: PropTypes.bool,
+  /**
+   * If given, uses a negative margin to counteract the padding on one
+   * side (this is often helpful for aligning the left or right
+   * side of the icon with content above or below, without ruining the border
+   * size and shape).
+   * @default false
+   */
+  edge: PropTypes.oneOf(['end', 'start', false]),
+  /**
+   * The icon to display when the component is unchecked.
+   */
+  icon: PropTypes.node.isRequired,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /*
+   * @ignore
+   */
+  name: PropTypes.string,
+  /**
+   * @ignore
+   */
+  onBlur: PropTypes.func,
+  /**
+   * Callback fired when the state is changed.
+   *
+   * @param {object} event The event source of the callback.
+   * You can pull out the new checked state by accessing `event.target.checked` (boolean).
+   */
+  onChange: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onFocus: PropTypes.func,
+  /**
+   * It prevents the user from changing the value of the field
+   * (not from interacting with the field).
+   */
+  readOnly: PropTypes.bool,
+  /**
+   * If `true`, the `input` element is required.
+   */
+  required: PropTypes.bool,
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.object,
+  /**
+   * @ignore
+   */
+  tabIndex: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * The input component prop `type`.
+   */
+  type: PropTypes.string.isRequired,
+  /**
+   * The value of the component.
+   */
+  value: PropTypes.any
+} : void 0;
+var SwitchBase$1 = SwitchBase;
+
+function getSvgIconUtilityClass(slot) {
+  return generateUtilityClass('MuiSvgIcon', slot);
+}
+generateUtilityClasses('MuiSvgIcon', ['root', 'colorPrimary', 'colorSecondary', 'colorAction', 'colorError', 'colorDisabled', 'fontSizeInherit', 'fontSizeSmall', 'fontSizeMedium', 'fontSizeLarge']);
+
+const useUtilityClasses$u = ownerState => {
+  const {
+    color,
+    fontSize,
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root', color !== 'inherit' && `color${capitalize$3(color)}`, `fontSize${capitalize$3(fontSize)}`]
+  };
+  return composeClasses(slots, getSvgIconUtilityClass, classes);
+};
+const SvgIconRoot = styled$1('svg', {
+  name: 'MuiSvgIcon',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.color !== 'inherit' && styles[`color${capitalize$3(ownerState.color)}`], styles[`fontSize${capitalize$3(ownerState.fontSize)}`]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  userSelect: 'none',
+  width: '1em',
+  height: '1em',
+  display: 'inline-block',
+  flexShrink: 0,
+  transition: theme.transitions?.create?.('fill', {
+    duration: (theme.vars ?? theme).transitions?.duration?.shorter
+  }),
+  variants: [{
+    props: props => !props.hasSvgAsChild,
+    style: {
+      // the <svg> will define the property that has `currentColor`
+      // for example heroicons uses fill="none" and stroke="currentColor"
+      fill: 'currentColor'
+    }
+  }, {
+    props: {
+      fontSize: 'inherit'
+    },
+    style: {
+      fontSize: 'inherit'
+    }
+  }, {
+    props: {
+      fontSize: 'small'
+    },
+    style: {
+      fontSize: theme.typography?.pxToRem?.(20) || '1.25rem'
+    }
+  }, {
+    props: {
+      fontSize: 'medium'
+    },
+    style: {
+      fontSize: theme.typography?.pxToRem?.(24) || '1.5rem'
+    }
+  }, {
+    props: {
+      fontSize: 'large'
+    },
+    style: {
+      fontSize: theme.typography?.pxToRem?.(35) || '2.1875rem'
+    }
+  },
+  // TODO v5 deprecate color prop, v6 remove for sx
+  ...Object.entries((theme.vars ?? theme).palette).filter(([, value]) => value && value.main).map(([color]) => ({
+    props: {
+      color
+    },
+    style: {
+      color: (theme.vars ?? theme).palette?.[color]?.main
+    }
+  })), {
+    props: {
+      color: 'action'
+    },
+    style: {
+      color: (theme.vars ?? theme).palette?.action?.active
+    }
+  }, {
+    props: {
+      color: 'disabled'
+    },
+    style: {
+      color: (theme.vars ?? theme).palette?.action?.disabled
+    }
+  }, {
+    props: {
+      color: 'inherit'
+    },
+    style: {
+      color: undefined
+    }
+  }]
+})));
+const SvgIcon = /*#__PURE__*/reactExports.forwardRef(function SvgIcon(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiSvgIcon'
+  });
+  const {
+    children,
+    className,
+    color = 'inherit',
+    component = 'svg',
+    fontSize = 'medium',
+    htmlColor,
+    inheritViewBox = false,
+    titleAccess,
+    viewBox = '0 0 24 24',
+    ...other
+  } = props;
+  const hasSvgAsChild = /*#__PURE__*/reactExports.isValidElement(children) && children.type === 'svg';
+  const ownerState = {
+    ...props,
+    color,
+    component,
+    fontSize,
+    instanceFontSize: inProps.fontSize,
+    inheritViewBox,
+    viewBox,
+    hasSvgAsChild
+  };
+  const more = {};
+  if (!inheritViewBox) {
+    more.viewBox = viewBox;
+  }
+  const classes = useUtilityClasses$u(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(SvgIconRoot, {
+    as: component,
+    className: clsx(classes.root, className),
+    focusable: "false",
+    color: htmlColor,
+    "aria-hidden": titleAccess ? undefined : true,
+    role: titleAccess ? 'img' : undefined,
+    ref: ref,
+    ...more,
+    ...other,
+    ...(hasSvgAsChild && children.props),
+    ownerState: ownerState,
+    children: [hasSvgAsChild ? children.props.children : children, titleAccess ? /*#__PURE__*/jsxRuntimeExports.jsx("title", {
+      children: titleAccess
+    }) : null]
+  });
+});
+process.env.NODE_ENV !== "production" ? SvgIcon.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * Node passed into the SVG element.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * You can use the `htmlColor` prop to apply a color attribute to the SVG element.
+   * @default 'inherit'
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['inherit', 'action', 'disabled', 'primary', 'secondary', 'error', 'info', 'success', 'warning']), PropTypes.string]),
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * The fontSize applied to the icon. Defaults to 24px, but can be configure to inherit font size.
+   * @default 'medium'
+   */
+  fontSize: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['inherit', 'large', 'medium', 'small']), PropTypes.string]),
+  /**
+   * Applies a color attribute to the SVG element.
+   */
+  htmlColor: PropTypes.string,
+  /**
+   * If `true`, the root node will inherit the custom `component`'s viewBox and the `viewBox`
+   * prop will be ignored.
+   * Useful when you want to reference a custom `component` and have `SvgIcon` pass that
+   * `component`'s viewBox to the root node.
+   * @default false
+   */
+  inheritViewBox: PropTypes.bool,
+  /**
+   * The shape-rendering attribute. The behavior of the different options is described on the
+   * [MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/shape-rendering).
+   * If you are having issues with blurry icons you should investigate this prop.
+   */
+  shapeRendering: PropTypes.string,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Provides a human-readable title for the element that contains it.
+   * https://www.w3.org/TR/SVG-access/#Equivalent
+   */
+  titleAccess: PropTypes.string,
+  /**
+   * Allows you to redefine what the coordinates without units mean inside an SVG element.
+   * For example, if the SVG element is 500 (width) by 200 (height),
+   * and you pass viewBox="0 0 50 20",
+   * this means that the coordinates inside the SVG will go from the top left corner (0,0)
+   * to bottom right (50,20) and each unit will be worth 10px.
+   * @default '0 0 24 24'
+   */
+  viewBox: PropTypes.string
+} : void 0;
+SvgIcon.muiName = 'SvgIcon';
+var SvgIcon$1 = SvgIcon;
+
+function createSvgIcon(path, displayName) {
+  function Component(props, ref) {
+    return /*#__PURE__*/jsxRuntimeExports.jsx(SvgIcon$1, {
+      "data-testid": process.env.NODE_ENV !== 'production' ? `${displayName}Icon` : undefined,
+      ref: ref,
+      ...props,
+      children: path
+    });
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    // Need to set `displayName` on the inner component for React.memo.
+    // React prior to 16.14 ignores `displayName` on the wrapper.
+    Component.displayName = `${displayName}Icon`;
+  }
+  Component.muiName = SvgIcon$1.muiName;
+  return /*#__PURE__*/reactExports.memo(/*#__PURE__*/reactExports.forwardRef(Component));
+}
+
+var CheckBoxOutlineBlankIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+}), 'CheckBoxOutlineBlank');
+
+var CheckBoxIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+}), 'CheckBox');
+
+var IndeterminateCheckBoxIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2z"
+}), 'IndeterminateCheckBox');
+
+function getCheckboxUtilityClass(slot) {
+  return generateUtilityClass('MuiCheckbox', slot);
+}
+const checkboxClasses = generateUtilityClasses('MuiCheckbox', ['root', 'checked', 'disabled', 'indeterminate', 'colorPrimary', 'colorSecondary', 'sizeSmall', 'sizeMedium']);
+var checkboxClasses$1 = checkboxClasses;
+
+/**
+ * Type guard to check if the object has a "main" property of type string.
+ *
+ * @param obj - the object to check
+ * @returns boolean
+ */
+function hasCorrectMainProperty(obj) {
+  return typeof obj.main === 'string';
+}
+/**
+ * Checks if the object conforms to the SimplePaletteColorOptions type.
+ * The minimum requirement is that the object has a "main" property of type string, this is always checked.
+ * Optionally, you can pass additional properties to check.
+ *
+ * @param obj - The object to check
+ * @param additionalPropertiesToCheck - Array containing "light", "dark", and/or "contrastText"
+ * @returns boolean
+ */
+function checkSimplePaletteColorValues(obj, additionalPropertiesToCheck = []) {
+  if (!hasCorrectMainProperty(obj)) {
+    return false;
+  }
+  for (const value of additionalPropertiesToCheck) {
+    if (!obj.hasOwnProperty(value) || typeof obj[value] !== 'string') {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Creates a filter function used to filter simple palette color options.
+ * The minimum requirement is that the object has a "main" property of type string, this is always checked.
+ * Optionally, you can pass additional properties to check.
+ *
+ * @param additionalPropertiesToCheck - Array containing "light", "dark", and/or "contrastText"
+ * @returns ([, value]: [any, PaletteColorOptions]) => boolean
+ */
+function createSimplePaletteValueFilter(additionalPropertiesToCheck = []) {
+  return ([, value]) => value && checkSimplePaletteColorValues(value, additionalPropertiesToCheck);
+}
+
+/**
+ * Safe chained function.
+ *
+ * Will only create a new function if needed,
+ * otherwise will pass back existing functions or null.
+ */
+function createChainedFunction(...funcs) {
+  return funcs.reduce((acc, func) => {
+    if (func == null) {
+      return acc;
+    }
+    return function chainedFunction(...args) {
+      acc.apply(this, args);
+      func.apply(this, args);
+    };
+  }, () => {});
+}
+
+// Corresponds to 10 frames at 60 Hz.
+// A few bytes payload overhead when lodash/debounce is ~3 kB and debounce ~300 B.
+function debounce$1(func, wait = 166) {
+  let timeout;
+  function debounced(...args) {
+    const later = () => {
+      // @ts-ignore
+      func.apply(this, args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  }
+  debounced.clear = () => {
+    clearTimeout(timeout);
+  };
+  return debounced;
+}
+
+/**
+ * Gets the actual active element, traversing through shadow roots if necessary.
+ *
+ * When an element inside a shadow root has focus, `document.activeElement` returns
+ * the shadow host element. This function recursively traverses shadow roots to find
+ * the actual focused element.
+ *
+ * @param root - The document or shadow root to start the search from.
+ * @returns The actual focused element, or null if no element has focus.
+ *
+ * @example
+ * // In a shadow DOM context
+ * const activeElement = getActiveElement(document);
+ * // Returns the actual focused element inside the shadow root
+ *
+ * @example
+ * // Starting from a specific document
+ * const activeElement = getActiveElement(ownerDocument(element));
+ */
+function activeElement(doc) {
+  let element = doc.activeElement;
+  while (element?.shadowRoot?.activeElement != null) {
+    element = element.shadowRoot.activeElement;
+  }
+  return element;
+}
+
+function ownerDocument(node) {
+  return node && node.ownerDocument || document;
+}
+
+function ownerWindow(node) {
+  const doc = ownerDocument(node);
+  return doc.defaultView || window;
+}
+
+/**
+ * TODO v5: consider making it private
+ *
+ * passes {value} to {ref}
+ *
+ * WARNING: Be sure to only call this inside a callback that is passed as a ref.
+ * Otherwise, make sure to cleanup the previous {ref} if it changes. See
+ * https://github.com/mui/material-ui/issues/13539
+ *
+ * Useful if you want to expose the ref of an inner component to the public API
+ * while still using it inside the component.
+ * @param ref A ref callback or ref object. If anything falsy, this is a no-op.
+ */
+function setRef(ref, value) {
+  if (typeof ref === 'function') {
+    ref(value);
+  } else if (ref) {
+    ref.current = value;
+  }
+}
+
+function mergeSlotProps(externalSlotProps, defaultSlotProps) {
+  if (!externalSlotProps) {
+    return defaultSlotProps;
+  }
+  function extractHandlers(externalSlotPropsValue, defaultSlotPropsValue) {
+    const handlers = {};
+    Object.keys(defaultSlotPropsValue).forEach(key => {
+      if (isEventHandler(key, defaultSlotPropsValue[key]) && typeof externalSlotPropsValue[key] === 'function') {
+        // only compose the handlers if both default and external slot props match the event handler
+        handlers[key] = (...args) => {
+          externalSlotPropsValue[key](...args);
+          defaultSlotPropsValue[key](...args);
+        };
+      }
+    });
+    return handlers;
+  }
+  if (typeof externalSlotProps === 'function' || typeof defaultSlotProps === 'function') {
+    return ownerState => {
+      const defaultSlotPropsValue = typeof defaultSlotProps === 'function' ? defaultSlotProps(ownerState) : defaultSlotProps;
+      const externalSlotPropsValue = typeof externalSlotProps === 'function' ? externalSlotProps({
+        ...ownerState,
+        ...defaultSlotPropsValue
+      }) : externalSlotProps;
+      const className = clsx(ownerState?.className, defaultSlotPropsValue?.className, externalSlotPropsValue?.className);
+      const handlers = extractHandlers(externalSlotPropsValue, defaultSlotPropsValue);
+      return {
+        ...defaultSlotPropsValue,
+        ...externalSlotPropsValue,
+        ...handlers,
+        ...(!!className && {
+          className
+        }),
+        ...(defaultSlotPropsValue?.style && externalSlotPropsValue?.style && {
+          style: {
+            ...defaultSlotPropsValue.style,
+            ...externalSlotPropsValue.style
+          }
+        }),
+        ...(defaultSlotPropsValue?.sx && externalSlotPropsValue?.sx && {
+          sx: [...(Array.isArray(defaultSlotPropsValue.sx) ? defaultSlotPropsValue.sx : [defaultSlotPropsValue.sx]), ...(Array.isArray(externalSlotPropsValue.sx) ? externalSlotPropsValue.sx : [externalSlotPropsValue.sx])]
+        })
+      };
+    };
+  }
+  const typedDefaultSlotProps = defaultSlotProps;
+  const handlers = extractHandlers(externalSlotProps, typedDefaultSlotProps);
+  const className = clsx(typedDefaultSlotProps?.className, externalSlotProps?.className);
+  return {
+    ...defaultSlotProps,
+    ...externalSlotProps,
+    ...handlers,
+    ...(!!className && {
+      className
+    }),
+    ...(typedDefaultSlotProps?.style && externalSlotProps?.style && {
+      style: {
+        ...typedDefaultSlotProps.style,
+        ...externalSlotProps.style
+      }
+    }),
+    ...(typedDefaultSlotProps?.sx && externalSlotProps?.sx && {
+      sx: [...(Array.isArray(typedDefaultSlotProps.sx) ? typedDefaultSlotProps.sx : [typedDefaultSlotProps.sx]), ...(Array.isArray(externalSlotProps.sx) ? externalSlotProps.sx : [externalSlotProps.sx])]
+    })
+  };
+}
+
+const useUtilityClasses$t = ownerState => {
+  const {
+    classes,
+    indeterminate,
+    color,
+    size
+  } = ownerState;
+  const slots = {
+    root: ['root', indeterminate && 'indeterminate', `color${capitalize$3(color)}`, `size${capitalize$3(size)}`]
+  };
+  const composedClasses = composeClasses(slots, getCheckboxUtilityClass, classes);
+  return {
+    ...classes,
+    // forward the disabled and checked classes to the SwitchBase
+    ...composedClasses
+  };
+};
+const CheckboxRoot = styled$1(SwitchBase$1, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiCheckbox',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.indeterminate && styles.indeterminate, styles[`size${capitalize$3(ownerState.size)}`], ownerState.color !== 'default' && styles[`color${capitalize$3(ownerState.color)}`]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  color: (theme.vars || theme).palette.text.secondary,
+  variants: [{
+    props: {
+      color: 'default',
+      disableRipple: false
+    },
+    style: {
+      '&:hover': {
+        backgroundColor: theme.alpha((theme.vars || theme).palette.action.active, (theme.vars || theme).palette.action.hoverOpacity)
+      }
+    }
+  }, ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+    props: {
+      color,
+      disableRipple: false
+    },
+    style: {
+      '&:hover': {
+        backgroundColor: theme.alpha((theme.vars || theme).palette[color].main, (theme.vars || theme).palette.action.hoverOpacity)
+      }
+    }
+  })), ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+    props: {
+      color
+    },
+    style: {
+      [`&.${checkboxClasses$1.checked}, &.${checkboxClasses$1.indeterminate}`]: {
+        color: (theme.vars || theme).palette[color].main
+      },
+      [`&.${checkboxClasses$1.disabled}`]: {
+        color: (theme.vars || theme).palette.action.disabled
+      }
+    }
+  })), {
+    // Should be last to override other colors
+    props: {
+      disableRipple: false
+    },
+    style: {
+      // Reset on touch devices, it doesn't add specificity
+      '&:hover': {
+        '@media (hover: none)': {
+          backgroundColor: 'transparent'
+        }
+      }
+    }
+  }]
+})));
+const defaultCheckedIcon$1 = /*#__PURE__*/jsxRuntimeExports.jsx(CheckBoxIcon, {});
+const defaultIcon$1 = /*#__PURE__*/jsxRuntimeExports.jsx(CheckBoxOutlineBlankIcon, {});
+const defaultIndeterminateIcon = /*#__PURE__*/jsxRuntimeExports.jsx(IndeterminateCheckBoxIcon, {});
+const Checkbox = /*#__PURE__*/reactExports.forwardRef(function Checkbox(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiCheckbox'
+  });
+  const {
+    checkedIcon = defaultCheckedIcon$1,
+    color = 'primary',
+    icon: iconProp = defaultIcon$1,
+    indeterminate = false,
+    indeterminateIcon: indeterminateIconProp = defaultIndeterminateIcon,
+    size = 'medium',
+    disableRipple = false,
+    className,
+    slots = {},
+    slotProps = {},
+    ...other
+  } = props;
+  const icon = indeterminate ? indeterminateIconProp : iconProp;
+  const indeterminateIcon = indeterminate ? indeterminateIconProp : checkedIcon;
+  const ownerState = {
+    ...props,
+    disableRipple,
+    color,
+    indeterminate,
+    size
+  };
+  const classes = useUtilityClasses$t(ownerState);
+  const externalInputProps = slotProps.input;
+  const [RootSlot, rootSlotProps] = useSlot('root', {
+    ref,
+    elementType: CheckboxRoot,
+    className: clsx(classes.root, className),
+    shouldForwardComponentProp: true,
+    externalForwardedProps: {
+      slots,
+      slotProps,
+      ...other
+    },
+    ownerState,
+    additionalProps: {
+      type: 'checkbox',
+      icon: /*#__PURE__*/reactExports.cloneElement(icon, {
+        fontSize: icon.props.fontSize ?? size
+      }),
+      checkedIcon: /*#__PURE__*/reactExports.cloneElement(indeterminateIcon, {
+        fontSize: indeterminateIcon.props.fontSize ?? size
+      }),
+      disableRipple,
+      slots,
+      slotProps: {
+        input: mergeSlotProps(typeof externalInputProps === 'function' ? externalInputProps(ownerState) : externalInputProps, {
+          'data-indeterminate': indeterminate,
+          'aria-checked': indeterminate ? 'mixed' : undefined
+        })
+      }
+    }
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(RootSlot, {
+    ...rootSlotProps,
+    classes: classes
+  });
+});
+process.env.NODE_ENV !== "production" ? Checkbox.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, the component is checked.
+   */
+  checked: PropTypes.bool,
+  /**
+   * The icon to display when the component is checked.
+   * @default <CheckBoxIcon />
+   */
+  checkedIcon: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * @default 'primary'
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['default', 'primary', 'secondary', 'error', 'info', 'success', 'warning']), PropTypes.string]),
+  /**
+   * The default checked state. Use when the component is not controlled.
+   */
+  defaultChecked: PropTypes.bool,
+  /**
+   * If `true`, the component is disabled.
+   * @default false
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the ripple effect is disabled.
+   * @default false
+   */
+  disableRipple: PropTypes.bool,
+  /**
+   * The icon to display when the component is unchecked.
+   * @default <CheckBoxOutlineBlankIcon />
+   */
+  icon: PropTypes.node,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /**
+   * If `true`, the component appears indeterminate.
+   * This does not set the native input element to indeterminate due
+   * to inconsistent behavior across browsers.
+   * However, we set a `data-indeterminate` attribute on the `input`.
+   * @default false
+   */
+  indeterminate: PropTypes.bool,
+  /**
+   * The icon to display when the component is indeterminate.
+   * @default <IndeterminateCheckBoxIcon />
+   */
+  indeterminateIcon: PropTypes.node,
+  /**
+   * Callback fired when the state is changed.
+   *
+   * @param {React.ChangeEvent<HTMLInputElement>} event The event source of the callback.
+   * You can pull out the new checked state by accessing `event.target.checked` (boolean).
+   */
+  onChange: PropTypes.func,
+  /**
+   * If `true`, the `input` element is required.
+   * @default false
+   */
+  required: PropTypes.bool,
+  /**
+   * The size of the component.
+   * `small` is equivalent to the dense checkbox styling.
+   * @default 'medium'
+   */
+  size: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['medium', 'small']), PropTypes.string]),
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The value of the component. The DOM API casts this to a string.
+   * The browser uses "on" as the default value.
+   */
+  value: PropTypes.any
+} : void 0;
+var Checkbox$1 = Checkbox;
+
+// Supports determination of isControlled().
+// Controlled input accepts its current value as a prop.
+//
+// @see https://facebook.github.io/react/docs/forms.html#controlled-components
+// @param value
+// @returns {boolean} true if string (including '') or number (including zero)
+function hasValue(value) {
+  return value != null && !(Array.isArray(value) && value.length === 0);
+}
+
+// Determine if field is empty or filled.
+// Response determines if label is presented above field or as placeholder.
+//
+// @param obj
+// @param SSR
+// @returns {boolean} False when not present or empty string.
+//                    True when any number or string with length.
+function isFilled(obj, SSR = false) {
+  return obj && (hasValue(obj.value) && obj.value !== '' || SSR && hasValue(obj.defaultValue) && obj.defaultValue !== '');
+}
+
+// Determine if an Input is adorned on start.
+// It's corresponding to the left with LTR.
+//
+// @param obj
+// @returns {boolean} False when no adornments.
+//                    True when adorned at the start.
+function isAdornedStart(obj) {
+  return obj.startAdornment;
+}
+
+function getFormControlUtilityClasses(slot) {
+  return generateUtilityClass('MuiFormControl', slot);
+}
+generateUtilityClasses('MuiFormControl', ['root', 'marginNone', 'marginNormal', 'marginDense', 'fullWidth', 'disabled']);
+
+const useUtilityClasses$s = ownerState => {
+  const {
+    classes,
+    margin,
+    fullWidth
+  } = ownerState;
+  const slots = {
+    root: ['root', margin !== 'none' && `margin${capitalize$3(margin)}`, fullWidth && 'fullWidth']
+  };
+  return composeClasses(slots, getFormControlUtilityClasses, classes);
+};
+const FormControlRoot = styled$1('div', {
+  name: 'MuiFormControl',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, styles[`margin${capitalize$3(ownerState.margin)}`], ownerState.fullWidth && styles.fullWidth];
+  }
+})({
+  display: 'inline-flex',
+  flexDirection: 'column',
+  position: 'relative',
+  // Reset fieldset default style.
+  minWidth: 0,
+  padding: 0,
+  margin: 0,
+  border: 0,
+  verticalAlign: 'top',
+  // Fix alignment issue on Safari.
+  variants: [{
+    props: {
+      margin: 'normal'
+    },
+    style: {
+      marginTop: 16,
+      marginBottom: 8
+    }
+  }, {
+    props: {
+      margin: 'dense'
+    },
+    style: {
+      marginTop: 8,
+      marginBottom: 4
+    }
+  }, {
+    props: {
+      fullWidth: true
+    },
+    style: {
+      width: '100%'
+    }
+  }]
+});
+
+/**
+ * Provides context such as filled/focused/error/required for form inputs.
+ * Relying on the context provides high flexibility and ensures that the state always stays
+ * consistent across the children of the `FormControl`.
+ * This context is used by the following components:
+ *
+ *  - FormLabel
+ *  - FormHelperText
+ *  - Input
+ *  - InputLabel
+ *
+ * You can find one composition example below and more going to [the demos](/material-ui/react-text-field/#components).
+ *
+ * ```jsx
+ * <FormControl>
+ *   <InputLabel htmlFor="my-input">Email address</InputLabel>
+ *   <Input id="my-input" aria-describedby="my-helper-text" />
+ *   <FormHelperText id="my-helper-text">We'll never share your email.</FormHelperText>
+ * </FormControl>
+ * ```
+ *
+ * ⚠️ Only one `InputBase` can be used within a FormControl because it creates visual inconsistencies.
+ * For instance, only one input can be focused at the same time, the state shouldn't be shared.
+ */
+const FormControl = /*#__PURE__*/reactExports.forwardRef(function FormControl(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiFormControl'
+  });
+  const {
+    children,
+    className,
+    color = 'primary',
+    component = 'div',
+    disabled = false,
+    error = false,
+    focused: visuallyFocused,
+    fullWidth = false,
+    hiddenLabel = false,
+    margin = 'none',
+    required = false,
+    size = 'medium',
+    variant = 'outlined',
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    color,
+    component,
+    disabled,
+    error,
+    fullWidth,
+    hiddenLabel,
+    margin,
+    required,
+    size,
+    variant
+  };
+  const classes = useUtilityClasses$s(ownerState);
+  const [adornedStart, setAdornedStart] = reactExports.useState(() => {
+    // We need to iterate through the children and find the Input in order
+    // to fully support server-side rendering.
+    let initialAdornedStart = false;
+    if (children) {
+      reactExports.Children.forEach(children, child => {
+        if (!isMuiElement(child, ['Input', 'Select'])) {
+          return;
+        }
+        const input = isMuiElement(child, ['Select']) ? child.props.input : child;
+        if (input && isAdornedStart(input.props)) {
+          initialAdornedStart = true;
+        }
+      });
+    }
+    return initialAdornedStart;
+  });
+  const [filled, setFilled] = reactExports.useState(() => {
+    // We need to iterate through the children and find the Input in order
+    // to fully support server-side rendering.
+    let initialFilled = false;
+    if (children) {
+      reactExports.Children.forEach(children, child => {
+        if (!isMuiElement(child, ['Input', 'Select'])) {
+          return;
+        }
+        if (isFilled(child.props, true) || isFilled(child.props.inputProps, true)) {
+          initialFilled = true;
+        }
+      });
+    }
+    return initialFilled;
+  });
+  const [focusedState, setFocused] = reactExports.useState(false);
+  if (disabled && focusedState) {
+    setFocused(false);
+  }
+  const focused = visuallyFocused !== undefined && !disabled ? visuallyFocused : focusedState;
+  let registerEffect;
+  const registeredInput = reactExports.useRef(false);
+  if (process.env.NODE_ENV !== 'production') {
+    registerEffect = () => {
+      if (registeredInput.current) {
+        console.error(['MUI: There are multiple `InputBase` components inside a FormControl.', 'This creates visual inconsistencies, only use one `InputBase`.'].join('\n'));
+      }
+      registeredInput.current = true;
+      return () => {
+        registeredInput.current = false;
+      };
+    };
+  }
+  const onFilled = reactExports.useCallback(() => {
+    setFilled(true);
+  }, []);
+  const onEmpty = reactExports.useCallback(() => {
+    setFilled(false);
+  }, []);
+  const childContext = reactExports.useMemo(() => {
+    return {
+      adornedStart,
+      setAdornedStart,
+      color,
+      disabled,
+      error,
+      filled,
+      focused,
+      fullWidth,
+      hiddenLabel,
+      size,
+      onBlur: () => {
+        setFocused(false);
+      },
+      onFocus: () => {
+        setFocused(true);
+      },
+      onEmpty,
+      onFilled,
+      registerEffect,
+      required,
+      variant
+    };
+  }, [adornedStart, color, disabled, error, filled, focused, fullWidth, hiddenLabel, registerEffect, onEmpty, onFilled, required, size, variant]);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(FormControlContext$1.Provider, {
+    value: childContext,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(FormControlRoot, {
+      as: component,
+      ownerState: ownerState,
+      className: clsx(classes.root, className),
+      ref: ref,
+      ...other,
+      children: children
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? FormControl.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * @default 'primary'
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary', 'error', 'info', 'success', 'warning']), PropTypes.string]),
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * If `true`, the label, input and helper text should be displayed in a disabled state.
+   * @default false
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the label is displayed in an error state.
+   * @default false
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the component is displayed in focused state.
+   */
+  focused: PropTypes.bool,
+  /**
+   * If `true`, the component will take up the full width of its container.
+   * @default false
+   */
+  fullWidth: PropTypes.bool,
+  /**
+   * If `true`, the label is hidden.
+   * This is used to increase density for a `FilledInput`.
+   * Be sure to add `aria-label` to the `input` element.
+   * @default false
+   */
+  hiddenLabel: PropTypes.bool,
+  /**
+   * If `dense` or `normal`, will adjust vertical spacing of this and contained components.
+   * @default 'none'
+   */
+  margin: PropTypes.oneOf(['dense', 'none', 'normal']),
+  /**
+   * If `true`, the label will indicate that the `input` is required.
+   * @default false
+   */
+  required: PropTypes.bool,
+  /**
+   * The size of the component.
+   * @default 'medium'
+   */
+  size: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['medium', 'small']), PropTypes.string]),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The variant to use.
+   * @default 'outlined'
+   */
+  variant: PropTypes.oneOf(['filled', 'outlined', 'standard'])
+} : void 0;
+var FormControl$1 = FormControl;
+
+function getTypographyUtilityClass(slot) {
+  return generateUtilityClass('MuiTypography', slot);
+}
+generateUtilityClasses('MuiTypography', ['root', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'subtitle1', 'subtitle2', 'body1', 'body2', 'inherit', 'button', 'caption', 'overline', 'alignLeft', 'alignRight', 'alignCenter', 'alignJustify', 'noWrap', 'gutterBottom']);
+
+const useUtilityClasses$r = ownerState => {
+  const {
+    align,
+    gutterBottom,
+    noWrap,
+    variant,
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root', variant, ownerState.align !== 'inherit' && `align${capitalize$3(align)}`, gutterBottom && 'gutterBottom', noWrap && 'noWrap']
+  };
+  return composeClasses(slots, getTypographyUtilityClass, classes);
+};
+const TypographyRoot = styled$1('span', {
+  name: 'MuiTypography',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.variant && styles[ownerState.variant], ownerState.align !== 'inherit' && styles[`align${capitalize$3(ownerState.align)}`], ownerState.noWrap && styles.noWrap, ownerState.gutterBottom && styles.gutterBottom];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  margin: 0,
+  variants: [{
+    props: {
+      variant: 'inherit'
+    },
+    style: {
+      // Some elements, like <button> on Chrome have default font that doesn't inherit, reset this.
+      font: 'inherit',
+      lineHeight: 'inherit',
+      letterSpacing: 'inherit'
+    }
+  }, ...Object.entries(theme.typography).filter(([variant, value]) => variant !== 'inherit' && value && typeof value === 'object').map(([variant, value]) => ({
+    props: {
+      variant
+    },
+    style: value
+  })), ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+    props: {
+      color
+    },
+    style: {
+      color: (theme.vars || theme).palette[color].main
+    }
+  })), ...Object.entries(theme.palette?.text || {}).filter(([, value]) => typeof value === 'string').map(([color]) => ({
+    props: {
+      color: `text${capitalize$3(color)}`
+    },
+    style: {
+      color: (theme.vars || theme).palette.text[color]
+    }
+  })), {
+    props: ({
+      ownerState
+    }) => ownerState.align !== 'inherit',
+    style: {
+      textAlign: 'var(--Typography-textAlign)'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.noWrap,
+    style: {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.gutterBottom,
+    style: {
+      marginBottom: '0.35em'
+    }
+  }]
+})));
+const defaultVariantMapping = {
+  h1: 'h1',
+  h2: 'h2',
+  h3: 'h3',
+  h4: 'h4',
+  h5: 'h5',
+  h6: 'h6',
+  subtitle1: 'h6',
+  subtitle2: 'h6',
+  body1: 'p',
+  body2: 'p',
+  inherit: 'p'
+};
+const Typography = /*#__PURE__*/reactExports.forwardRef(function Typography(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiTypography'
+  });
+  const {
+    color,
+    align = 'inherit',
+    className,
+    component,
+    gutterBottom = false,
+    noWrap = false,
+    variant = 'body1',
+    variantMapping = defaultVariantMapping,
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    align,
+    color,
+    className,
+    component,
+    gutterBottom,
+    noWrap,
+    variant,
+    variantMapping
+  };
+  const Component = component || variantMapping[variant] || defaultVariantMapping[variant] || 'span';
+  const classes = useUtilityClasses$r(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(TypographyRoot, {
+    as: Component,
+    ref: ref,
+    className: clsx(classes.root, className),
+    ...other,
+    ownerState: ownerState,
+    style: {
+      ...(align !== 'inherit' && {
+        '--Typography-textAlign': align
+      }),
+      ...other.style
+    }
+  });
+});
+process.env.NODE_ENV !== "production" ? Typography.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * Set the text-align on the component.
+   * @default 'inherit'
+   */
+  align: PropTypes.oneOf(['center', 'inherit', 'justify', 'left', 'right']),
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary', 'success', 'error', 'info', 'warning', 'textPrimary', 'textSecondary', 'textDisabled']), PropTypes.string]),
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * If `true`, the text will have a bottom margin.
+   * @default false
+   */
+  gutterBottom: PropTypes.bool,
+  /**
+   * If `true`, the text will not wrap, but instead will truncate with a text overflow ellipsis.
+   *
+   * Note that text overflow can only happen with block or inline-block level elements
+   * (the element needs to have a width in order to overflow).
+   * @default false
+   */
+  noWrap: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  style: PropTypes.object,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Applies the theme typography styles.
+   * @default 'body1'
+   */
+  variant: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['body1', 'body2', 'button', 'caption', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'inherit', 'overline', 'subtitle1', 'subtitle2']), PropTypes.string]),
+  /**
+   * The component maps the variant prop to a range of different HTML element types.
+   * For instance, subtitle1 to `<h6>`.
+   * If you wish to change that mapping, you can provide your own.
+   * Alternatively, you can use the `component` prop.
+   * @default {
+   *   h1: 'h1',
+   *   h2: 'h2',
+   *   h3: 'h3',
+   *   h4: 'h4',
+   *   h5: 'h5',
+   *   h6: 'h6',
+   *   subtitle1: 'h6',
+   *   subtitle2: 'h6',
+   *   body1: 'p',
+   *   body2: 'p',
+   *   inherit: 'p',
+   * }
+   */
+  variantMapping: PropTypes /* @typescript-to-proptypes-ignore */.object
+} : void 0;
+var Typography$1 = Typography;
+
+function getFormControlLabelUtilityClasses(slot) {
+  return generateUtilityClass('MuiFormControlLabel', slot);
+}
+const formControlLabelClasses = generateUtilityClasses('MuiFormControlLabel', ['root', 'labelPlacementStart', 'labelPlacementTop', 'labelPlacementBottom', 'disabled', 'label', 'error', 'required', 'asterisk']);
+var formControlLabelClasses$1 = formControlLabelClasses;
+
+const useUtilityClasses$q = ownerState => {
+  const {
+    classes,
+    disabled,
+    labelPlacement,
+    error,
+    required
+  } = ownerState;
+  const slots = {
+    root: ['root', disabled && 'disabled', `labelPlacement${capitalize$3(labelPlacement)}`, error && 'error', required && 'required'],
+    label: ['label', disabled && 'disabled'],
+    asterisk: ['asterisk', error && 'error']
+  };
+  return composeClasses(slots, getFormControlLabelUtilityClasses, classes);
+};
+const FormControlLabelRoot = styled$1('label', {
+  name: 'MuiFormControlLabel',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [{
+      [`& .${formControlLabelClasses$1.label}`]: styles.label
+    }, styles.root, styles[`labelPlacement${capitalize$3(ownerState.labelPlacement)}`]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  cursor: 'pointer',
+  // For correct alignment with the text.
+  verticalAlign: 'middle',
+  WebkitTapHighlightColor: 'transparent',
+  marginLeft: -11,
+  marginRight: 16,
+  // used for row presentation of radio/checkbox
+  [`&.${formControlLabelClasses$1.disabled}`]: {
+    cursor: 'default'
+  },
+  [`& .${formControlLabelClasses$1.label}`]: {
+    [`&.${formControlLabelClasses$1.disabled}`]: {
+      color: (theme.vars || theme).palette.text.disabled
+    }
+  },
+  variants: [{
+    props: {
+      labelPlacement: 'start'
+    },
+    style: {
+      flexDirection: 'row-reverse',
+      marginRight: -11
+    }
+  }, {
+    props: {
+      labelPlacement: 'top'
+    },
+    style: {
+      flexDirection: 'column-reverse'
+    }
+  }, {
+    props: {
+      labelPlacement: 'bottom'
+    },
+    style: {
+      flexDirection: 'column'
+    }
+  }, {
+    props: ({
+      labelPlacement
+    }) => labelPlacement === 'start' || labelPlacement === 'top' || labelPlacement === 'bottom',
+    style: {
+      marginLeft: 16 // used for row presentation of radio/checkbox
+    }
+  }]
+})));
+const AsteriskComponent$1 = styled$1('span', {
+  name: 'MuiFormControlLabel',
+  slot: 'Asterisk'
+})(memoTheme$1(({
+  theme
+}) => ({
+  [`&.${formControlLabelClasses$1.error}`]: {
+    color: (theme.vars || theme).palette.error.main
+  }
+})));
+
+/**
+ * Drop-in replacement of the `Radio`, `Switch` and `Checkbox` component.
+ * Use this component if you want to display an extra label.
+ */
+const FormControlLabel = /*#__PURE__*/reactExports.forwardRef(function FormControlLabel(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiFormControlLabel'
+  });
+  const {
+    checked,
+    className,
+    control,
+    disabled: disabledProp,
+    disableTypography,
+    inputRef,
+    label: labelProp,
+    labelPlacement = 'end',
+    name,
+    onChange,
+    required: requiredProp,
+    slots = {},
+    slotProps = {},
+    value,
+    ...other
+  } = props;
+  const [fcs, muiFormControl] = useFormControlState({
+    props,
+    states: ['error']
+  });
+  const disabled = disabledProp ?? control.props.disabled ?? muiFormControl?.disabled;
+  const required = requiredProp ?? control.props.required;
+  const controlProps = {
+    disabled,
+    required
+  };
+  ['checked', 'name', 'onChange', 'value', 'inputRef'].forEach(key => {
+    if (typeof control.props[key] === 'undefined' && typeof props[key] !== 'undefined') {
+      controlProps[key] = props[key];
+    }
+  });
+  const ownerState = {
+    ...props,
+    disabled,
+    labelPlacement,
+    required,
+    error: fcs.error
+  };
+  const classes = useUtilityClasses$q(ownerState);
+  const externalForwardedProps = {
+    slots,
+    slotProps
+  };
+  const [TypographySlot, typographySlotProps] = useSlot('typography', {
+    elementType: Typography$1,
+    externalForwardedProps,
+    ownerState
+  });
+  let label = labelProp;
+  if (label != null && label.type !== Typography$1 && !disableTypography) {
+    label = /*#__PURE__*/jsxRuntimeExports.jsx(TypographySlot, {
+      component: "span",
+      ...typographySlotProps,
+      className: clsx(classes.label, typographySlotProps?.className),
+      children: label
+    });
+  }
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(FormControlLabelRoot, {
+    className: clsx(classes.root, className),
+    ownerState: ownerState,
+    ref: ref,
+    ...other,
+    children: [/*#__PURE__*/reactExports.cloneElement(control, controlProps), required ? /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+      children: [label, /*#__PURE__*/jsxRuntimeExports.jsxs(AsteriskComponent$1, {
+        ownerState: ownerState,
+        "aria-hidden": true,
+        className: classes.asterisk,
+        children: ["\u2009", '*']
+      })]
+    }) : label]
+  });
+});
+process.env.NODE_ENV !== "production" ? FormControlLabel.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, the component appears selected.
+   */
+  checked: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * A control element. For instance, it can be a `Radio`, a `Switch` or a `Checkbox`.
+   */
+  control: PropTypes.element.isRequired,
+  /**
+   * If `true`, the control is disabled.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the label is rendered as it is passed without an additional typography node.
+   */
+  disableTypography: PropTypes.bool,
+  /**
+   * Pass a ref to the `input` element.
+   */
+  inputRef: refType$1,
+  /**
+   * A text or an element to be used in an enclosing label element.
+   */
+  label: PropTypes.node,
+  /**
+   * The position of the label.
+   * @default 'end'
+   */
+  labelPlacement: PropTypes.oneOf(['bottom', 'end', 'start', 'top']),
+  /**
+   * @ignore
+   */
+  name: PropTypes.string,
+  /**
+   * Callback fired when the state is changed.
+   *
+   * @param {React.SyntheticEvent} event The event source of the callback.
+   * You can pull out the new checked state by accessing `event.target.checked` (boolean).
+   */
+  onChange: PropTypes.func,
+  /**
+   * If `true`, the label will indicate that the `input` is required.
+   */
+  required: PropTypes.bool,
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    typography: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    typography: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The value of the component.
+   */
+  value: PropTypes.any
+} : void 0;
+var FormControlLabel$1 = FormControlLabel;
+
+function getLocalizedText(localize, value, fallback = '') {
+  if (value === undefined || value === null || value === false) {
+    return fallback;
+  }
+  if (typeof value === 'object') {
+    const {
+      cardinal,
+      fallback: objectFallback = fallback,
+      phrase,
+      replacements
+    } = value;
+    if (!phrase) {
+      return objectFallback;
+    }
+    return localize?.t?.(phrase, replacements, cardinal) || objectFallback || phrase;
+  }
+  const phrase = String(value);
+  return localize?.t?.(phrase) || fallback || phrase;
+}
+
+function BaseCheckbox({
+  ariaLabel,
+  checked = false,
+  checkboxProps = {},
+  className,
+  error = false,
+  helperText,
+  id,
+  label,
+  labelFallback = '',
+  onChange,
+  size,
+  variant,
+  ...formControlProps
+}) {
+  const fallbackId = reactExports.useId();
+  const {
+    localize
+  } = reactExports.useContext(MusicNotebookContext);
+  const checkboxId = id || `base-checkbox-${fallbackId}`;
+  const helperId = helperText ? `${checkboxId}-helper` : undefined;
+  const resolvedLabel = getLocalizedText(localize, label, labelFallback);
+  const resolvedAriaLabel = getLocalizedText(localize, ariaLabel, resolvedLabel);
+  const resolvedHelperText = getLocalizedText(localize, helperText);
+  return /*#__PURE__*/React$1.createElement(FormControl$1, _extends$2({}, formControlProps, {
+    className: className ? `base-checkbox ${className}` : 'base-checkbox',
+    error: Boolean(error),
+    fullWidth: formControlProps.fullWidth ?? true,
+    size: size,
+    variant: variant
+  }), /*#__PURE__*/React$1.createElement(FormControlLabel$1, {
+    control: /*#__PURE__*/React$1.createElement(Checkbox$1, _extends$2({}, checkboxProps, {
+      checked: checked,
+      id: checkboxId,
+      slotProps: {
+        ...checkboxProps.slotProps,
+        input: {
+          ...(checkboxProps.slotProps?.input || {}),
+          'aria-describedby': helperId,
+          'aria-label': resolvedAriaLabel
+        }
+      },
+      onChange: event => onChange?.(event.target.checked, event),
+      size: size
+    })),
+    label: resolvedLabel
+  }), resolvedHelperText ? /*#__PURE__*/React$1.createElement(FormHelperText$1, {
+    id: helperId
+  }, resolvedHelperText) : null);
+}
+
+function getFormLabelUtilityClasses(slot) {
+  return generateUtilityClass('MuiFormLabel', slot);
+}
+const formLabelClasses = generateUtilityClasses('MuiFormLabel', ['root', 'colorSecondary', 'focused', 'disabled', 'error', 'filled', 'required', 'asterisk']);
+var formLabelClasses$1 = formLabelClasses;
+
+const useUtilityClasses$p = ownerState => {
+  const {
+    classes,
+    color,
+    focused,
+    disabled,
+    error,
+    filled,
+    required
+  } = ownerState;
+  const slots = {
+    root: ['root', `color${capitalize$3(color)}`, disabled && 'disabled', error && 'error', filled && 'filled', focused && 'focused', required && 'required'],
+    asterisk: ['asterisk', error && 'error']
+  };
+  return composeClasses(slots, getFormLabelUtilityClasses, classes);
+};
+const FormLabelRoot = styled$1('label', {
+  name: 'MuiFormLabel',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.color === 'secondary' && styles.colorSecondary, ownerState.filled && styles.filled];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  color: (theme.vars || theme).palette.text.secondary,
+  ...theme.typography.body1,
+  lineHeight: '1.4375em',
+  padding: 0,
+  position: 'relative',
+  variants: [...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+    props: {
+      color
+    },
+    style: {
+      [`&.${formLabelClasses$1.focused}`]: {
+        color: (theme.vars || theme).palette[color].main
+      }
+    }
+  })), {
+    props: {},
+    style: {
+      [`&.${formLabelClasses$1.disabled}`]: {
+        color: (theme.vars || theme).palette.text.disabled
+      },
+      [`&.${formLabelClasses$1.error}`]: {
+        color: (theme.vars || theme).palette.error.main
+      }
+    }
+  }]
+})));
+const AsteriskComponent = styled$1('span', {
+  name: 'MuiFormLabel',
+  slot: 'Asterisk'
+})(memoTheme$1(({
+  theme
+}) => ({
+  [`&.${formLabelClasses$1.error}`]: {
+    color: (theme.vars || theme).palette.error.main
+  }
+})));
+const FormLabel = /*#__PURE__*/reactExports.forwardRef(function FormLabel(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiFormLabel'
+  });
+  const {
+    children,
+    className,
+    color,
+    component = 'label',
+    disabled,
+    error,
+    filled,
+    focused,
+    required,
+    ...other
+  } = props;
+  const [fcs] = useFormControlState({
+    props,
+    states: ['color', 'required', 'focused', 'disabled', 'error', 'filled']
+  });
+  const ownerState = {
+    ...props,
+    color: fcs.color || 'primary',
+    component,
+    disabled: fcs.disabled,
+    error: fcs.error,
+    filled: fcs.filled,
+    focused: fcs.focused,
+    required: fcs.required
+  };
+  const classes = useUtilityClasses$p(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(FormLabelRoot, {
+    as: component,
+    ownerState: ownerState,
+    className: clsx(classes.root, className),
+    ref: ref,
+    ...other,
+    children: [children, fcs.required && /*#__PURE__*/jsxRuntimeExports.jsxs(AsteriskComponent, {
+      ownerState: ownerState,
+      "aria-hidden": true,
+      className: classes.asterisk,
+      children: ["\u2009", '*']
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? FormLabel.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['error', 'info', 'primary', 'secondary', 'success', 'warning']), PropTypes.string]),
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * If `true`, the label should be displayed in a disabled state.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the label is displayed in an error state.
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the label should use filled classes key.
+   */
+  filled: PropTypes.bool,
+  /**
+   * If `true`, the input of this label is focused (used by `FormGroup` components).
+   */
+  focused: PropTypes.bool,
+  /**
+   * If `true`, the label will indicate that the `input` is required.
+   */
+  required: PropTypes.bool,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object])
+} : void 0;
+var FormLabel$1 = FormLabel;
+
+var RadioButtonUncheckedIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"
+}), 'RadioButtonUnchecked');
+
+var RadioButtonCheckedIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M8.465 8.465C9.37 7.56 10.62 7 12 7C14.76 7 17 9.24 17 12C17 13.38 16.44 14.63 15.535 15.535C14.63 16.44 13.38 17 12 17C9.24 17 7 14.76 7 12C7 10.62 7.56 9.37 8.465 8.465Z"
+}), 'RadioButtonChecked');
+
+const RadioButtonIconRoot = styled$1('span', {
+  name: 'MuiRadioButtonIcon',
+  shouldForwardProp: rootShouldForwardProp$1
+})({
+  position: 'relative',
+  display: 'flex'
+});
+const RadioButtonIconBackground = styled$1(RadioButtonUncheckedIcon, {
+  name: 'MuiRadioButtonIcon'
+})({
+  // Scale applied to prevent dot misalignment in Safari
+  transform: 'scale(1)'
+});
+const RadioButtonIconDot = styled$1(RadioButtonCheckedIcon, {
+  name: 'MuiRadioButtonIcon'
+})(memoTheme$1(({
+  theme
+}) => ({
+  left: 0,
+  position: 'absolute',
+  transform: 'scale(0)',
+  transition: theme.transitions.create('transform', {
+    easing: theme.transitions.easing.easeIn,
+    duration: theme.transitions.duration.shortest
+  }),
+  variants: [{
+    props: {
+      checked: true
+    },
+    style: {
+      transform: 'scale(1)',
+      transition: theme.transitions.create('transform', {
+        easing: theme.transitions.easing.easeOut,
+        duration: theme.transitions.duration.shortest
+      })
+    }
+  }]
+})));
+
+/**
+ * @ignore - internal component.
+ */
+function RadioButtonIcon(props) {
+  const {
+    checked = false,
+    classes = {},
+    fontSize
+  } = props;
+  const ownerState = {
+    ...props,
+    checked
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(RadioButtonIconRoot, {
+    className: classes.root,
+    ownerState: ownerState,
+    children: [/*#__PURE__*/jsxRuntimeExports.jsx(RadioButtonIconBackground, {
+      fontSize: fontSize,
+      className: classes.background,
+      ownerState: ownerState
+    }), /*#__PURE__*/jsxRuntimeExports.jsx(RadioButtonIconDot, {
+      fontSize: fontSize,
+      className: classes.dot,
+      ownerState: ownerState
+    })]
+  });
+}
+process.env.NODE_ENV !== "production" ? RadioButtonIcon.propTypes /* remove-proptypes */ = {
+  /**
+   * If `true`, the component is checked.
+   */
+  checked: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * The size of the component.
+   * `small` is equivalent to the dense radio styling.
+   */
+  fontSize: PropTypes.oneOf(['small', 'medium'])
+} : void 0;
+
+/**
+ * @ignore - internal component.
+ */
+const RadioGroupContext = /*#__PURE__*/reactExports.createContext(undefined);
+if (process.env.NODE_ENV !== 'production') {
+  RadioGroupContext.displayName = 'RadioGroupContext';
+}
+var RadioGroupContext$1 = RadioGroupContext;
+
+function useRadioGroup() {
+  return reactExports.useContext(RadioGroupContext$1);
+}
+
+function getRadioUtilityClass(slot) {
+  return generateUtilityClass('MuiRadio', slot);
+}
+const radioClasses = generateUtilityClasses('MuiRadio', ['root', 'checked', 'disabled', 'colorPrimary', 'colorSecondary', 'sizeSmall']);
+var radioClasses$1 = radioClasses;
+
+const useUtilityClasses$o = ownerState => {
+  const {
+    classes,
+    color,
+    size
+  } = ownerState;
+  const slots = {
+    root: ['root', `color${capitalize$3(color)}`, size !== 'medium' && `size${capitalize$3(size)}`]
+  };
+  return {
+    ...classes,
+    ...composeClasses(slots, getRadioUtilityClass, classes)
+  };
+};
+const RadioRoot = styled$1(SwitchBase$1, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiRadio',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.size !== 'medium' && styles[`size${capitalize$3(ownerState.size)}`], styles[`color${capitalize$3(ownerState.color)}`]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  color: (theme.vars || theme).palette.text.secondary,
+  [`&.${radioClasses$1.disabled}`]: {
+    color: (theme.vars || theme).palette.action.disabled
+  },
+  variants: [{
+    props: {
+      color: 'default',
+      disabled: false,
+      disableRipple: false
+    },
+    style: {
+      '&:hover': {
+        backgroundColor: theme.alpha((theme.vars || theme).palette.action.active, (theme.vars || theme).palette.action.hoverOpacity)
+      }
+    }
+  }, ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+    props: {
+      color,
+      disabled: false,
+      disableRipple: false
+    },
+    style: {
+      '&:hover': {
+        backgroundColor: theme.alpha((theme.vars || theme).palette[color].main, (theme.vars || theme).palette.action.hoverOpacity)
+      }
+    }
+  })), ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+    props: {
+      color,
+      disabled: false
+    },
+    style: {
+      [`&.${radioClasses$1.checked}`]: {
+        color: (theme.vars || theme).palette[color].main
+      }
+    }
+  })), {
+    // Should be last to override other colors
+    props: {
+      disableRipple: false
+    },
+    style: {
+      // Reset on touch devices, it doesn't add specificity
+      '&:hover': {
+        '@media (hover: none)': {
+          backgroundColor: 'transparent'
+        }
+      }
+    }
+  }]
+})));
+function areEqualValues$1(a, b) {
+  if (typeof b === 'object' && b !== null) {
+    return a === b;
+  }
+
+  // The value could be a number, the DOM will stringify it anyway.
+  return String(a) === String(b);
+}
+const defaultCheckedIcon = /*#__PURE__*/jsxRuntimeExports.jsx(RadioButtonIcon, {
+  checked: true
+});
+const defaultIcon = /*#__PURE__*/jsxRuntimeExports.jsx(RadioButtonIcon, {});
+const Radio = /*#__PURE__*/reactExports.forwardRef(function Radio(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiRadio'
+  });
+  const {
+    checked: checkedProp,
+    checkedIcon = defaultCheckedIcon,
+    color = 'primary',
+    icon = defaultIcon,
+    name: nameProp,
+    onChange: onChangeProp,
+    size = 'medium',
+    className,
+    disabled: disabledProp,
+    disableRipple = false,
+    slots = {},
+    slotProps = {},
+    ...other
+  } = props;
+  const muiFormControl = useFormControl();
+  let disabled = disabledProp;
+  if (muiFormControl) {
+    if (typeof disabled === 'undefined') {
+      disabled = muiFormControl.disabled;
+    }
+  }
+  disabled ??= false;
+  const ownerState = {
+    ...props,
+    disabled,
+    disableRipple,
+    color,
+    size
+  };
+  const classes = useUtilityClasses$o(ownerState);
+  const radioGroup = useRadioGroup();
+  let checked = checkedProp;
+  const onChange = createChainedFunction(onChangeProp, radioGroup && radioGroup.onChange);
+  let name = nameProp;
+  if (radioGroup) {
+    if (typeof checked === 'undefined') {
+      checked = areEqualValues$1(radioGroup.value, props.value);
+    }
+    if (typeof name === 'undefined') {
+      name = radioGroup.name;
+    }
+  }
+  const externalInputProps = slotProps.input;
+  const [RootSlot, rootSlotProps] = useSlot('root', {
+    ref,
+    elementType: RadioRoot,
+    className: clsx(classes.root, className),
+    shouldForwardComponentProp: true,
+    externalForwardedProps: {
+      slots,
+      slotProps,
+      ...other
+    },
+    getSlotProps: handlers => ({
+      ...handlers,
+      onChange: (event, ...args) => {
+        handlers.onChange?.(event, ...args);
+        onChange(event, ...args);
+      }
+    }),
+    ownerState,
+    additionalProps: {
+      type: 'radio',
+      icon: /*#__PURE__*/reactExports.cloneElement(icon, {
+        fontSize: icon.props.fontSize ?? size
+      }),
+      checkedIcon: /*#__PURE__*/reactExports.cloneElement(checkedIcon, {
+        fontSize: checkedIcon.props.fontSize ?? size
+      }),
+      disabled,
+      name,
+      checked,
+      slots,
+      slotProps: {
+        // Do not forward `slotProps.root` again because it's already handled by the `RootSlot` in this file.
+        input: typeof externalInputProps === 'function' ? externalInputProps(ownerState) : externalInputProps
+      }
+    }
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(RootSlot, {
+    ...rootSlotProps,
+    classes: classes
+  });
+});
+process.env.NODE_ENV !== "production" ? Radio.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, the component is checked.
+   */
+  checked: PropTypes.bool,
+  /**
+   * The icon to display when the component is checked.
+   * @default <RadioButtonIcon checked />
+   */
+  checkedIcon: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * @default 'primary'
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['default', 'primary', 'secondary', 'error', 'info', 'success', 'warning']), PropTypes.string]),
+  /**
+   * If `true`, the component is disabled.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the ripple effect is disabled.
+   * @default false
+   */
+  disableRipple: PropTypes.bool,
+  /**
+   * The icon to display when the component is unchecked.
+   * @default <RadioButtonIcon />
+   */
+  icon: PropTypes.node,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /**
+   * Name attribute of the `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * Callback fired when the state is changed.
+   *
+   * @param {React.ChangeEvent<HTMLInputElement>} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   * You can pull out the new checked state by accessing `event.target.checked` (boolean).
+   */
+  onChange: PropTypes.func,
+  /**
+   * If `true`, the `input` element is required.
+   * @default false
+   */
+  required: PropTypes.bool,
+  /**
+   * The size of the component.
+   * `small` is equivalent to the dense radio styling.
+   * @default 'medium'
+   */
+  size: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['medium', 'small']), PropTypes.string]),
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The value of the component. The DOM API casts this to a string.
+   */
+  value: PropTypes.any
+} : void 0;
+var Radio$1 = Radio;
+
+function getFormGroupUtilityClass(slot) {
+  return generateUtilityClass('MuiFormGroup', slot);
+}
+generateUtilityClasses('MuiFormGroup', ['root', 'row', 'error']);
+
+const useUtilityClasses$n = ownerState => {
+  const {
+    classes,
+    row,
+    error
+  } = ownerState;
+  const slots = {
+    root: ['root', row && 'row', error && 'error']
+  };
+  return composeClasses(slots, getFormGroupUtilityClass, classes);
+};
+const FormGroupRoot = styled$1('div', {
+  name: 'MuiFormGroup',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.row && styles.row];
+  }
+})({
+  display: 'flex',
+  flexDirection: 'column',
+  flexWrap: 'wrap',
+  variants: [{
+    props: {
+      row: true
+    },
+    style: {
+      flexDirection: 'row'
+    }
+  }]
+});
+
+/**
+ * `FormGroup` wraps controls such as `Checkbox` and `Switch`.
+ * It provides compact row layout.
+ * For the `Radio`, you should be using the `RadioGroup` component instead of this one.
+ */
+const FormGroup = /*#__PURE__*/reactExports.forwardRef(function FormGroup(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiFormGroup'
+  });
+  const {
+    className,
+    row = false,
+    ...other
+  } = props;
+  const [fcs] = useFormControlState({
+    props,
+    states: ['error']
+  });
+  const ownerState = {
+    ...props,
+    row,
+    error: fcs.error
+  };
+  const classes = useUtilityClasses$n(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(FormGroupRoot, {
+    className: clsx(classes.root, className),
+    ownerState: ownerState,
+    ref: ref,
+    ...other
+  });
+});
+process.env.NODE_ENV !== "production" ? FormGroup.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * Display group of elements in a compact row.
+   * @default false
+   */
+  row: PropTypes.bool,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object])
+} : void 0;
+var FormGroup$1 = FormGroup;
+
+function getRadioGroupUtilityClass(slot) {
+  return generateUtilityClass('MuiRadioGroup', slot);
+}
+generateUtilityClasses('MuiRadioGroup', ['root', 'row', 'error']);
+
+const useUtilityClasses$m = props => {
+  const {
+    classes,
+    row,
+    error
+  } = props;
+  const slots = {
+    root: ['root', row && 'row', error && 'error']
+  };
+  return composeClasses(slots, getRadioGroupUtilityClass, classes);
+};
+const RadioGroup = /*#__PURE__*/reactExports.forwardRef(function RadioGroup(props, ref) {
+  const {
+    // private
+    // eslint-disable-next-line react/prop-types
+    actions,
+    children,
+    className,
+    defaultValue,
+    name: nameProp,
+    onChange,
+    value: valueProp,
+    ...other
+  } = props;
+  const rootRef = reactExports.useRef(null);
+  const classes = useUtilityClasses$m(props);
+  const [value, setValueState] = useControlled({
+    controlled: valueProp,
+    default: defaultValue,
+    name: 'RadioGroup'
+  });
+  reactExports.useImperativeHandle(actions, () => ({
+    focus: () => {
+      let input = rootRef.current.querySelector('input:not(:disabled):checked');
+      if (!input) {
+        input = rootRef.current.querySelector('input:not(:disabled)');
+      }
+      if (input) {
+        input.focus();
+      }
+    }
+  }), []);
+  const handleRef = useForkRef(ref, rootRef);
+  const name = useId(nameProp);
+  const contextValue = reactExports.useMemo(() => ({
+    name,
+    onChange(event) {
+      setValueState(event.target.value);
+      if (onChange) {
+        onChange(event, event.target.value);
+      }
+    },
+    value
+  }), [name, onChange, setValueState, value]);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(RadioGroupContext$1.Provider, {
+    value: contextValue,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(FormGroup$1, {
+      role: "radiogroup",
+      ref: handleRef,
+      className: clsx(classes.root, className),
+      ...other,
+      children: children
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? RadioGroup.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * The name used to reference the value of the control.
+   * If you don't provide this prop, it falls back to a randomly generated name.
+   */
+  name: PropTypes.string,
+  /**
+   * Callback fired when a radio button is selected.
+   *
+   * @param {React.ChangeEvent<HTMLInputElement>} event The event source of the callback.
+   * @param {string} value The value of the selected radio button.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * Value of the selected radio button. The DOM API casts this to a string.
+   */
+  value: PropTypes.any
+} : void 0;
+var RadioGroup$1 = RadioGroup;
+
+function BaseRadioButtons({
+  className,
+  error = false,
+  helperText,
+  id,
+  label,
+  labelFallback = '',
+  onChange,
+  options = [],
+  radioProps = {},
+  row = false,
+  value,
+  variant,
+  ...formControlProps
+}) {
+  const fallbackId = reactExports.useId();
+  const {
+    localize
+  } = reactExports.useContext(MusicNotebookContext);
+  const groupId = id || `base-radio-buttons-${fallbackId}`;
+  const helperId = helperText ? `${groupId}-helper` : undefined;
+  const resolvedLabel = getLocalizedText(localize, label, labelFallback);
+  const resolvedHelperText = getLocalizedText(localize, helperText);
+  return /*#__PURE__*/React$1.createElement(FormControl$1, _extends$2({}, formControlProps, {
+    className: className ? `base-radio-buttons ${className}` : 'base-radio-buttons',
+    error: Boolean(error),
+    variant: variant
+  }), /*#__PURE__*/React$1.createElement(FormLabel$1, {
+    id: groupId
+  }, resolvedLabel), /*#__PURE__*/React$1.createElement(RadioGroup$1, {
+    "aria-describedby": helperId,
+    "aria-labelledby": groupId,
+    onChange: event => onChange?.(event.target.value, event),
+    row: row,
+    value: value
+  }, options.map(option => /*#__PURE__*/React$1.createElement(FormControlLabel$1, {
+    control: /*#__PURE__*/React$1.createElement(Radio$1, radioProps),
+    disabled: option.disabled,
+    key: option.value,
+    label: getLocalizedText(localize, option.label, option.fallback),
+    value: option.value
+  }))), resolvedHelperText ? /*#__PURE__*/React$1.createElement(FormHelperText$1, {
+    id: helperId
+  }, resolvedHelperText) : null);
+}
+
+function getInputLabelUtilityClasses(slot) {
+  return generateUtilityClass('MuiInputLabel', slot);
+}
+const inputLabelClasses = generateUtilityClasses('MuiInputLabel', ['root', 'focused', 'disabled', 'error', 'required', 'asterisk', 'formControl', 'sizeSmall', 'shrink', 'animated', 'standard', 'filled', 'outlined']);
+var inputLabelClasses$1 = inputLabelClasses;
+
+const useUtilityClasses$l = ownerState => {
+  const {
+    classes,
+    formControl,
+    size,
+    shrink,
+    disableAnimation,
+    variant,
+    required
+  } = ownerState;
+  const slots = {
+    root: ['root', formControl && 'formControl', !disableAnimation && 'animated', shrink && 'shrink', size && size !== 'medium' && `size${capitalize$3(size)}`, variant],
+    asterisk: [required && 'asterisk']
+  };
+  const composedClasses = composeClasses(slots, getInputLabelUtilityClasses, classes);
+  return {
+    ...classes,
+    // forward the focused, disabled, etc. classes to the FormLabel
+    ...composedClasses
+  };
+};
+const InputLabelRoot = styled$1(FormLabel$1, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiInputLabel',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [{
+      [`& .${formLabelClasses$1.asterisk}`]: styles.asterisk
+    }, styles.root, ownerState.formControl && styles.formControl, ownerState.size === 'small' && styles.sizeSmall, ownerState.shrink && styles.shrink, !ownerState.disableAnimation && styles.animated, ownerState.focused && styles.focused, styles[ownerState.variant]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  display: 'block',
+  transformOrigin: 'top left',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  maxWidth: '100%',
+  variants: [{
+    props: ({
+      ownerState
+    }) => ownerState.formControl,
+    style: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      // slight alteration to spec spacing to match visual spec result
+      transform: 'translate(0, 20px) scale(1)'
+    }
+  }, {
+    props: {
+      size: 'small'
+    },
+    style: {
+      // Compensation for the `Input` small size style.
+      transform: 'translate(0, 17px) scale(1)'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.shrink,
+    style: {
+      transform: 'translate(0, -1.5px) scale(0.75)',
+      transformOrigin: 'top left',
+      maxWidth: '133%'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => !ownerState.disableAnimation,
+    style: {
+      transition: theme.transitions.create(['color', 'transform', 'max-width'], {
+        duration: theme.transitions.duration.shorter,
+        easing: theme.transitions.easing.easeOut
+      })
+    }
+  }, {
+    props: {
+      variant: 'filled'
+    },
+    style: {
+      // Chrome's autofill feature gives the input field a yellow background.
+      // Since the input field is behind the label in the HTML tree,
+      // the input field is drawn last and hides the label with an opaque background color.
+      // zIndex: 1 will raise the label above opaque background-colors of input.
+      zIndex: 1,
+      pointerEvents: 'none',
+      transform: 'translate(12px, 16px) scale(1)',
+      maxWidth: 'calc(100% - 24px)'
+    }
+  }, {
+    props: {
+      variant: 'filled',
+      size: 'small'
+    },
+    style: {
+      transform: 'translate(12px, 13px) scale(1)'
+    }
+  }, {
+    props: ({
+      variant,
+      ownerState
+    }) => variant === 'filled' && ownerState.shrink,
+    style: {
+      userSelect: 'none',
+      pointerEvents: 'auto',
+      transform: 'translate(12px, 7px) scale(0.75)',
+      maxWidth: 'calc(133% - 24px)'
+    }
+  }, {
+    props: ({
+      variant,
+      ownerState,
+      size
+    }) => variant === 'filled' && ownerState.shrink && size === 'small',
+    style: {
+      transform: 'translate(12px, 4px) scale(0.75)'
+    }
+  }, {
+    props: {
+      variant: 'outlined'
+    },
+    style: {
+      // see comment above on filled.zIndex
+      zIndex: 1,
+      pointerEvents: 'none',
+      transform: 'translate(14px, 16px) scale(1)',
+      maxWidth: 'calc(100% - 24px)'
+    }
+  }, {
+    props: {
+      variant: 'outlined',
+      size: 'small'
+    },
+    style: {
+      transform: 'translate(14px, 9px) scale(1)'
+    }
+  }, {
+    props: ({
+      variant,
+      ownerState
+    }) => variant === 'outlined' && ownerState.shrink,
+    style: {
+      userSelect: 'none',
+      pointerEvents: 'auto',
+      // Theoretically, we should have (8+5)*2/0.75 = 34px
+      // but it feels a better when it bleeds a bit on the left, so 32px.
+      maxWidth: 'calc(133% - 32px)',
+      transform: 'translate(14px, -9px) scale(0.75)'
+    }
+  }]
+})));
+const InputLabel = /*#__PURE__*/reactExports.forwardRef(function InputLabel(inProps, ref) {
+  const props = useDefaultProps({
+    name: 'MuiInputLabel',
+    props: inProps
+  });
+  const {
+    disableAnimation = false,
+    margin,
+    shrink: shrinkProp,
+    variant,
+    className,
+    ...other
+  } = props;
+  const [fcs, muiFormControl] = useFormControlState({
+    props,
+    states: ['size', 'variant', 'required', 'focused']
+  });
+  let shrink = shrinkProp;
+  if (typeof shrink === 'undefined' && muiFormControl) {
+    shrink = muiFormControl.filled || muiFormControl.focused || muiFormControl.adornedStart;
+  }
+  const ownerState = {
+    ...props,
+    disableAnimation,
+    formControl: muiFormControl,
+    shrink,
+    size: fcs.size,
+    variant: fcs.variant,
+    required: fcs.required,
+    focused: fcs.focused
+  };
+  const classes = useUtilityClasses$l(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(InputLabelRoot, {
+    "data-shrink": shrink,
+    ref: ref,
+    className: clsx(classes.root, className),
+    ...other,
+    ownerState: ownerState,
+    classes: classes
+  });
+});
+process.env.NODE_ENV !== "production" ? InputLabel.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['error', 'info', 'primary', 'secondary', 'success', 'warning']), PropTypes.string]),
+  /**
+   * If `true`, the transition animation is disabled.
+   * @default false
+   */
+  disableAnimation: PropTypes.bool,
+  /**
+   * If `true`, the component is disabled.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the label is displayed in an error state.
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the `input` of this label is focused.
+   */
+  focused: PropTypes.bool,
+  /**
+   * If `dense`, will adjust vertical spacing. This is normally obtained via context from
+   * FormControl.
+   */
+  margin: PropTypes.oneOf(['dense']),
+  /**
+   * if `true`, the label will indicate that the `input` is required.
+   */
+  required: PropTypes.bool,
+  /**
+   * If `true`, the label is shrunk.
+   */
+  shrink: PropTypes.bool,
+  /**
+   * The size of the component.
+   * @default 'medium'
+   */
+  size: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['medium', 'small']), PropTypes.string]),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The variant to use.
+   */
+  variant: PropTypes.oneOf(['filled', 'outlined', 'standard'])
+} : void 0;
+var InputLabel$1 = InputLabel;
+
+/**
+ * @ignore - internal component.
+ */
+const ListContext = /*#__PURE__*/reactExports.createContext({});
+if (process.env.NODE_ENV !== 'production') {
+  ListContext.displayName = 'ListContext';
+}
+var ListContext$1 = ListContext;
+
+/**
+ * If `focusSource` is present, attempt to pass `focusVisible` through `focus()` options.
+ * Fall back to a plain focus call when the browser does not support it.
+ */
+function focusWithVisible(element, focusSource) {
+  if (focusSource == null) {
+    element.focus();
+    return;
+  }
+  try {
+    element.focus({
+      focusVisible: focusSource === 'keyboard'
+    });
+  } catch (error) {
+    element.focus();
+  }
+}
+
+const RovingTabIndexContext = /*#__PURE__*/reactExports.createContext(undefined);
+if (process.env.NODE_ENV !== 'production') {
+  RovingTabIndexContext.displayName = 'RovingTabIndexContext';
+}
+function useRovingTabIndexContext() {
+  const context = reactExports.useContext(RovingTabIndexContext);
+  if (context === undefined) {
+    throw new Error('MUI: RovingTabIndexContext is missing. Roving tab index items must be placed within a roving tab index provider.');
+  }
+  return context;
+}
+
+// From mui-x: https://github.com/mui/mui-x/blob/bb92fb0adac6764461adea9a9d7d43f1095f49e5/packages/x-internals/src/fastObjectShallowCompare/fastObjectShallowCompare.ts
+/* eslint-disable guard-for-in */
+
+const is = Object.is;
+
+/**
+ * Fast shallow compare for plain objects.
+ * Returns `true` when both objects have the same own enumerable keys and each value is equal
+ * according to `Object.is()`.
+ */
+function fastObjectShallowCompare(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (!(a instanceof Object) || !(b instanceof Object)) {
+    return false;
+  }
+  let aLength = 0;
+  let bLength = 0;
+  for (const key in a) {
+    aLength += 1;
+    if (!is(a[key], b[key])) {
+      return false;
+    }
+    if (!(key in b)) {
+      return false;
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/naming-convention, @typescript-eslint/no-unused-vars
+  for (const _ in b) {
+    bLength += 1;
+  }
+  return aLength === bLength;
+}
+
+const SUPPORTED_KEYS = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+
+/**
+ * Provides roving tab index behavior for a composite container and its focusable children.
+ * This is useful for implementing keyboard navigation in components like menus, tabs, and lists.
+ * The hook manages the focus state of child elements and provides props to be spread on both the container and the items.
+ * The container will handle keyboard events to move focus between items based on the specified orientation and wrapping behavior.
+ */
+function useRovingTabIndexRoot(params) {
+  const {
+    activeItemId: activeItemIdProp,
+    getDefaultActiveItemId,
+    orientation,
+    isRtl = false,
+    isItemFocusable: itemFilter = isItemFocusable,
+    wrap = true
+  } = params;
+  const [activeItemIdState, setActiveItemIdState] = reactExports.useState(activeItemIdProp);
+  const previousActiveItemIdPropRef = reactExports.useRef(activeItemIdProp);
+  let activeItemIdCandidate = activeItemIdState;
+  if (activeItemIdProp !== previousActiveItemIdPropRef.current) {
+    previousActiveItemIdPropRef.current = activeItemIdProp;
+    if (activeItemIdProp !== undefined && activeItemIdProp !== activeItemIdState) {
+      activeItemIdCandidate = activeItemIdProp;
+      setActiveItemIdState(activeItemIdProp);
+    }
+  }
+  const containerRef = reactExports.useRef(null);
+
+  // based on https://github.com/mui/base-ui/blob/7392a928fca91fcc68b9fad3439ac61e10f3f7ba/packages/react/src/composite/list/CompositeList.tsx#L25-L35
+  const itemMapRef = reactExports.useRef(new Map());
+  const [mapTick, setMapTick] = reactExports.useState(0);
+  const orderedItems = reactExports.useMemo(() => {
+    return getOrderedItems(itemMapRef.current);
+  }, [mapTick]);
+  const resolvedActiveItemId = resolveActiveItemId(activeItemIdCandidate, orderedItems, itemFilter, getDefaultActiveItemId);
+  const activeItemIdRef = reactExports.useRef(resolvedActiveItemId);
+  activeItemIdRef.current = resolvedActiveItemId;
+  const getActiveItem = reactExports.useCallback(() => {
+    const snapshot = getOrderedItems(itemMapRef.current);
+    const resolvedItemId = resolveActiveItemId(activeItemIdRef.current, snapshot, itemFilter, getDefaultActiveItemId);
+    return getItemById(snapshot, resolvedItemId);
+  }, [getDefaultActiveItemId, itemFilter]);
+  const getItemMap = reactExports.useCallback(() => {
+    return itemMapRef.current;
+  }, []);
+  const registerItem = useEventCallback(item => {
+    const previousItem = itemMapRef.current.get(item.id);
+    if (fastObjectShallowCompare(previousItem ?? null, item)) {
+      return;
+    }
+    itemMapRef.current.set(item.id, item);
+    setMapTick(value => value + 1);
+  });
+  const unregisterItem = useEventCallback(itemId => {
+    if (itemMapRef.current.delete(itemId)) {
+      setMapTick(value => value + 1);
+    }
+  });
+  const setActiveItemId = useEventCallback(itemId => {
+    setActiveItemIdState(itemId);
+  });
+  const isItemActive = reactExports.useCallback(itemId => {
+    return activeItemIdRef.current === itemId;
+  }, []);
+
+  // Moves focus relative to a starting index. This is the directional helper used by
+  // keyboard navigation and `focusNext()`.
+  const focusItem = reactExports.useCallback((currentIndex, direction, wrap, isItemFocusableOverride) => {
+    const snapshot = getNavigableItemsSnapshot(itemMapRef.current);
+    const nextItem = getNextActiveItem(snapshot, currentIndex, direction, wrap, isItemFocusableOverride ?? itemFilter);
+    if (!nextItem) {
+      return null;
+    }
+    nextItem.element?.focus();
+    setActiveItemIdState(nextItem.id);
+    return nextItem;
+  }, [itemFilter]);
+  const getContainerProps = reactExports.useCallback(ref => {
+    const onFocus = event => {
+      const snapshot = getNavigableItemsSnapshot(itemMapRef.current);
+      const focusedIndex = findItemIndexByElement(snapshot, event.target);
+      if (focusedIndex !== -1) {
+        setActiveItemIdState(snapshot[focusedIndex].id);
+      }
+    };
+    const onKeyDown = event => {
+      if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) {
+        return;
+      }
+      if (!SUPPORTED_KEYS.includes(event.key)) {
+        return;
+      }
+      let previousItemKey = orientation === 'horizontal' ? 'ArrowLeft' : 'ArrowUp';
+      let nextItemKey = orientation === 'horizontal' ? 'ArrowRight' : 'ArrowDown';
+      if (orientation === 'horizontal' && isRtl) {
+        previousItemKey = 'ArrowRight';
+        nextItemKey = 'ArrowLeft';
+      }
+      const snapshot = getNavigableItemsSnapshot(itemMapRef.current);
+      const currentFocus = activeElement(ownerDocument(containerRef.current));
+      const isFocusOnContainer = currentFocus === containerRef.current;
+      let currentIndex = getCurrentActiveItemIndex(snapshot, currentFocus, activeItemIdRef.current);
+      let direction = 'next';
+      switch (event.key) {
+        case previousItemKey:
+          direction = 'previous';
+          event.preventDefault();
+          if (isFocusOnContainer) {
+            // Set to length, so that the previous focused element will be the last one.
+            currentIndex = snapshot.length;
+          }
+          break;
+        case nextItemKey:
+          event.preventDefault();
+          if (isFocusOnContainer) {
+            currentIndex = -1;
+          }
+          break;
+        case 'Home':
+          event.preventDefault();
+          currentIndex = -1;
+          break;
+        case 'End':
+          event.preventDefault();
+          direction = 'previous';
+          currentIndex = snapshot.length;
+          break;
+        default:
+          return;
+      }
+      focusItem(currentIndex, direction, wrap);
+    };
+    return {
+      onFocus,
+      onKeyDown,
+      ref: handleRefs(ref, elementNode => {
+        containerRef.current = elementNode;
+      })
+    };
+  }, [focusItem, isRtl, orientation, wrap]);
+  const focusNext = reactExports.useCallback(isItemFocusableOverride => {
+    const snapshot = getNavigableItemsSnapshot(itemMapRef.current);
+    const currentFocus = activeElement(ownerDocument(containerRef.current));
+    const isFocusOnContainer = currentFocus === containerRef.current;
+    const currentIndex = isFocusOnContainer ? -1 : getCurrentActiveItemIndex(snapshot, currentFocus, activeItemIdRef.current);
+    return focusItem(currentIndex, 'next', true, isItemFocusableOverride)?.id ?? null;
+  }, [focusItem]);
+  return reactExports.useMemo(() => ({
+    activeItemId: resolvedActiveItemId,
+    focusNext,
+    getActiveItem,
+    getContainerProps,
+    getItemMap,
+    isItemActive,
+    registerItem,
+    setActiveItemId,
+    unregisterItem
+  }), [resolvedActiveItemId, focusNext, getActiveItem, getContainerProps, getItemMap, isItemActive, registerItem, setActiveItemId, unregisterItem]);
+}
+function useRovingTabIndexItem(params) {
+  const rootContext = useRovingTabIndexContext();
+  const {
+    activeItemId,
+    registerItem,
+    unregisterItem
+  } = rootContext;
+  const elementRef = reactExports.useRef(null);
+  const item = reactExports.useMemo(() => ({
+    disabled: params.disabled ?? false,
+    element: null,
+    focusableWhenDisabled: params.focusableWhenDisabled ?? false,
+    id: params.id,
+    selected: params.selected ?? false,
+    textValue: params.textValue
+  }), [params.disabled, params.focusableWhenDisabled, params.id, params.selected, params.textValue]);
+  const latestItemRef = reactExports.useRef(item);
+  // Keep the ref callback stable across item prop changes. The callback reads the latest
+  // item metadata from this ref so React does not have to detach and re-attach the ref
+  // every time `disabled`, `selected`, or similar item state changes.
+  latestItemRef.current = item;
+  const handleElementRef = reactExports.useCallback(element => {
+    elementRef.current = element;
+    if (element == null) {
+      // Ref detachment runs during React's commit phase. Calling `unregisterItem()`
+      // synchronously here can trigger a nested state update while React is still
+      // finishing that commit. Unregister in a microtask so it runs after the
+      // commit completes.
+      queueMicrotask(() => {
+        // null check prevents stale unregisters for a remove-then-re-add edge case
+        if (elementRef.current == null) {
+          unregisterItem(params.id);
+        }
+      });
+      return;
+    }
+    registerItem({
+      ...latestItemRef.current,
+      element
+    });
+  }, [params.id, registerItem, unregisterItem]);
+
+  // `UseRovingTabIndexItemReturnValue.ref` must always be a callback ref. `useForkRef()`
+  // is typed to return `null` when every input ref is nullish, but this call always includes
+  // `handleElementRef`, so the merged ref cannot be `null` here.
+  const mergedRef = useForkRef(params.ref, handleElementRef);
+  useEnhancedEffect$1(() => {
+    if (!elementRef.current) {
+      return;
+    }
+    registerItem({
+      ...item,
+      element: elementRef.current
+    });
+  }, [item, registerItem]);
+  useEnhancedEffect$1(() => {
+    const itemId = params.id;
+
+    // Keep unmount cleanup separate from the effect above. The effect above re-runs when
+    // item metadata changes, but we only want to unregister on unmount or when the item id changes.
+    return () => {
+      unregisterItem(itemId);
+    };
+  }, [params.id, unregisterItem]);
+  return {
+    ref: mergedRef,
+    tabIndex: activeItemId === params.id ? 0 : -1
+  };
+}
+
+/**
+ * Resolves which item id should own the roving tab stop for the current render.
+ *
+ * This is the top-level decision point for "who gets `tabIndex=0` right now?".
+ * For example:
+ * - `Tabs` sometimes passes `selectedValue` as `activeItemId` so the selected tab becomes
+ *   the tab stop when focus enters the list from outside.
+ * - `MenuList` leaves `activeItemId` undefined and relies on the default-item logic below
+ *   so that menu-specific rules decide which menu item should initially own the tab stop.
+ *
+ * @param activeItemId The item id supplied through the root hook's `activeItemId` option.
+ *   `undefined` means "the caller did not ask for a specific item, use the default-item
+ *   logic instead". `null` means "there is intentionally no preferred item, so also fall
+ *   back to the default-item logic".
+ * @param items The ordered registered items currently in the roving set.
+ * @param isFocusable A predicate that decides whether an item may receive roving focus.
+ * @param getDefaultActiveItemId Optional caller-provided function that picks the preferred
+ *   default item when `activeItemId` is not driving the tab stop directly.
+ * @returns The id of the item that should own `tabIndex=0`, or `null` if no item is focusable.
+ */
+function resolveActiveItemId(activeItemId, items, isFocusable, getDefaultActiveItemId) {
+  if (activeItemId != null) {
+    return resolveRequestedItemId(activeItemId, items, isFocusable);
+  }
+  return resolveDefaultItemId(items, isFocusable, getDefaultActiveItemId);
+}
+
+/**
+ * Resolves the item id supplied through the root hook's `activeItemId` option.
+ *
+ * This path is used when a component such as `Tabs` or `MenuList` wants roving focus to
+ * follow a specific logical item. For example, `Tabs` can pass the selected tab's value as
+ * `activeItemId` so that the selected tab owns `tabIndex=0` when focus enters the list.
+ *
+ * @param requestedItemId The item id passed to the root hook's `activeItemId` option.
+ * @param items The ordered registered items currently in the roving set.
+ * @param isFocusable A predicate that decides whether an item may receive roving focus.
+ * @returns The same id when it still points to a focusable item. If that id no longer exists,
+ *   returns the first focusable item. If the id still exists but the item is not focusable,
+ *   returns the next focusable item after it without wrapping.
+ */
+function resolveRequestedItemId(requestedItemId, items, isFocusable) {
+  const requestedItemIndex = findItemIndexById(items, requestedItemId);
+  if (requestedItemIndex === -1) {
+    return getFirstFocusableItemId(items, isFocusable);
+  }
+  if (isFocusable(items[requestedItemIndex])) {
+    return items[requestedItemIndex].id;
+  }
+  return getNextActiveItem(items, requestedItemIndex, 'next', false, isFocusable)?.id ?? null;
+}
+
+/**
+ * Resolves the default active item when the caller is not driving roving focus with
+ * `activeItemId`.
+ *
+ * This path is used on the initial render and whenever the caller leaves the choice of tab
+ * stop to the hook. `getDefaultActiveItemId` lets a component prefer a specific logical item
+ * before falling back to the first focusable item.
+ *
+ * For example:
+ * - `MenuList` uses this path all the time. When `variant="selectedMenu"`, it prefers the
+ *   selected menu item; otherwise it prefers the first focusable menu item.
+ * - `Tabs` uses this path while focus is already inside the tab list, because at that point
+ *   the current roving position should be driven by actual focus movement rather than by the
+ *   selected tab value.
+ *
+ * @param items The ordered registered items currently in the roving set.
+ * @param isFocusable A predicate that decides whether an item may receive roving focus.
+ * @param getDefaultActiveItemId Optional caller-provided function that chooses which item
+ *   should own the tab stop before the generic "first focusable item" fallback runs.
+ * @returns The default item id when it points to a focusable item, otherwise the first
+ *   focusable item in the snapshot, or `null` when none are focusable.
+ */
+function resolveDefaultItemId(items, isFocusable, getDefaultActiveItemId) {
+  const defaultItemId = getDefaultActiveItemId?.(items);
+  if (defaultItemId != null) {
+    const defaultItem = getItemById(items, defaultItemId);
+    if (defaultItem && isFocusable(defaultItem)) {
+      return defaultItem.id;
+    }
+  }
+  return getFirstFocusableItemId(items, isFocusable);
+}
+
+/**
+ * Finds the best starting index for keyboard navigation.
+ *
+ * This is used immediately before keyboard navigation and `focusNext()` navigation. It prefers
+ * the item that currently holds DOM focus, but if focus is on the container or outside the item
+ * set it falls back to the last known active item id.
+ *
+ * @param items The navigable item snapshot used for the current keyboard interaction.
+ * @param currentFocus The element that currently has DOM focus, if any.
+ * @param fallbackActiveItemId The last known active item id when focus is not on an item.
+ * @returns The focused item's index when focus is currently on an item. Otherwise, the index
+ *   of the fallback active item id, or `-1` when no matching item exists.
+ */
+function getCurrentActiveItemIndex(items, currentFocus, fallbackActiveItemId) {
+  if (currentFocus) {
+    const focusedIndex = findItemIndexByElement(items, currentFocus);
+    if (focusedIndex !== -1) {
+      return focusedIndex;
+    }
+  }
+  return findItemIndexById(items, fallbackActiveItemId);
+}
+
+/**
+ * Walks the item snapshot to find the next focusable item in the requested direction.
+ *
+ * This is the shared navigation primitive used by keyboard handling and imperative helpers
+ * such as `focusNext()`. It starts from the supplied index, advances through the snapshot in
+ * the requested direction, and skips over items that fail the `isFocusable` predicate.
+ *
+ * @param items The ordered navigable item snapshot.
+ * @param currentIndex The index to start from. Use `-1` to start before the first item or
+ *   `items.length` to start after the last item.
+ * @param direction The direction to move through the snapshot.
+ * @param wrap Whether navigation should wrap around at the ends of the list.
+ * @param isFocusable A predicate that decides whether an item may receive roving focus.
+ * @returns The next focusable item record, or `null` when no focusable item can be reached.
+ */
+function getNextActiveItem(items, currentIndex, direction, wrap, isFocusable) {
+  const lastIndex = items.length - 1;
+  if (lastIndex === -1) {
+    return null;
+  }
+  let wrappedOnce = false;
+  let nextIndex = getNextIndex(currentIndex, lastIndex, direction, wrap);
+  const startIndex = nextIndex;
+  while (nextIndex !== -1) {
+    if (nextIndex === startIndex) {
+      if (wrappedOnce) {
+        return null;
+      }
+      wrappedOnce = true;
+    }
+    const nextItem = items[nextIndex];
+    if (!nextItem || !isFocusable(nextItem)) {
+      nextIndex = getNextIndex(nextIndex, lastIndex, direction, wrap);
+    } else {
+      return nextItem;
+    }
+  }
+  return null;
+}
+function getFirstFocusableItemId(items, isFocusable) {
+  return items.find(item => isFocusable(item))?.id ?? null;
+}
+function getItemById(items, itemId) {
+  return itemId == null ? null : items.find(item => item.id === itemId) ?? null;
+}
+function findItemIndexById(items, itemId) {
+  return itemId == null ? -1 : items.findIndex(item => item.id === itemId);
+}
+function findItemIndexByElement(items, element) {
+  if (!element) {
+    return -1;
+  }
+  return items.findIndex(item => item.element === element || item.element?.contains(element));
+}
+function getOrderedItems(itemMap) {
+  const items = Array.from(itemMap.values());
+  if (items.every(item => item.element == null)) {
+    return items;
+  }
+  const connectedItems = items.filter(isConnectedItem).sort((itemA, itemB) => sortByDocumentPosition(itemA.element, itemB.element));
+  const disconnectedItems = items.filter(item => !isConnectedItem(item));
+  return [...connectedItems, ...disconnectedItems];
+}
+function getNavigableItemsSnapshot(itemMap) {
+  return getOrderedItems(itemMap).filter(isConnectedItem);
+}
+function getNextIndex(currentIndex, lastIndex, direction, wrap = true) {
+  if (direction === 'next') {
+    if (currentIndex === lastIndex) {
+      return wrap ? 0 : -1;
+    }
+    return currentIndex + 1;
+  }
+  if (currentIndex === 0) {
+    return wrap ? lastIndex : -1;
+  }
+  return currentIndex - 1;
+}
+function isItemFocusable(item) {
+  if (!item.element) {
+    return false;
+  }
+  if (item.focusableWhenDisabled) {
+    return true;
+  }
+  return !item.disabled && !item.element.hasAttribute('disabled') && item.element.getAttribute('aria-disabled') !== 'true' && item.element.hasAttribute('tabindex');
+}
+function isConnectedItem(item) {
+  return item.element != null && item.element.isConnected;
+}
+
+/* eslint-disable no-bitwise */
+function sortByDocumentPosition(a, b) {
+  if (a === b) {
+    return 0;
+  }
+  const position = a.compareDocumentPosition(b);
+  if (position & Node.DOCUMENT_POSITION_FOLLOWING || position & Node.DOCUMENT_POSITION_CONTAINED_BY) {
+    return -1;
+  }
+  if (position & Node.DOCUMENT_POSITION_PRECEDING || position & Node.DOCUMENT_POSITION_CONTAINS) {
+    return 1;
+  }
+  return 0;
+}
+/* eslint-enable no-bitwise */
+
+function handleRefs(...refs) {
+  return node => {
+    refs.forEach(ref => {
+      setRef(ref ?? null, node);
+    });
+  };
+}
+
+const dividerClasses = generateUtilityClasses('MuiDivider', ['root', 'absolute', 'fullWidth', 'inset', 'middle', 'flexItem', 'vertical', 'withChildren', 'textAlignRight', 'textAlignLeft', 'wrapper', 'wrapperVertical']);
+var dividerClasses$1 = dividerClasses;
+
+const listItemIconClasses = generateUtilityClasses('MuiListItemIcon', ['root', 'alignItemsFlexStart']);
+var listItemIconClasses$1 = listItemIconClasses;
+
+const listItemTextClasses = generateUtilityClasses('MuiListItemText', ['root', 'multiline', 'dense', 'inset', 'primary', 'secondary']);
+var listItemTextClasses$1 = listItemTextClasses;
+
+/**
+ * @ignore - internal component.
+ */
+
+const MenuListContext = /*#__PURE__*/reactExports.createContext(undefined);
+if (process.env.NODE_ENV !== 'production') {
+  MenuListContext.displayName = 'MenuListContext';
+}
+function useMenuListContext() {
+  const context = reactExports.useContext(MenuListContext);
+  if (context === undefined) {
+    throw new Error('MUI: MenuListContext is missing. MenuItems must be placed within Menu or MenuList.');
+  }
+  return context;
+}
+
+function getOpenInteractionType(event) {
+  if (!event) {
+    return null;
+  }
+  if (event.type === 'mousedown' || event.type === 'pointerdown' || event.type === 'touchstart') {
+    return 'pointer';
+  }
+  if (event.type === 'keydown' || event.type === 'click' && event.detail === 0) {
+    return 'keyboard';
+  }
+  return null;
+}
+
+function isEmpty$2(display) {
+  return display == null || typeof display === 'string' && !display.trim();
+}
+
+function areEqualValues(a, b) {
+  if (typeof b === 'object' && b !== null) {
+    return a === b;
+  }
+
+  // The value could be a number, the DOM will stringify it anyway.
+  return String(a) === String(b);
+}
+
+const SelectFocusSourceContext = /*#__PURE__*/reactExports.createContext(null);
+if (process.env.NODE_ENV !== 'production') {
+  SelectFocusSourceContext.displayName = 'SelectFocusSourceContext';
+}
+function useSelectFocusSource() {
+  const context = reactExports.useContext(SelectFocusSourceContext);
+  return context;
+}
+const SelectFocusSourceProvider = SelectFocusSourceContext.Provider;
+
+function getMenuItemUtilityClass(slot) {
+  return generateUtilityClass('MuiMenuItem', slot);
+}
+const menuItemClasses = generateUtilityClasses('MuiMenuItem', ['root', 'focusVisible', 'dense', 'disabled', 'divider', 'gutters', 'selected']);
+var menuItemClasses$1 = menuItemClasses;
+
+const overridesResolver = (props, styles) => {
+  const {
+    ownerState
+  } = props;
+  return [styles.root, ownerState.dense && styles.dense, ownerState.divider && styles.divider, !ownerState.disableGutters && styles.gutters];
+};
+const useUtilityClasses$k = ownerState => {
+  const {
+    disabled,
+    dense,
+    divider,
+    disableGutters,
+    selected,
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root', dense && 'dense', disabled && 'disabled', !disableGutters && 'gutters', divider && 'divider', selected && 'selected']
+  };
+  const composedClasses = composeClasses(slots, getMenuItemUtilityClass, classes);
+  return {
+    ...classes,
+    ...composedClasses
+  };
+};
+const MenuItemRoot = styled$1(ButtonBase$1, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiMenuItem',
+  slot: 'Root',
+  overridesResolver
+})(memoTheme$1(({
+  theme
+}) => ({
+  ...theme.typography.body1,
+  display: 'flex',
+  justifyContent: 'flex-start',
+  alignItems: 'center',
+  position: 'relative',
+  textDecoration: 'none',
+  minHeight: 48,
+  paddingTop: 6,
+  paddingBottom: 6,
+  boxSizing: 'border-box',
+  whiteSpace: 'nowrap',
+  '&:hover': {
+    textDecoration: 'none',
+    backgroundColor: (theme.vars || theme).palette.action.hover,
+    // Reset on touch devices, it doesn't add specificity
+    '@media (hover: none)': {
+      backgroundColor: 'transparent'
+    }
+  },
+  [`&.${menuItemClasses$1.selected}`]: {
+    backgroundColor: theme.alpha((theme.vars || theme).palette.primary.main, (theme.vars || theme).palette.action.selectedOpacity),
+    [`&.${menuItemClasses$1.focusVisible}`]: {
+      backgroundColor: theme.alpha((theme.vars || theme).palette.primary.main, `${(theme.vars || theme).palette.action.selectedOpacity} + ${(theme.vars || theme).palette.action.focusOpacity}`)
+    }
+  },
+  [`&.${menuItemClasses$1.selected}:hover`]: {
+    backgroundColor: theme.alpha((theme.vars || theme).palette.primary.main, `${(theme.vars || theme).palette.action.selectedOpacity} + ${(theme.vars || theme).palette.action.hoverOpacity}`),
+    // Reset on touch devices, it doesn't add specificity
+    '@media (hover: none)': {
+      backgroundColor: theme.alpha((theme.vars || theme).palette.primary.main, (theme.vars || theme).palette.action.selectedOpacity)
+    }
+  },
+  [`&.${menuItemClasses$1.focusVisible}`]: {
+    backgroundColor: (theme.vars || theme).palette.action.focus
+  },
+  [`&.${menuItemClasses$1.disabled}`]: {
+    opacity: (theme.vars || theme).palette.action.disabledOpacity
+  },
+  [`& + .${dividerClasses$1.root}`]: {
+    marginTop: theme.spacing(1),
+    marginBottom: theme.spacing(1)
+  },
+  [`& + .${dividerClasses$1.inset}`]: {
+    marginLeft: 52
+  },
+  [`& .${listItemTextClasses$1.root}`]: {
+    marginTop: 0,
+    marginBottom: 0
+  },
+  [`& .${listItemTextClasses$1.inset}`]: {
+    paddingLeft: 36
+  },
+  [`& .${listItemIconClasses$1.root}`]: {
+    minWidth: 36
+  },
+  variants: [{
+    props: ({
+      ownerState
+    }) => !ownerState.disableGutters,
+    style: {
+      paddingLeft: 16,
+      paddingRight: 16
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.divider,
+    style: {
+      borderBottom: `1px solid ${(theme.vars || theme).palette.divider}`,
+      backgroundClip: 'padding-box'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => !ownerState.dense,
+    style: {
+      [theme.breakpoints.up('sm')]: {
+        minHeight: 'auto'
+      }
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.dense,
+    style: {
+      minHeight: 32,
+      // https://m2.material.io/components/menus#specs > Dense
+      paddingTop: 4,
+      paddingBottom: 4,
+      ...theme.typography.body2,
+      [`& .${listItemIconClasses$1.root} svg`]: {
+        fontSize: '1.25rem'
+      }
+    }
+  }]
+})));
+const MenuItem = /*#__PURE__*/reactExports.forwardRef(function MenuItem(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiMenuItem'
+  });
+  const {
+    autoFocus: shouldAutoFocusOnMount = false,
+    component = 'li',
+    dense = false,
+    divider = false,
+    disableGutters = false,
+    focusVisibleClassName,
+    role = 'menuitem',
+    tabIndex: tabIndexProp,
+    className,
+    ...other
+  } = props;
+  const focusSource = useSelectFocusSource();
+  const context = reactExports.useContext(ListContext$1);
+  const childContext = reactExports.useMemo(() => ({
+    dense: dense || context.dense || false,
+    disableGutters
+  }), [context.dense, dense, disableGutters]);
+  const menuListContext = useMenuListContext();
+  const rovingItemId = useId();
+  // Escape hatch via ButtonBase for when an anchored <Menu> is opened with a pointer
+  // interaction on a trigger, the item should receive DOM focus but without focus visible
+  // styling. Current API does not allow a reliable `openInteractionType` for anchored menus.
+  const suppressFocusVisible = menuListContext.suppressInitialFocusVisible;
+  const itemsFocusableWhenDisabled = menuListContext.itemsFocusableWhenDisabled;
+  const menuItemRef = reactExports.useRef(null);
+  useEnhancedEffect$1(() => {
+    if (shouldAutoFocusOnMount) {
+      if (menuItemRef.current) {
+        focusWithVisible(menuItemRef.current, focusSource);
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.error('MUI: Unable to set focus to a MenuItem whose component has not been rendered.');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAutoFocusOnMount]);
+  const ownerState = {
+    ...props,
+    dense: childContext.dense,
+    divider,
+    disableGutters
+  };
+  const classes = useUtilityClasses$k(props);
+
+  // Don't forward the 'root' class to the ButtonBase, as it will get duplicated with the one passed to the className prop.
+  const {
+    root,
+    ...forwardedClasses
+  } = classes;
+  const rovingItemProps = useRovingTabIndexItem({
+    id: rovingItemId,
+    ref,
+    disabled: props.disabled,
+    focusableWhenDisabled: itemsFocusableWhenDisabled,
+    selected: props.selected
+  });
+  const handleRef = useForkRef(menuItemRef, rovingItemProps.ref);
+  let tabIndex;
+  if (tabIndexProp !== undefined) {
+    tabIndex = tabIndexProp;
+  } else if (menuListContext.variant === 'selectedMenu') {
+    tabIndex = rovingItemProps.tabIndex;
+  } else if (!props.disabled || itemsFocusableWhenDisabled) {
+    // In `menu` variant, registration still drives arrow-key navigation even
+    // though each item keeps `tabIndex={-1}`.
+    tabIndex = -1;
+  }
+  return /*#__PURE__*/jsxRuntimeExports.jsx(ListContext$1.Provider, {
+    value: childContext,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(MenuItemRoot, {
+      ref: handleRef,
+      role: role,
+      tabIndex: tabIndex,
+      component: component,
+      internalNativeButton: false,
+      focusableWhenDisabled: itemsFocusableWhenDisabled,
+      suppressFocusVisible: suppressFocusVisible,
+      focusVisibleClassName: clsx(classes.focusVisible, focusVisibleClassName),
+      className: clsx(classes.root, className),
+      ...other,
+      ownerState: ownerState,
+      classes: forwardedClasses
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? MenuItem.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, the list item is focused during the first mount.
+   * Focus will also be triggered if the value changes from false to true.
+   * @default false
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * If `true`, compact vertical padding designed for keyboard and mouse input is used.
+   * The prop defaults to the value inherited from the parent Menu component.
+   * @default false
+   */
+  dense: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the left and right padding is removed.
+   * @default false
+   */
+  disableGutters: PropTypes.bool,
+  /**
+   * If `true`, a 1px light border is added to the bottom of the menu item.
+   * @default false
+   */
+  divider: PropTypes.bool,
+  /**
+   * This prop can help identify which element has keyboard focus.
+   * The class name will be applied when the element gains the focus through keyboard interaction.
+   * It's a polyfill for the [CSS :focus-visible selector](https://drafts.csswg.org/selectors-4/#the-focus-visible-pseudo).
+   * The rationale for using this feature [is explained here](https://github.com/WICG/focus-visible/blob/HEAD/explainer.md).
+   * A [polyfill can be used](https://github.com/WICG/focus-visible) to apply a `focus-visible` class to other components
+   * if needed.
+   */
+  focusVisibleClassName: PropTypes.string,
+  /**
+   * @ignore
+   */
+  role: PropTypes.string,
+  /**
+   * If `true`, the component is selected.
+   * @default false
+   */
+  selected: PropTypes.bool,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * @default 0
+   */
+  tabIndex: PropTypes.number
+} : void 0;
+var MenuItem$1 = MenuItem;
+
+/**
+ * Returns the ref of a React element handling differences between React 19 and older versions.
+ * It will throw runtime error if the element is not a valid React element.
+ *
+ * @param element React.ReactElement
+ * @returns React.Ref<any> | null
+ */
+function getReactElementRef(element) {
+  // 'ref' is passed as prop in React 19, whereas 'ref' is directly attached to children in older versions
+  if (parseInt(reactExports.version, 10) >= 19) {
+    return element?.props?.ref || null;
+  }
+  // @ts-expect-error element.ref is not included in the ReactElement type
+  // https://github.com/DefinitelyTyped/DefinitelyTyped/discussions/70189
+  return element?.ref || null;
+}
+
+function HTMLElementType(props, propName, componentName, location, propFullName) {
+  if (process.env.NODE_ENV === 'production') {
+    return null;
+  }
+  const propValue = props[propName];
+  const safePropName = propFullName || propName;
+  if (propValue == null) {
+    return null;
+  }
+  if (propValue && propValue.nodeType !== 1) {
+    return new Error(`Invalid ${location} \`${safePropName}\` supplied to \`${componentName}\`. ` + `Expected an HTMLElement.`);
+  }
+  return null;
+}
+
+/**
+ * @ignore - do not document.
+ * Builds the props to be passed into the slot of an unstyled component.
+ * It merges the internal props of the component with the ones supplied by the user, allowing to customize the behavior.
+ * If the slot component is not a host component, it also merges in the `ownerState`.
+ *
+ * @param parameters.getSlotProps - A function that returns the props to be passed to the slot component.
+ */
+function useSlotProps(parameters) {
+  const {
+    elementType,
+    externalSlotProps,
+    ownerState,
+    skipResolvingSlotProps = false,
+    ...other
+  } = parameters;
+  const resolvedComponentsProps = skipResolvingSlotProps ? {} : resolveComponentProps(externalSlotProps, ownerState);
+  const {
+    props: mergedProps,
+    internalRef
+  } = mergeSlotProps$1({
+    ...other,
+    externalSlotProps: resolvedComponentsProps
+  });
+  const ref = useForkRef(internalRef, resolvedComponentsProps?.ref, parameters.additionalProps?.ref);
+  const props = appendOwnerState(elementType, {
+    ...mergedProps,
+    ref
+  }, ownerState);
+  return props;
+}
+
+/**
+ * Copied from @base-ui/utils
+ *
+ * Shadow DOM-aware containment check.
+ *
+ * Native `parent.contains(child)` returns `false` when the child is inside a
+ * shadow root that is a descendant of the parent. This function handles that
+ * case by traversing up through shadow root hosts.
+ *
+ * @param parent - The potential ancestor element.
+ * @param child - The potential descendant element.
+ * @returns Whether `parent` contains `child`, even across shadow root boundaries.
+ */
+function contains$1(parent, child) {
+  if (!parent || !child) {
+    return false;
+  }
+
+  // First, attempt with the faster native method.
+  if (parent.contains(child)) {
+    return true;
+  }
+
+  // Then fall back to traversing out of shadow roots when needed.
+  const rootNode = child.getRootNode?.();
+  if (rootNode && rootNode instanceof ShadowRoot) {
+    let next = child;
+    while (next) {
+      if (parent === next) {
+        return true;
+      }
+      next = next.parentNode ?? next.host ?? null;
+    }
+  }
+  return false;
+}
+
+// A change of the browser zoom change the scrollbar size.
+// Credit https://github.com/twbs/bootstrap/blob/488fd8afc535ca3a6ad4dc581f5e89217b6a36ac/js/src/util/scrollbar.js#L14-L18
+function getScrollbarSize(win = window) {
+  // https://developer.mozilla.org/en-US/docs/Web/API/Window/innerWidth#usage_notes
+  const documentWidth = win.document.documentElement.clientWidth;
+  return win.innerWidth - documentWidth;
+}
+
+function getListUtilityClass(slot) {
+  return generateUtilityClass('MuiList', slot);
+}
+generateUtilityClasses('MuiList', ['root', 'padding', 'dense', 'subheader']);
+
+const useUtilityClasses$j = ownerState => {
+  const {
+    classes,
+    disablePadding,
+    dense,
+    subheader
+  } = ownerState;
+  const slots = {
+    root: ['root', !disablePadding && 'padding', dense && 'dense', subheader && 'subheader']
+  };
+  return composeClasses(slots, getListUtilityClass, classes);
+};
+const ListRoot = styled$1('ul', {
+  name: 'MuiList',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, !ownerState.disablePadding && styles.padding, ownerState.dense && styles.dense, ownerState.subheader && styles.subheader];
+  }
+})({
+  listStyle: 'none',
+  margin: 0,
+  padding: 0,
+  position: 'relative',
+  variants: [{
+    props: ({
+      ownerState
+    }) => !ownerState.disablePadding,
+    style: {
+      paddingTop: 8,
+      paddingBottom: 8
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.subheader,
+    style: {
+      paddingTop: 0,
+      isolation: 'isolate' // Prevent overlap with iOS overlay scrollbars.
+    }
+  }]
+});
+const List = /*#__PURE__*/reactExports.forwardRef(function List(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiList'
+  });
+  const {
+    children,
+    className,
+    component = 'ul',
+    dense = false,
+    disablePadding = false,
+    subheader,
+    ...other
+  } = props;
+  const context = reactExports.useMemo(() => ({
+    dense
+  }), [dense]);
+  const ownerState = {
+    ...props,
+    component,
+    dense,
+    disablePadding
+  };
+  const classes = useUtilityClasses$j(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsx(ListContext$1.Provider, {
+    value: context,
+    children: /*#__PURE__*/jsxRuntimeExports.jsxs(ListRoot, {
+      as: component,
+      className: clsx(classes.root, className),
+      ref: ref,
+      ownerState: ownerState,
+      ...other,
+      children: [subheader, children]
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? List.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * If `true`, compact vertical padding designed for keyboard and mouse input is used for
+   * the list and list items.
+   * The prop is available to descendant components as the `dense` context.
+   * @default false
+   */
+  dense: PropTypes.bool,
+  /**
+   * If `true`, vertical padding is removed from the list.
+   * @default false
+   */
+  disablePadding: PropTypes.bool,
+  /**
+   * The content of the subheader, normally `ListSubheader`.
+   */
+  subheader: PropTypes.node,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object])
+} : void 0;
+var List$1 = List;
+
+function getItemText(itemOrElement) {
+  const element = itemOrElement?.element ?? itemOrElement;
+  if (!element) {
+    return '';
+  }
+  if (itemOrElement?.textValue !== undefined) {
+    return itemOrElement.textValue;
+  }
+  let text = element.innerText;
+  if (text === undefined) {
+    // jsdom doesn't support innerText
+    text = element.textContent;
+  }
+  return text ?? '';
+}
+function textCriteriaMatches(itemOrElement, textCriteria) {
+  if (textCriteria === undefined) {
+    return true;
+  }
+  let text = getItemText(itemOrElement);
+  text = text.trim().toLowerCase();
+  if (text.length === 0) {
+    return false;
+  }
+  if (textCriteria.repeating) {
+    return text[0] === textCriteria.keys[0];
+  }
+  return text.startsWith(textCriteria.keys.join(''));
+}
+function isItemFocusableWithTextCriteria(item, criteria) {
+  if (!textCriteriaMatches(item, criteria)) {
+    return false;
+  }
+  return isItemFocusable(item);
+}
+
+// Menu auto-focus is not always keyboard-driven. On open we often move focus to the
+// active item programmatically so arrow-key navigation starts from the right place.
+function focusInitialItem(element, focusSource) {
+  focusWithVisible(element, focusSource);
+}
+
+/**
+ * A permanently displayed menu following https://www.w3.org/WAI/ARIA/apg/patterns/menu-button/.
+ * It's exposed to help customization of the [`Menu`](/material-ui/api/menu/) component if you
+ * use it separately you need to move focus into the component manually. Once
+ * the focus is placed inside the component it is fully keyboard accessible.
+ */
+const MenuList = /*#__PURE__*/reactExports.forwardRef(function MenuList(props, ref) {
+  const {
+    // private
+    // eslint-disable-next-line react/prop-types
+    actions,
+    autoFocus: autoFocusList = false,
+    autoFocusItem: autoFocusActiveItem = false,
+    children,
+    className,
+    disabledItemsFocusable = false,
+    disableListWrap = false,
+    onKeyDown,
+    variant = 'selectedMenu',
+    ...other
+  } = props;
+  const listRef = reactExports.useRef(null);
+  const hasFocusedInitialTargetRef = reactExports.useRef(false);
+  // Escape hatch for <Menu variant="menu"> (items have no selection state). When opened with
+  // mouse/pointer, the initial focused item should still receive DOM focus, but ButtonBase
+  // should suppress its focus-visible state for that one initial handoff.
+  const [suppressInitialFocusVisible, setSuppressInitialFocusVisible] = reactExports.useState(false);
+  // Current anchored <Menu>s cannot receive a `openInteractionType` signal from a trigger
+  // the API only receives `open` and `anchorEl`. When <MenuList> is used in <Select>, the
+  // internal <SelectInput> is able to achieve this via `useSelectFocusSource`.
+  const focusSource = useSelectFocusSource();
+  const textCriteriaRef = reactExports.useRef({
+    keys: [],
+    repeating: true,
+    previousKeyMatched: true,
+    lastTime: null
+  });
+  const getDefaultActiveItemId = reactExports.useCallback(items => {
+    if (variant === 'selectedMenu') {
+      return items.find(item => item.selected && isItemFocusable(item))?.id ?? items.find(item => isItemFocusable(item))?.id ?? null;
+    }
+    return items.find(item => isItemFocusable(item))?.id ?? null;
+  }, [variant]);
+  const rovingContainer = useRovingTabIndexRoot({
+    activeItemId: undefined,
+    getDefaultActiveItemId,
+    orientation: 'vertical',
+    wrap: !disableListWrap
+  });
+  const {
+    activeItemId,
+    focusNext,
+    getActiveItem,
+    getContainerProps,
+    getItemMap
+  } = rovingContainer;
+  const focusInitialTarget = useEventCallback((force = false) => {
+    // `force` is used by the imperative action when `Menu` asks `MenuList` to restore its
+    // initial focus target after the popover finishes entering, even if this list already
+    // completed its normal one-time initial-focus path on an earlier render.
+    if (!listRef.current || !force && hasFocusedInitialTargetRef.current) {
+      return null;
+    }
+    if (autoFocusActiveItem) {
+      const activeItem = getActiveItem();
+      if (activeItem?.element) {
+        const hasSelectedItem = Array.from(getItemMap().values()).some(item => item.selected);
+        const shouldSuppressInitialFocusVisible = variant === 'menu' && hasSelectedItem && !activeItem.selected && focusSource == null;
+        setSuppressInitialFocusVisible(shouldSuppressInitialFocusVisible);
+        focusInitialItem(activeItem.element, focusSource);
+        hasFocusedInitialTargetRef.current = true;
+        return activeItem.element;
+      }
+      if (!autoFocusList) {
+        return null;
+      }
+
+      // Keep the list container focusable while waiting for items to register,
+      // or when there is no focusable item to move to.
+      setSuppressInitialFocusVisible(false);
+      listRef.current.focus();
+      return listRef.current;
+    }
+    if (!autoFocusList) {
+      setSuppressInitialFocusVisible(false);
+      return null;
+    }
+    setSuppressInitialFocusVisible(false);
+    listRef.current.focus();
+    hasFocusedInitialTargetRef.current = true;
+    return listRef.current;
+  });
+  useEnhancedEffect$1(() => {
+    if (!autoFocusList && !autoFocusActiveItem) {
+      hasFocusedInitialTargetRef.current = false;
+      setSuppressInitialFocusVisible(false);
+      return undefined;
+    }
+    focusInitialTarget();
+    return undefined;
+  }, [activeItemId, autoFocusActiveItem, autoFocusList, focusInitialTarget]);
+  reactExports.useImperativeHandle(actions, () => ({
+    adjustStyleForScrollbar: (containerElement, {
+      direction
+    }) => {
+      // Let's ignore that piece of logic if users are already overriding the width
+      // of the menu.
+      const noExplicitWidth = !listRef.current.style.width;
+      if (containerElement.clientHeight < listRef.current.clientHeight && noExplicitWidth) {
+        const scrollbarSize = `${getScrollbarSize(ownerWindow(containerElement))}px`;
+        listRef.current.style[direction === 'rtl' ? 'paddingLeft' : 'paddingRight'] = scrollbarSize;
+        listRef.current.style.width = `calc(100% + ${scrollbarSize})`;
+      }
+      return listRef.current;
+    },
+    focusInitialTarget: () => {
+      if (!listRef.current) {
+        return null;
+      }
+      const currentFocus = activeElement(ownerDocument(listRef.current));
+      if (currentFocus && contains$1(listRef.current, currentFocus)) {
+        return currentFocus;
+      }
+      return focusInitialTarget(true);
+    }
+  }), [focusInitialTarget]);
+  const rovingContainerProps = getContainerProps();
+  const handleRef = useForkRef(listRef, rovingContainerProps.ref, ref);
+  const menuListContextValue = reactExports.useMemo(() => ({
+    itemsFocusableWhenDisabled: disabledItemsFocusable,
+    suppressInitialFocusVisible,
+    variant
+  }), [disabledItemsFocusable, suppressInitialFocusVisible, variant]);
+  const handleKeyDown = useEventCallback(event => {
+    if (suppressInitialFocusVisible) {
+      setSuppressInitialFocusVisible(false);
+    }
+    const isModifierKeyPressed = event.ctrlKey || event.metaKey || event.altKey;
+    if (isModifierKeyPressed && onKeyDown) {
+      onKeyDown(event);
+      return;
+    }
+    rovingContainerProps.onKeyDown(event);
+    if (event.key.length === 1) {
+      const criteria = textCriteriaRef.current;
+      const lowerKey = event.key.toLowerCase();
+      const currTime = performance.now();
+      if (criteria.keys.length > 0) {
+        // Reset
+        if (currTime - criteria.lastTime > 500) {
+          criteria.keys = [];
+          criteria.repeating = true;
+          criteria.previousKeyMatched = true;
+        } else if (criteria.repeating && lowerKey !== criteria.keys[0]) {
+          criteria.repeating = false;
+        }
+      }
+      criteria.lastTime = currTime;
+      criteria.keys.push(lowerKey);
+      const currentFocus = activeElement(ownerDocument(listRef.current));
+      const keepFocusOnCurrent = currentFocus && !criteria.repeating && textCriteriaMatches(currentFocus, criteria);
+      if (criteria.previousKeyMatched && (keepFocusOnCurrent || focusNext(item => isItemFocusableWithTextCriteria(item, criteria)) != null)) {
+        event.preventDefault();
+      } else {
+        criteria.previousKeyMatched = false;
+      }
+    }
+    if (onKeyDown) {
+      onKeyDown(event);
+    }
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(List$1, {
+    role: "menu",
+    ref: handleRef,
+    className: className,
+    onKeyDown: handleKeyDown,
+    onFocus: rovingContainerProps.onFocus,
+    tabIndex: -1,
+    ...other,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(MenuListContext.Provider, {
+      value: menuListContextValue,
+      children: /*#__PURE__*/jsxRuntimeExports.jsx(RovingTabIndexContext.Provider, {
+        value: rovingContainer,
+        children: children
+      })
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? MenuList.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, will focus the `[role="menu"]` container and move into tab order.
+   * @default false
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * If `true`, will focus the first menuitem if `variant="menu"` or selected item
+   * if `variant="selectedMenu"`.
+   * @default false
+   */
+  autoFocusItem: PropTypes.bool,
+  /**
+   * MenuList contents, normally `MenuItem`s.
+   */
+  children: PropTypes.node,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * If `true`, will allow focus on disabled items.
+   * @default false
+   */
+  disabledItemsFocusable: PropTypes.bool,
+  /**
+   * If `true`, the menu items will not wrap focus.
+   * @default false
+   */
+  disableListWrap: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  onKeyDown: PropTypes.func,
+  /**
+   * The variant to use. Use `menu` to prevent selected items from impacting the initial focus
+   * and the vertical alignment relative to the anchor element.
+   * @default 'selectedMenu'
+   */
+  variant: PropTypes.oneOf(['menu', 'selectedMenu'])
+} : void 0;
+var MenuList$1 = MenuList;
+
+function getTypeByValue(value) {
+  const valueType = typeof value;
+  switch (valueType) {
+    case 'number':
+      if (Number.isNaN(value)) {
+        return 'NaN';
+      }
+      if (!Number.isFinite(value)) {
+        return 'Infinity';
+      }
+      if (value !== Math.floor(value)) {
+        return 'float';
+      }
+      return 'number';
+    case 'object':
+      if (value === null) {
+        return 'null';
+      }
+      return value.constructor.name;
+    default:
+      return valueType;
+  }
+}
+function requiredInteger(props, propName, componentName, location) {
+  const propValue = props[propName];
+  if (propValue == null || !Number.isInteger(propValue)) {
+    const propType = getTypeByValue(propValue);
+    return new RangeError(`Invalid ${location} \`${propName}\` of type \`${propType}\` supplied to \`${componentName}\`, expected \`integer\`.`);
+  }
+  return null;
+}
+function validator(props, propName, componentName, location) {
+  const propValue = props[propName];
+  if (propValue === undefined) {
+    return null;
+  }
+  return requiredInteger(props, propName, componentName, location);
+}
+function validatorNoop() {
+  return null;
+}
+validator.isRequired = requiredInteger;
+validatorNoop.isRequired = validatorNoop;
+const integerPropType = process.env.NODE_ENV === 'production' ? validatorNoop : validator;
+var integerPropType$1 = integerPropType;
+
+function isLayoutSupported() {
+  return !(/jsdom|HappyDOM/.test(window.navigator.userAgent) ||
+  // TODO(v9): Remove the test environment check
+  // eslint-disable-next-line mui/consistent-production-guard
+  process.env.NODE_ENV === 'test');
+}
+
+function isClassComponent(elementType) {
+  // elementType.prototype?.isReactComponent
+  const {
+    prototype = {}
+  } = elementType;
+  return Boolean(prototype.isReactComponent);
+}
+function acceptingRef(props, propName, componentName, location, propFullName) {
+  const element = props[propName];
+  const safePropName = propFullName || propName;
+  if (element == null ||
+  // When server-side rendering React doesn't warn either.
+  // This is not an accurate check for SSR.
+  // This is only in place for Emotion compat.
+  // TODO: Revisit once https://github.com/facebook/react/issues/20047 is resolved.
+  typeof window === 'undefined') {
+    return null;
+  }
+  let warningHint;
+  const elementType = element.type;
+  /**
+   * Blacklisting instead of whitelisting
+   *
+   * Blacklisting will miss some components, such as React.Fragment. Those will at least
+   * trigger a warning in React.
+   * We can't whitelist because there is no safe way to detect React.forwardRef
+   * or class components. "Safe" means there's no public API.
+   *
+   */
+  if (typeof elementType === 'function' && !isClassComponent(elementType)) {
+    warningHint = 'Did you accidentally use a plain function component for an element instead?';
+  }
+  if (warningHint !== undefined) {
+    return new Error(`Invalid ${location} \`${safePropName}\` supplied to \`${componentName}\`. ` + `Expected an element that can hold a ref. ${warningHint} ` + 'For more information see https://mui.com/r/caveat-with-refs-guide');
+  }
+  return null;
+}
+const elementAcceptingRef = chainPropTypes(PropTypes.element, acceptingRef);
+elementAcceptingRef.isRequired = chainPropTypes(PropTypes.element.isRequired, acceptingRef);
+var elementAcceptingRef$1 = elementAcceptingRef;
+
+const reflow = node => node.scrollTop;
+function normalizedTransitionCallback(nodeRef, callback) {
+  return maybeIsAppearing => {
+    if (callback) {
+      const node = nodeRef.current;
+      // onEnterXxx and onExitXxx callbacks have a different arguments.length value.
+      if (maybeIsAppearing === undefined) {
+        callback(node);
+      } else {
+        callback(node, maybeIsAppearing);
+      }
+    }
+  };
+}
+/**
+ * Computes the child style for a transition component, reusing existing
+ * references when possible to preserve referential equality for React.memo.
+ */
+function getTransitionChildStyle(state, inProp, baseStyles, hiddenStyles, styleProp, childStyle) {
+  const base = state === 'exited' && !inProp ? hiddenStyles : baseStyles[state] || baseStyles.exited;
+  return styleProp || childStyle ? {
+    ...base,
+    ...styleProp,
+    ...childStyle
+  } : base;
+}
+function getTransitionProps(props, options) {
+  const {
+    timeout,
+    easing,
+    style = {}
+  } = props;
+  return {
+    duration: style.transitionDuration ?? (typeof timeout === 'number' ? timeout : timeout[options.mode] || 0),
+    easing: style.transitionTimingFunction ?? (typeof easing === 'object' ? easing[options.mode] : easing),
+    delay: style.transitionDelay
+  };
+}
+
+function getScale(value) {
+  return `scale(${value}, ${value ** 2})`;
+}
+const styles$2 = {
+  entering: {
+    opacity: 1,
+    transform: getScale(1)
+  },
+  entered: {
+    opacity: 1,
+    transform: 'none'
+  },
+  exiting: {
+    opacity: 0,
+    transform: getScale(0.75)
+  },
+  exited: {
+    opacity: 0,
+    transform: getScale(0.75)
+  }
+};
+const hiddenStyles$1 = {
+  opacity: 0,
+  transform: getScale(0.75),
+  visibility: 'hidden'
+};
+
+/**
+ * The Grow transition is used by the [Tooltip](/material-ui/react-tooltip/) and
+ * [Popover](/material-ui/react-popover/) components.
+ * It uses [react-transition-group](https://github.com/reactjs/react-transition-group) internally.
+ */
+const Grow = /*#__PURE__*/reactExports.forwardRef(function Grow(props, ref) {
+  const {
+    addEndListener,
+    appear = true,
+    children,
+    easing,
+    in: inProp,
+    onEnter,
+    onEntered,
+    onEntering,
+    onExit,
+    onExited,
+    onExiting,
+    style,
+    timeout = 'auto',
+    ...other
+  } = props;
+  const timer = useTimeout();
+  const autoTimeout = reactExports.useRef();
+  const theme = useTheme();
+  const nodeRef = reactExports.useRef(null);
+  const handleRef = useForkRef(nodeRef, getReactElementRef(children), ref);
+  const handleEntering = normalizedTransitionCallback(nodeRef, onEntering);
+  const handleEnter = normalizedTransitionCallback(nodeRef, (node, isAppearing) => {
+    reflow(node); // So the animation always start from the start.
+
+    const {
+      duration: transitionDuration,
+      delay,
+      easing: transitionTimingFunction
+    } = getTransitionProps({
+      style,
+      timeout,
+      easing
+    }, {
+      mode: 'enter'
+    });
+    let duration;
+    if (timeout === 'auto') {
+      duration = theme.transitions.getAutoHeightDuration(node.clientHeight);
+      autoTimeout.current = duration;
+    } else {
+      duration = transitionDuration;
+    }
+    node.style.transition = [theme.transitions.create('opacity', {
+      duration,
+      delay
+    }), theme.transitions.create('transform', {
+      duration: duration * 0.666,
+      delay,
+      easing: transitionTimingFunction
+    })].join(',');
+    if (onEnter) {
+      onEnter(node, isAppearing);
+    }
+  });
+  const handleEntered = normalizedTransitionCallback(nodeRef, onEntered);
+  const handleExiting = normalizedTransitionCallback(nodeRef, onExiting);
+  const handleExit = normalizedTransitionCallback(nodeRef, node => {
+    const {
+      duration: transitionDuration,
+      delay,
+      easing: transitionTimingFunction
+    } = getTransitionProps({
+      style,
+      timeout,
+      easing
+    }, {
+      mode: 'exit'
+    });
+    let duration;
+    if (timeout === 'auto') {
+      duration = theme.transitions.getAutoHeightDuration(node.clientHeight);
+      autoTimeout.current = duration;
+    } else {
+      duration = transitionDuration;
+    }
+    node.style.transition = [theme.transitions.create('opacity', {
+      duration,
+      delay
+    }), theme.transitions.create('transform', {
+      duration: duration * 0.666,
+      delay: delay || duration * 0.333,
+      easing: transitionTimingFunction
+    })].join(',');
+    node.style.opacity = 0;
+    node.style.transform = getScale(0.75);
+    if (onExit) {
+      onExit(node);
+    }
+  });
+  const handleExited = normalizedTransitionCallback(nodeRef, node => {
+    node.style.transition = '';
+    if (onExited) {
+      onExited(node);
+    }
+  });
+  const handleAddEndListener = next => {
+    if (timeout === 'auto') {
+      timer.start(autoTimeout.current || 0, next);
+    }
+    if (addEndListener) {
+      // Old call signature before `react-transition-group` implemented `nodeRef`
+      addEndListener(nodeRef.current, next);
+    }
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsx(Transition, {
+    appear: appear,
+    in: inProp,
+    nodeRef: nodeRef,
+    onEnter: handleEnter,
+    onEntered: handleEntered,
+    onEntering: handleEntering,
+    onExit: handleExit,
+    onExited: handleExited,
+    onExiting: handleExiting,
+    addEndListener: handleAddEndListener,
+    timeout: timeout === 'auto' ? null : timeout,
+    ...other,
+    children: (state, {
+      ownerState,
+      ...restChildProps
+    }) => {
+      const childStyle = getTransitionChildStyle(state, inProp, styles$2, hiddenStyles$1, style, children.props.style);
+      return /*#__PURE__*/reactExports.cloneElement(children, {
+        style: childStyle,
+        ref: handleRef,
+        ...restChildProps
+      });
+    }
+  });
+});
+process.env.NODE_ENV !== "production" ? Grow.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * Add a custom transition end trigger. Called with the transitioning DOM
+   * node and a done callback. Allows for more fine grained transition end
+   * logic. Note: Timeouts are still used as a fallback if provided.
+   */
+  addEndListener: PropTypes.func,
+  /**
+   * Perform the enter transition when it first mounts if `in` is also `true`.
+   * Set this to `false` to disable this behavior.
+   * @default true
+   */
+  appear: PropTypes.bool,
+  /**
+   * A single child content element.
+   */
+  children: elementAcceptingRef$1.isRequired,
+  /**
+   * The transition timing function.
+   * You may specify a single easing or a object containing enter and exit values.
+   */
+  easing: PropTypes.oneOfType([PropTypes.shape({
+    enter: PropTypes.string,
+    exit: PropTypes.string
+  }), PropTypes.string]),
+  /**
+   * If `true`, the component will transition in.
+   */
+  in: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  onEnter: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onEntered: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onEntering: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onExit: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onExited: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onExiting: PropTypes.func,
+  /**
+   * @ignore
+   */
+  style: PropTypes.object,
+  /**
+   * The duration for the transition, in milliseconds.
+   * You may specify a single timeout for all transitions, or individually with an object.
+   *
+   * Set to 'auto' to automatically calculate transition time based on height.
+   * @default 'auto'
+   */
+  timeout: PropTypes.oneOfType([PropTypes.oneOf(['auto']), PropTypes.number, PropTypes.shape({
+    appear: PropTypes.number,
+    enter: PropTypes.number,
+    exit: PropTypes.number
+  })])
+} : void 0;
+if (Grow) {
+  Grow.muiSupportAuto = true;
+}
+var Grow$1 = Grow;
+
+// Is a vertical scrollbar displayed?
+function isOverflowing(container) {
+  const doc = ownerDocument(container);
+  if (doc.body === container) {
+    return ownerWindow(container).innerWidth > doc.documentElement.clientWidth;
+  }
+  return container.scrollHeight > container.clientHeight;
+}
+function ariaHidden(element, hide) {
+  if (hide) {
+    element.setAttribute('aria-hidden', 'true');
+  } else {
+    element.removeAttribute('aria-hidden');
+  }
+}
+function getPaddingRight(element) {
+  return parseFloat(ownerWindow(element).getComputedStyle(element).paddingRight) || 0;
+}
+function isAriaHiddenForbiddenOnElement(element) {
+  // The forbidden HTML tags are the ones from ARIA specification that
+  // can be children of body and can't have aria-hidden attribute.
+  // cf. https://www.w3.org/TR/html-aria/#docconformance
+  const forbiddenTagNames = ['TEMPLATE', 'SCRIPT', 'STYLE', 'LINK', 'MAP', 'META', 'NOSCRIPT', 'PICTURE', 'COL', 'COLGROUP', 'PARAM', 'SLOT', 'SOURCE', 'TRACK'];
+  const isForbiddenTagName = forbiddenTagNames.includes(element.tagName);
+  const isInputHidden = element.tagName === 'INPUT' && element.getAttribute('type') === 'hidden';
+  return isForbiddenTagName || isInputHidden;
+}
+function ariaHiddenSiblings(container, mountElement, currentElement, elementsToExclude, hide) {
+  const blacklist = [mountElement, currentElement, ...elementsToExclude];
+  [].forEach.call(container.children, element => {
+    const isNotExcludedElement = !blacklist.includes(element);
+    const isNotForbiddenElement = !isAriaHiddenForbiddenOnElement(element);
+    if (isNotExcludedElement && isNotForbiddenElement) {
+      ariaHidden(element, hide);
+    }
+  });
+}
+function findIndexOf(items, callback) {
+  let idx = -1;
+  items.some((item, index) => {
+    if (callback(item)) {
+      idx = index;
+      return true;
+    }
+    return false;
+  });
+  return idx;
+}
+function handleContainer(containerInfo, props) {
+  const restoreStyle = [];
+  const container = containerInfo.container;
+  if (!props.disableScrollLock) {
+    if (isOverflowing(container)) {
+      // Compute the size before applying overflow hidden to avoid any scroll jumps.
+      const scrollbarSize = getScrollbarSize(ownerWindow(container));
+      restoreStyle.push({
+        value: container.style.paddingRight,
+        property: 'padding-right',
+        el: container
+      });
+      // Use computed style, here to get the real padding to add our scrollbar width.
+      container.style.paddingRight = `${getPaddingRight(container) + scrollbarSize}px`;
+
+      // .mui-fixed is a global helper.
+      const fixedElements = ownerDocument(container).querySelectorAll('.mui-fixed');
+      [].forEach.call(fixedElements, element => {
+        restoreStyle.push({
+          value: element.style.paddingRight,
+          property: 'padding-right',
+          el: element
+        });
+        element.style.paddingRight = `${getPaddingRight(element) + scrollbarSize}px`;
+      });
+    }
+    let scrollContainer;
+    if (container.parentNode instanceof DocumentFragment) {
+      scrollContainer = ownerDocument(container).body;
+    } else {
+      // Support html overflow-y: auto for scroll stability between pages
+      // https://css-tricks.com/snippets/css/force-vertical-scrollbar/
+      const parent = container.parentElement;
+      const containerWindow = ownerWindow(container);
+      scrollContainer = parent?.nodeName === 'HTML' && containerWindow.getComputedStyle(parent).overflowY === 'scroll' ? parent : container;
+    }
+
+    // Block the scroll even if no scrollbar is visible to account for mobile keyboard
+    // screensize shrink.
+    restoreStyle.push({
+      value: scrollContainer.style.overflow,
+      property: 'overflow',
+      el: scrollContainer
+    }, {
+      value: scrollContainer.style.overflowX,
+      property: 'overflow-x',
+      el: scrollContainer
+    }, {
+      value: scrollContainer.style.overflowY,
+      property: 'overflow-y',
+      el: scrollContainer
+    });
+    scrollContainer.style.overflow = 'hidden';
+  }
+  const restore = () => {
+    restoreStyle.forEach(({
+      value,
+      el,
+      property
+    }) => {
+      if (value) {
+        el.style.setProperty(property, value);
+      } else {
+        el.style.removeProperty(property);
+      }
+    });
+  };
+  return restore;
+}
+function getHiddenSiblings(container) {
+  const hiddenSiblings = [];
+  [].forEach.call(container.children, element => {
+    if (element.getAttribute('aria-hidden') === 'true') {
+      hiddenSiblings.push(element);
+    }
+  });
+  return hiddenSiblings;
+}
+/**
+ * @ignore - do not document.
+ *
+ * Proper state management for containers and the modals in those containers.
+ * Simplified, but inspired by react-overlay's ModalManager class.
+ * Used by the Modal to ensure proper styling of containers.
+ */
+class ModalManager {
+  constructor() {
+    this.modals = [];
+    this.containers = [];
+  }
+  add(modal, container) {
+    let modalIndex = this.modals.indexOf(modal);
+    if (modalIndex !== -1) {
+      return modalIndex;
+    }
+    modalIndex = this.modals.length;
+    this.modals.push(modal);
+
+    // If the modal we are adding is already in the DOM.
+    if (modal.modalRef) {
+      ariaHidden(modal.modalRef, false);
+    }
+    const hiddenSiblings = getHiddenSiblings(container);
+    ariaHiddenSiblings(container, modal.mount, modal.modalRef, hiddenSiblings, true);
+    const containerIndex = findIndexOf(this.containers, item => item.container === container);
+    if (containerIndex !== -1) {
+      this.containers[containerIndex].modals.push(modal);
+      return modalIndex;
+    }
+    this.containers.push({
+      modals: [modal],
+      container,
+      restore: null,
+      hiddenSiblings
+    });
+    return modalIndex;
+  }
+  mount(modal, props) {
+    const containerIndex = findIndexOf(this.containers, item => item.modals.includes(modal));
+    const containerInfo = this.containers[containerIndex];
+    if (!containerInfo.restore) {
+      containerInfo.restore = handleContainer(containerInfo, props);
+    }
+  }
+  remove(modal, ariaHiddenState = true) {
+    const modalIndex = this.modals.indexOf(modal);
+    if (modalIndex === -1) {
+      return modalIndex;
+    }
+    const containerIndex = findIndexOf(this.containers, item => item.modals.includes(modal));
+    const containerInfo = this.containers[containerIndex];
+    containerInfo.modals.splice(containerInfo.modals.indexOf(modal), 1);
+    this.modals.splice(modalIndex, 1);
+
+    // If that was the last modal in a container, clean up the container.
+    if (containerInfo.modals.length === 0) {
+      // The modal might be closed before it had the chance to be mounted in the DOM.
+      if (containerInfo.restore) {
+        containerInfo.restore();
+      }
+      if (modal.modalRef) {
+        // In case the modal wasn't in the DOM yet.
+        ariaHidden(modal.modalRef, ariaHiddenState);
+      }
+      ariaHiddenSiblings(containerInfo.container, modal.mount, modal.modalRef, containerInfo.hiddenSiblings, false);
+      this.containers.splice(containerIndex, 1);
+    } else {
+      // Otherwise make sure the next top modal is visible to a screen reader.
+      const nextTop = containerInfo.modals[containerInfo.modals.length - 1];
+      // as soon as a modal is adding its modalRef is undefined. it can't set
+      // aria-hidden because the dom element doesn't exist either
+      // when modal was unmounted before modalRef gets null
+      if (nextTop.modalRef) {
+        ariaHidden(nextTop.modalRef, false);
+      }
+    }
+    return modalIndex;
+  }
+  isTopModal(modal) {
+    return this.modals.length > 0 && this.modals[this.modals.length - 1] === modal;
+  }
+}
+
+const FOCUSABLE_ATTRIBUTE = 'data-mui-focusable';
+
+/**
+ * Returns the element marked as the initial focus target inside a focus trap.
+ * The root element takes precedence over marked descendants so components can
+ * opt into focusing their own root surface directly.
+ */
+function getFocusTarget(rootElement) {
+  if (!rootElement) {
+    return null;
+  }
+  return rootElement.hasAttribute(FOCUSABLE_ATTRIBUTE) ? rootElement : rootElement.querySelector(`[${FOCUSABLE_ATTRIBUTE}]`);
+}
+
+// Inspired by https://github.com/focus-trap/tabbable
+const candidatesSelector = ['input', 'select', 'textarea', 'a[href]', 'button', '[tabindex]', 'audio[controls]', 'video[controls]', '[contenteditable]:not([contenteditable="false"])'].join(',');
+function getTabIndex(node) {
+  const tabindexAttr = parseInt(node.getAttribute('tabindex') || '', 10);
+  if (!Number.isNaN(tabindexAttr)) {
+    return tabindexAttr;
+  }
+
+  // Browsers do not return `tabIndex` correctly for contentEditable nodes;
+  // https://issues.chromium.org/issues/41283952
+  // so if they don't have a tabindex attribute specifically set, assume it's 0.
+  // in Chrome, <details/>, <audio controls/> and <video controls/> elements get a default
+  //  `tabIndex` of -1 when the 'tabindex' attribute isn't specified in the DOM,
+  //  yet they are still part of the regular tab order; in FF, they get a default
+  //  `tabIndex` of 0; since Chrome still puts those elements in the regular tab
+  //  order, consider their tab index to be 0.
+  if (node.contentEditable === 'true' || (node.nodeName === 'AUDIO' || node.nodeName === 'VIDEO' || node.nodeName === 'DETAILS') && node.getAttribute('tabindex') === null) {
+    return 0;
+  }
+  return node.tabIndex;
+}
+function isNonTabbableRadio(node) {
+  if (node.tagName !== 'INPUT' || node.type !== 'radio') {
+    return false;
+  }
+  if (!node.name) {
+    return false;
+  }
+  const getRadio = selector => node.ownerDocument.querySelector(`input[type="radio"]${selector}`);
+  let roving = getRadio(`[name="${node.name}"]:checked`);
+  if (!roving) {
+    roving = getRadio(`[name="${node.name}"]`);
+  }
+  return roving !== node;
+}
+function isNodeMatchingSelectorFocusable(node) {
+  if (node.disabled || node.tagName === 'INPUT' && node.type === 'hidden' || isNonTabbableRadio(node)) {
+    return false;
+  }
+  return true;
+}
+function defaultGetTabbable(root) {
+  const regularTabNodes = [];
+  const orderedTabNodes = [];
+  Array.from(root.querySelectorAll(candidatesSelector)).forEach((node, i) => {
+    const nodeTabIndex = getTabIndex(node);
+    if (nodeTabIndex === -1 || !isNodeMatchingSelectorFocusable(node)) {
+      return;
+    }
+    if (nodeTabIndex === 0) {
+      regularTabNodes.push(node);
+    } else {
+      orderedTabNodes.push({
+        documentOrder: i,
+        tabIndex: nodeTabIndex,
+        node: node
+      });
+    }
+  });
+  return orderedTabNodes.sort((a, b) => a.tabIndex === b.tabIndex ? a.documentOrder - b.documentOrder : a.tabIndex - b.tabIndex).map(a => a.node).concat(regularTabNodes);
+}
+function defaultIsEnabled() {
+  return true;
+}
+
+/**
+ * @ignore - internal component.
+ */
+function FocusTrap(props) {
+  const {
+    children,
+    disableAutoFocus = false,
+    disableEnforceFocus = false,
+    disableRestoreFocus = false,
+    getTabbable = defaultGetTabbable,
+    isEnabled = defaultIsEnabled,
+    open
+  } = props;
+  const ignoreNextEnforceFocus = reactExports.useRef(false);
+  const sentinelStart = reactExports.useRef(null);
+  const sentinelEnd = reactExports.useRef(null);
+  const nodeToRestore = reactExports.useRef(null);
+  const reactFocusEventTarget = reactExports.useRef(null);
+  // This variable is useful when disableAutoFocus is true.
+  // It waits for the active element to move into the component to activate.
+  const activated = reactExports.useRef(false);
+  const rootRef = reactExports.useRef(null);
+  const handleRef = useForkRef(getReactElementRef(children), rootRef);
+  const lastKeydown = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    // We might render an empty child.
+    if (!open || !rootRef.current) {
+      return;
+    }
+    activated.current = !disableAutoFocus;
+  }, [disableAutoFocus, open]);
+  reactExports.useEffect(() => {
+    // Reset on every mount — React 18 Strict Mode double-mounts leave this
+    // stuck at `true` after the cleanup of the previous mount set it.
+    ignoreNextEnforceFocus.current = false;
+
+    // We might render an empty child.
+    if (!open || !rootRef.current) {
+      return;
+    }
+    const doc = ownerDocument(rootRef.current);
+    const activeElement$1 = activeElement(doc);
+
+    // Prefer the explicitly marked focusable element. Fall back to the root
+    // element for generic FocusTrap usage.
+    const focusTarget = getFocusTarget(rootRef.current) ?? rootRef.current;
+    if (!contains$1(rootRef.current, activeElement$1)) {
+      if (!focusTarget.hasAttribute('tabIndex')) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error(['MUI: The modal content node does not accept focus.', 'For the benefit of assistive technologies, ' + 'the tabIndex of the node is being set to "-1".'].join('\n'));
+        }
+        focusTarget.setAttribute('tabIndex', '-1');
+      }
+      if (activated.current) {
+        focusTarget.focus();
+      }
+    }
+    return () => {
+      // restoreLastFocus()
+      if (!disableRestoreFocus && nodeToRestore.current) {
+        ignoreNextEnforceFocus.current = true;
+        nodeToRestore.current.focus();
+        nodeToRestore.current = null;
+      }
+    };
+    // Missing `disableRestoreFocus` which is fine.
+    // We don't support changing that prop on an open FocusTrap
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  reactExports.useEffect(() => {
+    // We might render an empty child.
+    if (!open || !rootRef.current) {
+      return;
+    }
+    const doc = ownerDocument(rootRef.current);
+    const loopFocus = nativeEvent => {
+      lastKeydown.current = nativeEvent;
+      if (disableEnforceFocus || !isEnabled() || nativeEvent.key !== 'Tab') {
+        return;
+      }
+      const activeElement$1 = activeElement(doc);
+
+      // Make sure the next tab starts from the right place.
+      // activeElement refers to the origin.
+      if (activeElement$1 === rootRef.current && nativeEvent.shiftKey) {
+        // We need to ignore the next contain as
+        // it will try to move the focus back to the rootRef element.
+        ignoreNextEnforceFocus.current = true;
+        if (sentinelEnd.current) {
+          sentinelEnd.current.focus();
+        }
+      }
+    };
+    const contain = () => {
+      const rootElement = rootRef.current;
+
+      // Cleanup functions are executed lazily in React 17.
+      // Contain can be called between the component being unmounted and its cleanup function being run.
+      if (rootElement === null) {
+        return;
+      }
+      const activeEl = activeElement(doc);
+      if (!doc.hasFocus() || !isEnabled() || ignoreNextEnforceFocus.current) {
+        ignoreNextEnforceFocus.current = false;
+        return;
+      }
+
+      // The focus is already inside
+      if (contains$1(rootElement, activeEl)) {
+        return;
+      }
+
+      // The disableEnforceFocus is set and the focus is outside of the focus trap (and sentinel nodes)
+      if (disableEnforceFocus && activeEl !== sentinelStart.current && activeEl !== sentinelEnd.current) {
+        return;
+      }
+
+      // if the focus event is not coming from inside the children's react tree, reset the refs
+      if (activeEl !== reactFocusEventTarget.current) {
+        reactFocusEventTarget.current = null;
+      } else if (reactFocusEventTarget.current !== null) {
+        return;
+      }
+      if (!activated.current) {
+        return;
+      }
+      let tabbable = [];
+      if (activeEl === sentinelStart.current || activeEl === sentinelEnd.current) {
+        tabbable = getTabbable(rootRef.current);
+      }
+
+      // one of the sentinel nodes was focused, so move the focus
+      // to the first/last tabbable element inside the focus trap
+      if (tabbable.length > 0) {
+        const isShiftTab = Boolean(lastKeydown.current?.shiftKey && lastKeydown.current?.key === 'Tab');
+        const focusNext = tabbable[0];
+        const focusPrevious = tabbable[tabbable.length - 1];
+        if (typeof focusNext !== 'string' && typeof focusPrevious !== 'string') {
+          if (isShiftTab) {
+            focusPrevious.focus();
+          } else {
+            focusNext.focus();
+          }
+        }
+        // no tabbable elements in the trap focus or the focus was outside of the focus trap
+      } else {
+        rootElement.focus();
+      }
+    };
+    doc.addEventListener('focusin', contain);
+    doc.addEventListener('keydown', loopFocus, true);
+
+    // With Edge, Safari and Firefox, no focus related events are fired when the focused area stops being a focused area.
+    // for example https://bugzilla.mozilla.org/show_bug.cgi?id=559561.
+    // Instead, we can look if the active element was restored on the BODY element.
+    //
+    // The whatwg spec defines how the browser should behave but does not explicitly mention any events:
+    // https://html.spec.whatwg.org/multipage/interaction.html#focus-fixup-rule.
+    const interval = setInterval(() => {
+      const activeEl = activeElement(doc);
+      if (activeEl && activeEl.tagName === 'BODY') {
+        contain();
+      }
+    }, 50);
+    return () => {
+      clearInterval(interval);
+      doc.removeEventListener('focusin', contain);
+      doc.removeEventListener('keydown', loopFocus, true);
+    };
+  }, [disableAutoFocus, disableEnforceFocus, disableRestoreFocus, isEnabled, open, getTabbable]);
+  const onFocus = event => {
+    if (nodeToRestore.current === null) {
+      nodeToRestore.current = event.relatedTarget;
+    }
+    activated.current = true;
+    reactFocusEventTarget.current = event.target;
+    const childrenPropsHandler = children.props.onFocus;
+    if (childrenPropsHandler) {
+      childrenPropsHandler(event);
+    }
+  };
+  const handleFocusSentinel = event => {
+    if (nodeToRestore.current === null) {
+      nodeToRestore.current = event.relatedTarget;
+    }
+    activated.current = true;
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+    children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
+      tabIndex: open ? 0 : -1,
+      onFocus: handleFocusSentinel,
+      ref: sentinelStart,
+      "data-testid": "sentinelStart"
+    }), /*#__PURE__*/reactExports.cloneElement(children, {
+      ref: handleRef,
+      onFocus
+    }), /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+      tabIndex: open ? 0 : -1,
+      onFocus: handleFocusSentinel,
+      ref: sentinelEnd,
+      "data-testid": "sentinelEnd"
+    })]
+  });
+}
+process.env.NODE_ENV !== "production" ? FocusTrap.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * A single child content element.
+   */
+  children: elementAcceptingRef$1,
+  /**
+   * If `true`, the focus trap will not automatically shift focus to itself when it opens, and
+   * replace it to the last focused element when it closes.
+   * This also works correctly with any focus trap children that have the `disableAutoFocus` prop.
+   *
+   * Generally this should never be set to `true` as it makes the focus trap less
+   * accessible to assistive technologies, like screen readers.
+   * @default false
+   */
+  disableAutoFocus: PropTypes.bool,
+  /**
+   * If `true`, the focus trap will not prevent focus from leaving the focus trap while open.
+   *
+   * Generally this should never be set to `true` as it makes the focus trap less
+   * accessible to assistive technologies, like screen readers.
+   * @default false
+   */
+  disableEnforceFocus: PropTypes.bool,
+  /**
+   * If `true`, the focus trap will not restore focus to previously focused element once
+   * focus trap is hidden or unmounted.
+   * @default false
+   */
+  disableRestoreFocus: PropTypes.bool,
+  /**
+   * Returns an array of ordered tabbable nodes (i.e. in tab order) within the root.
+   * For instance, you can provide the "tabbable" npm dependency.
+   * @param {HTMLElement} root
+   */
+  getTabbable: PropTypes.func,
+  /**
+   * This prop extends the `open` prop.
+   * It allows to toggle the open state without having to wait for a rerender when changing the `open` prop.
+   * This prop should be memoized.
+   * It can be used to support multiple focus trap mounted at the same time.
+   * @default function defaultIsEnabled(): boolean {
+   *   return true;
+   * }
+   */
+  isEnabled: PropTypes.func,
+  /**
+   * If `true`, focus is locked.
+   */
+  open: PropTypes.bool.isRequired
+} : void 0;
+if (process.env.NODE_ENV !== 'production') {
+  // eslint-disable-next-line
+  FocusTrap['propTypes' + ''] = exactProp(FocusTrap.propTypes);
+}
+
+function getContainer$1(container) {
+  return typeof container === 'function' ? container() : container;
+}
+
+/**
+ * Portals provide a first-class way to render children into a DOM node
+ * that exists outside the DOM hierarchy of the parent component.
+ *
+ * Demos:
+ *
+ * - [Portal](https://mui.com/material-ui/react-portal/)
+ *
+ * API:
+ *
+ * - [Portal API](https://mui.com/material-ui/api/portal/)
+ */
+const Portal = /*#__PURE__*/reactExports.forwardRef(function Portal(props, forwardedRef) {
+  const {
+    children,
+    container,
+    disablePortal = false
+  } = props;
+  const [mountNode, setMountNode] = reactExports.useState(null);
+  const handleRef = useForkRef(/*#__PURE__*/reactExports.isValidElement(children) ? getReactElementRef(children) : null, forwardedRef);
+  useEnhancedEffect$1(() => {
+    if (!disablePortal) {
+      setMountNode(getContainer$1(container) || document.body);
+    }
+  }, [container, disablePortal]);
+  useEnhancedEffect$1(() => {
+    if (mountNode && !disablePortal) {
+      setRef(forwardedRef, mountNode);
+      return () => {
+        setRef(forwardedRef, null);
+      };
+    }
+    return undefined;
+  }, [forwardedRef, mountNode, disablePortal]);
+  if (disablePortal) {
+    if (/*#__PURE__*/reactExports.isValidElement(children)) {
+      const newProps = {
+        ref: handleRef
+      };
+      return /*#__PURE__*/reactExports.cloneElement(children, newProps);
+    }
+    return children;
+  }
+  return mountNode ? /*#__PURE__*/reactDomExports.createPortal(children, mountNode) : mountNode;
+});
+process.env.NODE_ENV !== "production" ? Portal.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The children to render into the `container`.
+   */
+  children: PropTypes.node,
+  /**
+   * An HTML element or function that returns one.
+   * The `container` will have the portal children appended to it.
+   *
+   * You can also provide a callback, which is called in a React layout effect.
+   * This lets you set the container from a ref, and also makes server-side rendering possible.
+   *
+   * By default, it uses the body of the top-level document object,
+   * so it's simply `document.body` most of the time.
+   */
+  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
+  /**
+   * The `children` will be under the DOM hierarchy of the parent component.
+   * @default false
+   */
+  disablePortal: PropTypes.bool
+} : void 0;
+if (process.env.NODE_ENV !== 'production') {
+  // eslint-disable-next-line
+  Portal['propTypes' + ''] = exactProp(Portal.propTypes);
+}
+var Portal$1 = Portal;
+
+const styles$1 = {
+  entering: {
+    opacity: 1
+  },
+  entered: {
+    opacity: 1
+  },
+  exiting: {
+    opacity: 0
+  },
+  exited: {
+    opacity: 0
+  }
+};
+const hiddenStyles = {
+  opacity: 0,
+  visibility: 'hidden'
+};
+
+/**
+ * The Fade transition is used by the [Modal](/material-ui/react-modal/) component.
+ * It uses [react-transition-group](https://github.com/reactjs/react-transition-group) internally.
+ */
+const Fade = /*#__PURE__*/reactExports.forwardRef(function Fade(props, ref) {
+  const theme = useTheme();
+  const defaultTimeout = {
+    enter: theme.transitions.duration.enteringScreen,
+    exit: theme.transitions.duration.leavingScreen
+  };
+  const {
+    addEndListener,
+    appear = true,
+    children,
+    easing,
+    in: inProp,
+    onEnter,
+    onEntered,
+    onEntering,
+    onExit,
+    onExited,
+    onExiting,
+    style,
+    timeout = defaultTimeout,
+    ...other
+  } = props;
+  const nodeRef = reactExports.useRef(null);
+  const handleRef = useForkRef(nodeRef, getReactElementRef(children), ref);
+  const handleEntering = normalizedTransitionCallback(nodeRef, onEntering);
+  const handleEnter = normalizedTransitionCallback(nodeRef, (node, isAppearing) => {
+    reflow(node); // So the animation always start from the start.
+
+    const transitionProps = getTransitionProps({
+      style,
+      timeout,
+      easing
+    }, {
+      mode: 'enter'
+    });
+    node.style.transition = theme.transitions.create('opacity', transitionProps);
+    if (onEnter) {
+      onEnter(node, isAppearing);
+    }
+  });
+  const handleEntered = normalizedTransitionCallback(nodeRef, onEntered);
+  const handleExiting = normalizedTransitionCallback(nodeRef, onExiting);
+  const handleExit = normalizedTransitionCallback(nodeRef, node => {
+    const transitionProps = getTransitionProps({
+      style,
+      timeout,
+      easing
+    }, {
+      mode: 'exit'
+    });
+    node.style.transition = theme.transitions.create('opacity', transitionProps);
+    if (onExit) {
+      onExit(node);
+    }
+  });
+  const handleExited = normalizedTransitionCallback(nodeRef, node => {
+    // Clear the transition CSS to release the compositor layer when the
+    // element is fully exited (prevents idle CPU usage on fixed elements
+    // like Backdrop). handleEnter re-sets it on the next open.
+    node.style.transition = '';
+    if (onExited) {
+      onExited(node);
+    }
+  });
+  const handleAddEndListener = next => {
+    if (addEndListener) {
+      // Old call signature before `react-transition-group` implemented `nodeRef`
+      addEndListener(nodeRef.current, next);
+    }
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsx(Transition, {
+    appear: appear,
+    in: inProp,
+    nodeRef: nodeRef,
+    onEnter: handleEnter,
+    onEntered: handleEntered,
+    onEntering: handleEntering,
+    onExit: handleExit,
+    onExited: handleExited,
+    onExiting: handleExiting,
+    addEndListener: handleAddEndListener,
+    timeout: timeout,
+    ...other,
+    children: (state, {
+      ownerState,
+      ...restChildProps
+    }) => {
+      const childStyle = getTransitionChildStyle(state, inProp, styles$1, hiddenStyles, style, children.props.style);
+      return /*#__PURE__*/reactExports.cloneElement(children, {
+        style: childStyle,
+        ref: handleRef,
+        ...restChildProps
+      });
+    }
+  });
+});
+process.env.NODE_ENV !== "production" ? Fade.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * Add a custom transition end trigger. Called with the transitioning DOM
+   * node and a done callback. Allows for more fine grained transition end
+   * logic. Note: Timeouts are still used as a fallback if provided.
+   */
+  addEndListener: PropTypes.func,
+  /**
+   * Perform the enter transition when it first mounts if `in` is also `true`.
+   * Set this to `false` to disable this behavior.
+   * @default true
+   */
+  appear: PropTypes.bool,
+  /**
+   * A single child content element.
+   */
+  children: elementAcceptingRef$1.isRequired,
+  /**
+   * The transition timing function.
+   * You may specify a single easing or a object containing enter and exit values.
+   */
+  easing: PropTypes.oneOfType([PropTypes.shape({
+    enter: PropTypes.string,
+    exit: PropTypes.string
+  }), PropTypes.string]),
+  /**
+   * If `true`, the component will transition in.
+   */
+  in: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  onEnter: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onEntered: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onEntering: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onExit: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onExited: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onExiting: PropTypes.func,
+  /**
+   * @ignore
+   */
+  style: PropTypes.object,
+  /**
+   * The duration for the transition, in milliseconds.
+   * You may specify a single timeout for all transitions, or individually with an object.
+   * @default {
+   *   enter: theme.transitions.duration.enteringScreen,
+   *   exit: theme.transitions.duration.leavingScreen,
+   * }
+   */
+  timeout: PropTypes.oneOfType([PropTypes.number, PropTypes.shape({
+    appear: PropTypes.number,
+    enter: PropTypes.number,
+    exit: PropTypes.number
+  })])
+} : void 0;
+var Fade$1 = Fade;
+
+function getBackdropUtilityClass(slot) {
+  return generateUtilityClass('MuiBackdrop', slot);
+}
+generateUtilityClasses('MuiBackdrop', ['root', 'invisible']);
+
+const useUtilityClasses$i = ownerState => {
+  const {
+    classes,
+    invisible
+  } = ownerState;
+  const slots = {
+    root: ['root', invisible && 'invisible']
+  };
+  return composeClasses(slots, getBackdropUtilityClass, classes);
+};
+const BackdropRoot = styled$1('div', {
+  name: 'MuiBackdrop',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, ownerState.invisible && styles.invisible];
+  }
+})({
+  position: 'fixed',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  right: 0,
+  bottom: 0,
+  top: 0,
+  left: 0,
+  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  WebkitTapHighlightColor: 'transparent',
+  variants: [{
+    props: {
+      invisible: true
+    },
+    style: {
+      backgroundColor: 'transparent'
+    }
+  }]
+});
+const Backdrop = /*#__PURE__*/reactExports.forwardRef(function Backdrop(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiBackdrop'
+  });
+  const {
+    children,
+    className,
+    component = 'div',
+    invisible = false,
+    open,
+    slotProps = {},
+    slots = {},
+    transitionDuration,
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    component,
+    invisible
+  };
+  const classes = useUtilityClasses$i(ownerState);
+  const externalForwardedProps = {
+    component,
+    slots,
+    slotProps
+  };
+  const [RootSlot, rootProps] = useSlot('root', {
+    elementType: BackdropRoot,
+    externalForwardedProps,
+    className: clsx(classes.root, className),
+    ownerState
+  });
+  const [TransitionSlot, transitionProps] = useSlot('transition', {
+    elementType: Fade$1,
+    externalForwardedProps,
+    ownerState
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(TransitionSlot, {
+    in: open,
+    timeout: transitionDuration,
+    ...other,
+    ...transitionProps,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(RootSlot, {
+      ...rootProps,
+      ref: ref,
+      children: children
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? Backdrop.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * If `true`, the backdrop is invisible.
+   * It can be used when rendering a popover or a custom select component.
+   * @default false
+   */
+  invisible: PropTypes.bool,
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool.isRequired,
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    transition: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    root: PropTypes.elementType,
+    transition: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The duration for the transition, in milliseconds.
+   * You may specify a single timeout for all transitions, or individually with an object.
+   */
+  transitionDuration: PropTypes.oneOfType([PropTypes.number, PropTypes.shape({
+    appear: PropTypes.number,
+    enter: PropTypes.number,
+    exit: PropTypes.number
+  })])
+} : void 0;
+var Backdrop$1 = Backdrop;
+
+function getContainer(container) {
+  return typeof container === 'function' ? container() : container;
+}
+function getHasTransition(children) {
+  return children ? children.props.hasOwnProperty('in') : false;
+}
+const noop$1 = () => {};
+
+// A modal manager used to track and manage the state of open Modals.
+// Modals don't open on the server so this won't conflict with concurrent requests.
+const manager = new ModalManager();
+function useModal(parameters) {
+  const {
+    container,
+    disableScrollLock = false,
+    closeAfterTransition = false,
+    onTransitionEnter,
+    onTransitionExited,
+    children,
+    onClose,
+    open,
+    rootRef
+  } = parameters;
+
+  // @ts-ignore internal logic
+  const modal = reactExports.useRef({});
+  const mountNodeRef = reactExports.useRef(null);
+  const modalRef = reactExports.useRef(null);
+  const handleRef = useForkRef(modalRef, rootRef);
+  const [exited, setExited] = reactExports.useState(!open);
+  const hasTransition = getHasTransition(children);
+  let ariaHiddenProp = true;
+  if (parameters['aria-hidden'] === 'false' || parameters['aria-hidden'] === false) {
+    ariaHiddenProp = false;
+  }
+  const getDoc = () => ownerDocument(mountNodeRef.current);
+  const getModal = () => {
+    modal.current.modalRef = modalRef.current;
+    modal.current.mount = mountNodeRef.current;
+    return modal.current;
+  };
+  const handleMounted = () => {
+    manager.mount(getModal(), {
+      disableScrollLock
+    });
+
+    // Fix a bug on Chrome where the scroll isn't initially 0.
+    if (modalRef.current) {
+      modalRef.current.scrollTop = 0;
+    }
+  };
+  const handleOpen = useEventCallback(() => {
+    const resolvedContainer = getContainer(container) || getDoc().body;
+    manager.add(getModal(), resolvedContainer);
+
+    // The element was already mounted.
+    if (modalRef.current) {
+      handleMounted();
+    }
+  });
+  const isTopModal = () => manager.isTopModal(getModal());
+  const handlePortalRef = useEventCallback(node => {
+    mountNodeRef.current = node;
+    if (!node) {
+      return;
+    }
+    if (open && isTopModal()) {
+      handleMounted();
+    } else if (modalRef.current) {
+      ariaHidden(modalRef.current, ariaHiddenProp);
+    }
+  });
+  const handleClose = reactExports.useCallback(() => {
+    manager.remove(getModal(), ariaHiddenProp);
+  }, [ariaHiddenProp]);
+  reactExports.useEffect(() => {
+    return () => {
+      handleClose();
+    };
+  }, [handleClose]);
+  reactExports.useEffect(() => {
+    if (open) {
+      handleOpen();
+    } else if (!hasTransition || !closeAfterTransition) {
+      handleClose();
+    }
+  }, [open, handleClose, hasTransition, closeAfterTransition, handleOpen]);
+  const createHandleKeyDown = otherHandlers => event => {
+    otherHandlers.onKeyDown?.(event);
+
+    // The handler doesn't take event.defaultPrevented into account:
+    //
+    // event.preventDefault() is meant to stop default behaviors like
+    // clicking a checkbox to check it, hitting a button to submit a form,
+    // and hitting left arrow to move the cursor in a text input etc.
+    // Only special HTML elements have these default behaviors.
+    if (event.key !== 'Escape' || event.which === 229 ||
+    // Wait until IME is settled.
+    !isTopModal()) {
+      return;
+    }
+
+    // Swallow the event, in case someone is listening for the escape key on the body.
+    event.stopPropagation();
+    if (onClose) {
+      onClose(event, 'escapeKeyDown');
+    }
+  };
+  const createHandleBackdropClick = otherHandlers => event => {
+    otherHandlers.onClick?.(event);
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (onClose) {
+      onClose(event, 'backdropClick');
+    }
+  };
+  const getRootProps = (otherHandlers = {}) => {
+    const propsEventHandlers = extractEventHandlers(parameters);
+
+    // The custom event handlers shouldn't be spread on the root element
+    delete propsEventHandlers.onTransitionEnter;
+    delete propsEventHandlers.onTransitionExited;
+    const externalEventHandlers = {
+      ...propsEventHandlers,
+      ...otherHandlers
+    };
+    return {
+      /*
+       * Marking an element with the role presentation indicates to assistive technology
+       * that this element should be ignored; it exists to support the web application and
+       * is not meant for humans to interact with directly.
+       * https://github.com/evcohen/eslint-plugin-jsx-a11y/blob/master/docs/rules/no-static-element-interactions.md
+       */
+      role: 'presentation',
+      ...externalEventHandlers,
+      onKeyDown: createHandleKeyDown(externalEventHandlers),
+      ref: handleRef
+    };
+  };
+  const getBackdropProps = (otherHandlers = {}) => {
+    const externalEventHandlers = otherHandlers;
+    return {
+      'aria-hidden': true,
+      ...externalEventHandlers,
+      onClick: createHandleBackdropClick(externalEventHandlers),
+      open
+    };
+  };
+  const getTransitionProps = () => {
+    const handleEnter = () => {
+      setExited(false);
+      if (onTransitionEnter) {
+        onTransitionEnter();
+      }
+    };
+    const handleExited = () => {
+      setExited(true);
+      if (onTransitionExited) {
+        onTransitionExited();
+      }
+      if (closeAfterTransition) {
+        handleClose();
+      }
+    };
+    return {
+      onEnter: createChainedFunction(handleEnter, children?.props.onEnter ?? noop$1),
+      onExited: createChainedFunction(handleExited, children?.props.onExited ?? noop$1)
+    };
+  };
+  return {
+    getRootProps,
+    getBackdropProps,
+    getTransitionProps,
+    rootRef: handleRef,
+    portalRef: handlePortalRef,
+    isTopModal,
+    exited,
+    hasTransition
+  };
+}
+
+function getModalUtilityClass(slot) {
+  return generateUtilityClass('MuiModal', slot);
+}
+generateUtilityClasses('MuiModal', ['root', 'hidden', 'backdrop']);
+
+const useUtilityClasses$h = ownerState => {
+  const {
+    open,
+    exited,
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root', !open && exited && 'hidden'],
+    backdrop: ['backdrop']
+  };
+  return composeClasses(slots, getModalUtilityClass, classes);
+};
+const ModalRoot = styled$1('div', {
+  name: 'MuiModal',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, !ownerState.open && ownerState.exited && styles.hidden];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  position: 'fixed',
+  zIndex: (theme.vars || theme).zIndex.modal,
+  right: 0,
+  bottom: 0,
+  top: 0,
+  left: 0,
+  variants: [{
+    props: ({
+      ownerState
+    }) => !ownerState.open && ownerState.exited,
+    style: {
+      visibility: 'hidden'
+    }
+  }]
+})));
+const ModalBackdrop = styled$1(Backdrop$1, {
+  name: 'MuiModal',
+  slot: 'Backdrop'
+})({
+  zIndex: -1
+});
+
+/**
+ * Modal is a lower-level construct that is leveraged by the following components:
+ *
+ * - [Dialog](/material-ui/api/dialog/)
+ * - [Drawer](/material-ui/api/drawer/)
+ * - [Menu](/material-ui/api/menu/)
+ * - [Popover](/material-ui/api/popover/)
+ *
+ * If you are creating a modal dialog, you probably want to use the [Dialog](/material-ui/api/dialog/) component
+ * rather than directly using Modal.
+ *
+ * This component shares many concepts with [react-overlays](https://react-bootstrap.github.io/react-overlays/#modals).
+ */
+const Modal = /*#__PURE__*/reactExports.forwardRef(function Modal(inProps, ref) {
+  const props = useDefaultProps({
+    name: 'MuiModal',
+    props: inProps
+  });
+  const {
+    classes: classesProp,
+    className,
+    closeAfterTransition = false,
+    children,
+    container,
+    component,
+    disableAutoFocus = false,
+    disableEnforceFocus = false,
+    disablePortal = false,
+    disableRestoreFocus = false,
+    disableScrollLock = false,
+    hideBackdrop = false,
+    keepMounted = false,
+    onClose,
+    onTransitionEnter,
+    onTransitionExited,
+    open,
+    slotProps = {},
+    slots = {},
+    // eslint-disable-next-line react/prop-types
+    theme,
+    ...other
+  } = props;
+  const propsWithDefaults = {
+    ...props,
+    closeAfterTransition,
+    disableAutoFocus,
+    disableEnforceFocus,
+    disablePortal,
+    disableRestoreFocus,
+    disableScrollLock,
+    hideBackdrop,
+    keepMounted
+  };
+  const {
+    getRootProps,
+    getBackdropProps,
+    getTransitionProps,
+    portalRef,
+    isTopModal,
+    exited,
+    hasTransition
+  } = useModal({
+    ...propsWithDefaults,
+    rootRef: ref
+  });
+  const ownerState = {
+    ...propsWithDefaults,
+    exited
+  };
+  const classes = useUtilityClasses$h(ownerState);
+  const childProps = {};
+  if (children.props.tabIndex === undefined) {
+    childProps.tabIndex = '-1';
+  }
+
+  // It's a Transition like component
+  if (hasTransition) {
+    const {
+      onEnter,
+      onExited
+    } = getTransitionProps();
+    childProps.onEnter = onEnter;
+    childProps.onExited = onExited;
+  }
+  const externalForwardedProps = {
+    slots,
+    slotProps
+  };
+  const [RootSlot, rootProps] = useSlot('root', {
+    ref,
+    elementType: ModalRoot,
+    externalForwardedProps: {
+      ...externalForwardedProps,
+      ...other,
+      component
+    },
+    getSlotProps: getRootProps,
+    ownerState,
+    className: clsx(className, classes?.root, !ownerState.open && ownerState.exited && classes?.hidden)
+  });
+  const [BackdropSlot, backdropProps] = useSlot('backdrop', {
+    elementType: ModalBackdrop,
+    externalForwardedProps,
+    shouldForwardComponentProp: true,
+    getSlotProps: otherHandlers => {
+      return getBackdropProps({
+        ...otherHandlers,
+        onClick: event => {
+          if (otherHandlers?.onClick) {
+            otherHandlers.onClick(event);
+          }
+        }
+      });
+    },
+    className: classes?.backdrop,
+    ownerState
+  });
+  if (!keepMounted && !open && (!hasTransition || exited)) {
+    return null;
+  }
+  return /*#__PURE__*/jsxRuntimeExports.jsx(Portal$1, {
+    ref: portalRef,
+    container: container,
+    disablePortal: disablePortal,
+    children: /*#__PURE__*/jsxRuntimeExports.jsxs(RootSlot, {
+      ...rootProps,
+      children: [!hideBackdrop ? /*#__PURE__*/jsxRuntimeExports.jsx(BackdropSlot, {
+        ...backdropProps
+      }) : null, /*#__PURE__*/jsxRuntimeExports.jsx(FocusTrap, {
+        disableEnforceFocus: disableEnforceFocus,
+        disableAutoFocus: disableAutoFocus,
+        disableRestoreFocus: disableRestoreFocus,
+        isEnabled: isTopModal,
+        open: open,
+        children: /*#__PURE__*/reactExports.cloneElement(children, childProps)
+      })]
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? Modal.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * A single child content element.
+   */
+  children: elementAcceptingRef$1.isRequired,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * When set to true the Modal waits until a nested Transition is completed before closing.
+   * @default false
+   */
+  closeAfterTransition: PropTypes.bool,
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * An HTML element or function that returns one.
+   * The `container` will have the portal children appended to it.
+   *
+   * You can also provide a callback, which is called in a React layout effect.
+   * This lets you set the container from a ref, and also makes server-side rendering possible.
+   *
+   * By default, it uses the body of the top-level document object,
+   * so it's simply `document.body` most of the time.
+   */
+  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
+  /**
+   * If `true`, the modal will not automatically shift focus to itself when it opens, and
+   * replace it to the last focused element when it closes.
+   * This also works correctly with any modal children that have the `disableAutoFocus` prop.
+   *
+   * Generally this should never be set to `true` as it makes the modal less
+   * accessible to assistive technologies, like screen readers.
+   * @default false
+   */
+  disableAutoFocus: PropTypes.bool,
+  /**
+   * If `true`, the modal will not prevent focus from leaving the modal while open.
+   *
+   * Generally this should never be set to `true` as it makes the modal less
+   * accessible to assistive technologies, like screen readers.
+   * @default false
+   */
+  disableEnforceFocus: PropTypes.bool,
+  /**
+   * The `children` will be under the DOM hierarchy of the parent component.
+   * @default false
+   */
+  disablePortal: PropTypes.bool,
+  /**
+   * If `true`, the modal will not restore focus to previously focused element once
+   * modal is hidden or unmounted.
+   * @default false
+   */
+  disableRestoreFocus: PropTypes.bool,
+  /**
+   * Disable the scroll lock behavior.
+   * @default false
+   */
+  disableScrollLock: PropTypes.bool,
+  /**
+   * If `true`, the backdrop is not rendered.
+   * @default false
+   */
+  hideBackdrop: PropTypes.bool,
+  /**
+   * Always keep the children in the DOM.
+   * This prop can be useful in SEO situation or
+   * when you want to maximize the responsiveness of the Modal.
+   * @default false
+   */
+  keepMounted: PropTypes.bool,
+  /**
+   * Callback fired when the component requests to be closed.
+   * The `reason` parameter can optionally be used to control the response to `onClose`.
+   *
+   * @param {object} event The event source of the callback.
+   * @param {string} reason Can be: `"escapeKeyDown"`, `"backdropClick"`.
+   */
+  onClose: PropTypes.func,
+  /**
+   * A function called when a transition enters.
+   */
+  onTransitionEnter: PropTypes.func,
+  /**
+   * A function called when a transition has exited.
+   */
+  onTransitionExited: PropTypes.func,
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool.isRequired,
+  /**
+   * The props used for each slot inside the Modal.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    backdrop: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside the Modal.
+   * Either a string to use a HTML element or a component.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    backdrop: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object])
+} : void 0;
+var Modal$1 = Modal;
+
+function getPaperUtilityClass(slot) {
+  return generateUtilityClass('MuiPaper', slot);
+}
+generateUtilityClasses('MuiPaper', ['root', 'rounded', 'outlined', 'elevation', 'elevation0', 'elevation1', 'elevation2', 'elevation3', 'elevation4', 'elevation5', 'elevation6', 'elevation7', 'elevation8', 'elevation9', 'elevation10', 'elevation11', 'elevation12', 'elevation13', 'elevation14', 'elevation15', 'elevation16', 'elevation17', 'elevation18', 'elevation19', 'elevation20', 'elevation21', 'elevation22', 'elevation23', 'elevation24']);
+
+const useUtilityClasses$g = ownerState => {
+  const {
+    square,
+    elevation,
+    variant,
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root', variant, !square && 'rounded', variant === 'elevation' && `elevation${elevation}`]
+  };
+  return composeClasses(slots, getPaperUtilityClass, classes);
+};
+const PaperRoot = styled$1('div', {
+  name: 'MuiPaper',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.root, styles[ownerState.variant], !ownerState.square && styles.rounded, ownerState.variant === 'elevation' && styles[`elevation${ownerState.elevation}`]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  backgroundColor: (theme.vars || theme).palette.background.paper,
+  color: (theme.vars || theme).palette.text.primary,
+  transition: theme.transitions.create('box-shadow'),
+  variants: [{
+    props: ({
+      ownerState
+    }) => !ownerState.square,
+    style: {
+      borderRadius: theme.shape.borderRadius
+    }
+  }, {
+    props: {
+      variant: 'outlined'
+    },
+    style: {
+      border: `1px solid ${(theme.vars || theme).palette.divider}`
+    }
+  }, {
+    props: {
+      variant: 'elevation'
+    },
+    style: {
+      boxShadow: 'var(--Paper-shadow)',
+      backgroundImage: 'var(--Paper-overlay)'
+    }
+  }]
+})));
+const Paper = /*#__PURE__*/reactExports.forwardRef(function Paper(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiPaper'
+  });
+  const theme = useTheme();
+  const {
+    className,
+    component = 'div',
+    elevation = 1,
+    square = false,
+    variant = 'elevation',
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    component,
+    elevation,
+    square,
+    variant
+  };
+  const classes = useUtilityClasses$g(ownerState);
+  if (process.env.NODE_ENV !== 'production') {
+    if (theme.shadows[elevation] === undefined) {
+      console.error([`MUI: The elevation provided <Paper elevation={${elevation}}> is not available in the theme.`, `Please make sure that \`theme.shadows[${elevation}]\` is defined.`].join('\n'));
+    }
+  }
+  return /*#__PURE__*/jsxRuntimeExports.jsx(PaperRoot, {
+    as: component,
+    ownerState: ownerState,
+    className: clsx(classes.root, className),
+    ref: ref,
+    ...other,
+    style: {
+      ...(variant === 'elevation' && {
+        '--Paper-shadow': (theme.vars || theme).shadows[elevation],
+        ...(theme.vars && {
+          '--Paper-overlay': theme.vars.overlays?.[elevation]
+        }),
+        ...(!theme.vars && theme.palette.mode === 'dark' && {
+          '--Paper-overlay': `linear-gradient(${alpha('#fff', getOverlayAlpha(elevation))}, ${alpha('#fff', getOverlayAlpha(elevation))})`
+        })
+      }),
+      ...other.style
+    }
+  });
+});
+process.env.NODE_ENV !== "production" ? Paper.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * Shadow depth, corresponds to `dp` in the spec.
+   * It accepts values between 0 and 24 inclusive.
+   * @default 1
+   */
+  elevation: chainPropTypes(integerPropType$1, props => {
+    const {
+      elevation,
+      variant
+    } = props;
+    if (elevation > 0 && variant === 'outlined') {
+      return new Error(`MUI: Combining \`elevation={${elevation}}\` with \`variant="${variant}"\` has no effect. Either use \`elevation={0}\` or use a different \`variant\`.`);
+    }
+    return null;
+  }),
+  /**
+   * If `true`, rounded corners are disabled.
+   * @default false
+   */
+  square: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  style: PropTypes.object,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The variant to use.
+   * @default 'elevation'
+   */
+  variant: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['elevation', 'outlined']), PropTypes.string])
+} : void 0;
+var Paper$1 = Paper;
+
+function getPopoverUtilityClass(slot) {
+  return generateUtilityClass('MuiPopover', slot);
+}
+generateUtilityClasses('MuiPopover', ['root', 'paper']);
+
+function getOffsetTop(rect, vertical) {
+  let offset = 0;
+  if (typeof vertical === 'number') {
+    offset = vertical;
+  } else if (vertical === 'center') {
+    offset = rect.height / 2;
+  } else if (vertical === 'bottom') {
+    offset = rect.height;
+  }
+  return offset;
+}
+function getOffsetLeft(rect, horizontal) {
+  let offset = 0;
+  if (typeof horizontal === 'number') {
+    offset = horizontal;
+  } else if (horizontal === 'center') {
+    offset = rect.width / 2;
+  } else if (horizontal === 'right') {
+    offset = rect.width;
+  }
+  return offset;
+}
+function getTransformOriginValue(transformOrigin) {
+  return [transformOrigin.horizontal, transformOrigin.vertical].map(n => typeof n === 'number' ? `${n}px` : n).join(' ');
+}
+function resolveAnchorEl(anchorEl) {
+  return typeof anchorEl === 'function' ? anchorEl() : anchorEl;
+}
+const useUtilityClasses$f = ownerState => {
+  const {
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root'],
+    paper: ['paper']
+  };
+  return composeClasses(slots, getPopoverUtilityClass, classes);
+};
+const PopoverRoot = styled$1(Modal$1, {
+  name: 'MuiPopover',
+  slot: 'Root'
+})({});
+const PopoverPaper = styled$1(Paper$1, {
+  name: 'MuiPopover',
+  slot: 'Paper'
+})({
+  position: 'absolute',
+  overflowY: 'auto',
+  overflowX: 'hidden',
+  // So we see the popover when it's empty.
+  // It's most likely on issue on userland.
+  minWidth: 16,
+  minHeight: 16,
+  maxWidth: 'calc(100% - 32px)',
+  maxHeight: 'calc(100% - 32px)',
+  // We disable the focus ring for mouse, touch and keyboard users.
+  outline: 0
+});
+const Popover = /*#__PURE__*/reactExports.forwardRef(function Popover(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiPopover'
+  });
+  const {
+    action,
+    anchorEl,
+    anchorOrigin = {
+      vertical: 'top',
+      horizontal: 'left'
+    },
+    anchorPosition,
+    anchorReference = 'anchorEl',
+    children,
+    className,
+    container: containerProp,
+    disableAutoFocus = false,
+    elevation = 8,
+    marginThreshold = 16,
+    open,
+    slots = {},
+    slotProps = {},
+    transformOrigin = {
+      vertical: 'top',
+      horizontal: 'left'
+    },
+    transitionDuration: transitionDurationProp = 'auto',
+    disableScrollLock = false,
+    ...other
+  } = props;
+  const paperRef = reactExports.useRef();
+  const ownerState = {
+    ...props,
+    anchorOrigin,
+    anchorReference,
+    elevation,
+    marginThreshold,
+    transformOrigin,
+    transitionDuration: transitionDurationProp
+  };
+  const classes = useUtilityClasses$f(ownerState);
+
+  // Returns the top/left offset of the position
+  // to attach to on the anchor element (or body if none is provided)
+  const getAnchorOffset = reactExports.useCallback(() => {
+    if (anchorReference === 'anchorPosition') {
+      if (process.env.NODE_ENV !== 'production') {
+        if (!anchorPosition) {
+          console.error('MUI: You need to provide a `anchorPosition` prop when using ' + '<Popover anchorReference="anchorPosition" />.');
+        }
+      }
+      return anchorPosition;
+    }
+    const resolvedAnchorEl = resolveAnchorEl(anchorEl);
+
+    // If an anchor element wasn't provided, just use the parent body element of this Popover
+    const anchorElement = resolvedAnchorEl && resolvedAnchorEl.nodeType === 1 ? resolvedAnchorEl : ownerDocument(paperRef.current).body;
+    const anchorRect = anchorElement.getBoundingClientRect();
+    if (process.env.NODE_ENV !== 'production') {
+      const box = anchorElement.getBoundingClientRect();
+      if (isLayoutSupported() && box.top === 0 && box.left === 0 && box.right === 0 && box.bottom === 0) {
+        console.warn(['MUI: The `anchorEl` prop provided to the component is invalid.', 'The anchor element should be part of the document layout.', "Make sure the element is present in the document or that it's not display none."].join('\n'));
+      }
+    }
+    return {
+      top: anchorRect.top + getOffsetTop(anchorRect, anchorOrigin.vertical),
+      left: anchorRect.left + getOffsetLeft(anchorRect, anchorOrigin.horizontal)
+    };
+  }, [anchorEl, anchorOrigin.horizontal, anchorOrigin.vertical, anchorPosition, anchorReference]);
+
+  // Returns the base transform origin using the element
+  const getTransformOrigin = reactExports.useCallback(elemRect => {
+    return {
+      vertical: getOffsetTop(elemRect, transformOrigin.vertical),
+      horizontal: getOffsetLeft(elemRect, transformOrigin.horizontal)
+    };
+  }, [transformOrigin.horizontal, transformOrigin.vertical]);
+  const getPositioningStyle = reactExports.useCallback(element => {
+    const elemRect = {
+      width: element.offsetWidth,
+      height: element.offsetHeight
+    };
+
+    // Get the transform origin point on the element itself
+    const elemTransformOrigin = getTransformOrigin(elemRect);
+    if (anchorReference === 'none') {
+      return {
+        top: null,
+        left: null,
+        transformOrigin: getTransformOriginValue(elemTransformOrigin)
+      };
+    }
+
+    // Get the offset of the anchoring element
+    const anchorOffset = getAnchorOffset();
+
+    // Calculate element positioning
+    let top = anchorOffset.top - elemTransformOrigin.vertical;
+    let left = anchorOffset.left - elemTransformOrigin.horizontal;
+    const bottom = top + elemRect.height;
+    const right = left + elemRect.width;
+
+    // Use the parent window of the anchorEl if provided
+    const containerWindow = ownerWindow(resolveAnchorEl(anchorEl));
+
+    // Window thresholds taking required margin into account
+    const heightThreshold = containerWindow.innerHeight - marginThreshold;
+    const widthThreshold = containerWindow.innerWidth - marginThreshold;
+
+    // Check if the vertical axis needs shifting
+    if (marginThreshold != null && top < marginThreshold) {
+      const diff = top - marginThreshold;
+      top -= diff;
+      elemTransformOrigin.vertical += diff;
+    } else if (marginThreshold != null && bottom > heightThreshold) {
+      const diff = bottom - heightThreshold;
+      top -= diff;
+      elemTransformOrigin.vertical += diff;
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      if (elemRect.height > heightThreshold && elemRect.height && heightThreshold) {
+        console.error(['MUI: The popover component is too tall.', `Some part of it can not be seen on the screen (${elemRect.height - heightThreshold}px).`, 'Please consider adding a `max-height` to improve the user-experience.'].join('\n'));
+      }
+    }
+
+    // Check if the horizontal axis needs shifting
+    if (marginThreshold != null && left < marginThreshold) {
+      const diff = left - marginThreshold;
+      left -= diff;
+      elemTransformOrigin.horizontal += diff;
+    } else if (right > widthThreshold) {
+      const diff = right - widthThreshold;
+      left -= diff;
+      elemTransformOrigin.horizontal += diff;
+    }
+    return {
+      top: `${Math.round(top)}px`,
+      left: `${Math.round(left)}px`,
+      transformOrigin: getTransformOriginValue(elemTransformOrigin)
+    };
+  }, [anchorEl, anchorReference, getAnchorOffset, getTransformOrigin, marginThreshold]);
+  const [isPositioned, setIsPositioned] = reactExports.useState(open);
+  const setPositioningStyles = reactExports.useCallback(() => {
+    const element = paperRef.current;
+    if (!element) {
+      return;
+    }
+    const positioning = getPositioningStyle(element);
+    if (positioning.top != null) {
+      element.style.setProperty('top', positioning.top);
+    }
+    if (positioning.left != null) {
+      element.style.left = positioning.left;
+    }
+    element.style.transformOrigin = positioning.transformOrigin;
+    setIsPositioned(true);
+  }, [getPositioningStyle]);
+  reactExports.useEffect(() => {
+    if (disableScrollLock) {
+      window.addEventListener('scroll', setPositioningStyles);
+    }
+    return () => window.removeEventListener('scroll', setPositioningStyles);
+  }, [anchorEl, disableScrollLock, setPositioningStyles]);
+  const handleEntering = () => {
+    setPositioningStyles();
+  };
+  const handleExited = () => {
+    setIsPositioned(false);
+  };
+  reactExports.useEffect(() => {
+    if (open) {
+      setPositioningStyles();
+    }
+  });
+  reactExports.useImperativeHandle(action, () => open ? {
+    updatePosition: () => {
+      setPositioningStyles();
+    }
+  } : null, [open, setPositioningStyles]);
+  reactExports.useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    const handleResize = debounce$1(() => {
+      setPositioningStyles();
+    });
+    const containerWindow = ownerWindow(resolveAnchorEl(anchorEl));
+    containerWindow.addEventListener('resize', handleResize);
+    return () => {
+      handleResize.clear();
+      containerWindow.removeEventListener('resize', handleResize);
+    };
+  }, [anchorEl, open, setPositioningStyles]);
+  let transitionDuration = transitionDurationProp;
+  const externalForwardedProps = {
+    slots,
+    slotProps
+  };
+  const [TransitionSlot, transitionSlotProps] = useSlot('transition', {
+    elementType: Grow$1,
+    externalForwardedProps,
+    ownerState,
+    getSlotProps: handlers => ({
+      ...handlers,
+      onEntering: (element, isAppearing) => {
+        handlers.onEntering?.(element, isAppearing);
+        handleEntering();
+      },
+      onExited: element => {
+        handlers.onExited?.(element);
+        handleExited();
+      }
+    }),
+    additionalProps: {
+      appear: true,
+      in: open
+    }
+  });
+  if (transitionDurationProp === 'auto' && !TransitionSlot.muiSupportAuto) {
+    transitionDuration = undefined;
+  }
+
+  // If the container prop is provided, use that
+  // If the anchorEl prop is provided, use its parent body element as the container
+  // If neither are provided let the Modal take care of choosing the container
+  const container = containerProp || (anchorEl ? ownerDocument(resolveAnchorEl(anchorEl)).body : undefined);
+  const [RootSlot, {
+    slots: rootSlotsProp,
+    slotProps: rootSlotPropsProp,
+    ...rootProps
+  }] = useSlot('root', {
+    ref,
+    elementType: PopoverRoot,
+    externalForwardedProps: {
+      ...externalForwardedProps,
+      ...other
+    },
+    shouldForwardComponentProp: true,
+    additionalProps: {
+      slots: {
+        backdrop: slots.backdrop
+      },
+      slotProps: {
+        backdrop: mergeSlotProps(typeof slotProps.backdrop === 'function' ? slotProps.backdrop(ownerState) : slotProps.backdrop, {
+          invisible: true
+        })
+      },
+      container,
+      open
+    },
+    ownerState,
+    className: clsx(classes.root, className)
+  });
+  const [PaperSlot, paperProps] = useSlot('paper', {
+    ref: paperRef,
+    className: classes.paper,
+    elementType: PopoverPaper,
+    externalForwardedProps,
+    shouldForwardComponentProp: true,
+    additionalProps: {
+      elevation,
+      style: isPositioned ? undefined : {
+        opacity: 0
+      }
+    },
+    ownerState
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(RootSlot, {
+    ...rootProps,
+    ...(!isHostComponent(RootSlot) && {
+      slots: rootSlotsProp,
+      slotProps: rootSlotPropsProp,
+      disableAutoFocus,
+      disableScrollLock
+    }),
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(TransitionSlot, {
+      ...transitionSlotProps,
+      timeout: transitionDuration,
+      children: /*#__PURE__*/jsxRuntimeExports.jsx(PaperSlot, {
+        ...paperProps,
+        children: children
+      })
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? Popover.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * A ref for imperative actions.
+   * It currently only supports updatePosition() action.
+   */
+  action: refType$1,
+  /**
+   * An HTML element, [PopoverVirtualElement](https://mui.com/material-ui/react-popover/#virtual-element),
+   * or a function that returns either.
+   * It's used to set the position of the popover.
+   */
+  anchorEl: chainPropTypes(PropTypes.oneOfType([HTMLElementType, PropTypes.func]), props => {
+    if (props.open && (!props.anchorReference || props.anchorReference === 'anchorEl')) {
+      const resolvedAnchorEl = resolveAnchorEl(props.anchorEl);
+      if (resolvedAnchorEl && resolvedAnchorEl.nodeType === 1) {
+        const box = resolvedAnchorEl.getBoundingClientRect();
+        if (process.env.NODE_ENV !== 'production') {
+          if (isLayoutSupported() && box.top === 0 && box.left === 0 && box.right === 0 && box.bottom === 0) {
+            return new Error(['MUI: The `anchorEl` prop provided to the component is invalid.', 'The anchor element should be part of the document layout.', "Make sure the element is present in the document or that it's not display none."].join('\n'));
+          }
+        }
+      } else {
+        return new Error(['MUI: The `anchorEl` prop provided to the component is invalid.', `It should be an Element or PopoverVirtualElement instance but it's \`${resolvedAnchorEl}\` instead.`].join('\n'));
+      }
+    }
+    return null;
+  }),
+  /**
+   * This is the point on the anchor where the popover's
+   * `anchorEl` will attach to. This is not used when the
+   * anchorReference is 'anchorPosition'.
+   *
+   * Options:
+   * vertical: [top, center, bottom];
+   * horizontal: [left, center, right].
+   * @default {
+   *   vertical: 'top',
+   *   horizontal: 'left',
+   * }
+   */
+  anchorOrigin: PropTypes.shape({
+    horizontal: PropTypes.oneOfType([PropTypes.oneOf(['center', 'left', 'right']), PropTypes.number]).isRequired,
+    vertical: PropTypes.oneOfType([PropTypes.oneOf(['bottom', 'center', 'top']), PropTypes.number]).isRequired
+  }),
+  /**
+   * This is the position that may be used to set the position of the popover.
+   * The coordinates are relative to the application's client area.
+   */
+  anchorPosition: PropTypes.shape({
+    left: PropTypes.number.isRequired,
+    top: PropTypes.number.isRequired
+  }),
+  /**
+   * This determines which anchor prop to refer to when setting
+   * the position of the popover.
+   * @default 'anchorEl'
+   */
+  anchorReference: PropTypes.oneOf(['anchorEl', 'anchorPosition', 'none']),
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * An HTML element, component instance, or function that returns either.
+   * The `container` will passed to the Modal component.
+   *
+   * By default, it uses the body of the anchorEl's top-level document object,
+   * so it's simply `document.body` most of the time.
+   */
+  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
+  /**
+   * If `true`, the modal will not automatically shift focus to itself when it opens, and
+   * replace it to the last focused element when it closes.
+   * This also works correctly with any modal children that have the `disableAutoFocus` prop.
+   *
+   * Generally this should never be set to `true` as it makes the modal less
+   * accessible to assistive technologies, like screen readers.
+   * @default false
+   */
+  disableAutoFocus: PropTypes.bool,
+  /**
+   * Disable the scroll lock behavior.
+   * @default false
+   */
+  disableScrollLock: PropTypes.bool,
+  /**
+   * The elevation of the popover.
+   * @default 8
+   */
+  elevation: integerPropType$1,
+  /**
+   * Specifies how close to the edge of the window the popover can appear.
+   * If null, the popover will not be constrained by the window.
+   * @default 16
+   */
+  marginThreshold: PropTypes.number,
+  /**
+   * Callback fired when the component requests to be closed.
+   * The `reason` parameter can optionally be used to control the response to `onClose`.
+   */
+  onClose: PropTypes.func,
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool.isRequired,
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    backdrop: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    paper: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    transition: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    backdrop: PropTypes.elementType,
+    paper: PropTypes.elementType,
+    root: PropTypes.elementType,
+    transition: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * This is the point on the popover which
+   * will attach to the anchor's origin.
+   *
+   * Options:
+   * vertical: [top, center, bottom, x(px)];
+   * horizontal: [left, center, right, x(px)].
+   * @default {
+   *   vertical: 'top',
+   *   horizontal: 'left',
+   * }
+   */
+  transformOrigin: PropTypes.shape({
+    horizontal: PropTypes.oneOfType([PropTypes.oneOf(['center', 'left', 'right']), PropTypes.number]).isRequired,
+    vertical: PropTypes.oneOfType([PropTypes.oneOf(['bottom', 'center', 'top']), PropTypes.number]).isRequired
+  }),
+  /**
+   * Set to 'auto' to automatically calculate transition time based on height.
+   * @default 'auto'
+   */
+  transitionDuration: PropTypes.oneOfType([PropTypes.oneOf(['auto']), PropTypes.number, PropTypes.shape({
+    appear: PropTypes.number,
+    enter: PropTypes.number,
+    exit: PropTypes.number
+  })])
+} : void 0;
+var Popover$1 = Popover;
+
+function getMenuUtilityClass(slot) {
+  return generateUtilityClass('MuiMenu', slot);
+}
+generateUtilityClasses('MuiMenu', ['root', 'paper', 'list']);
+
+const RTL_ORIGIN = {
+  vertical: 'top',
+  horizontal: 'right'
+};
+const LTR_ORIGIN = {
+  vertical: 'top',
+  horizontal: 'left'
+};
+const useUtilityClasses$e = ownerState => {
+  const {
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root'],
+    paper: ['paper'],
+    list: ['list']
+  };
+  return composeClasses(slots, getMenuUtilityClass, classes);
+};
+const MenuRoot = styled$1(Popover$1, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiMenu',
+  slot: 'Root'
+})({});
+const MenuPaper = styled$1(PopoverPaper, {
+  name: 'MuiMenu',
+  slot: 'Paper'
+})({
+  // specZ: The maximum height of a simple menu should be one or more rows less than the view
+  // height. This ensures a tappable area outside of the simple menu with which to dismiss
+  // the menu.
+  maxHeight: 'calc(100% - 96px)',
+  // Add iOS momentum scrolling for iOS < 13.0
+  WebkitOverflowScrolling: 'touch'
+});
+const MenuMenuList = styled$1(MenuList$1, {
+  name: 'MuiMenu',
+  slot: 'List'
+})({
+  // We disable the focus ring for mouse, touch and keyboard users.
+  outline: 0
+});
+const Menu = /*#__PURE__*/reactExports.forwardRef(function Menu(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiMenu'
+  });
+  const {
+    autoFocus = true,
+    children,
+    className,
+    disableAutoFocusItem = false,
+    onClose,
+    open,
+    PopoverClasses,
+    transitionDuration = 'auto',
+    variant = 'selectedMenu',
+    slots = {},
+    slotProps = {},
+    ...other
+  } = props;
+  const isRtl = useRtl();
+  const ownerState = {
+    ...props,
+    autoFocus,
+    disableAutoFocusItem,
+    transitionDuration,
+    variant
+  };
+  const classes = useUtilityClasses$e(ownerState);
+  const shouldManageInitialFocus = autoFocus && open; // `&& open` prevents a Menu with `keepMounted={true}` from accidentally stealing focus
+  const shouldAutoFocusActiveItem = shouldManageInitialFocus && !disableAutoFocusItem;
+  const menuListActionsRef = reactExports.useRef(null);
+  const handleEntering = (element, _isAppearing) => {
+    if (menuListActionsRef.current) {
+      menuListActionsRef.current.adjustStyleForScrollbar(element, {
+        direction: isRtl ? 'rtl' : 'ltr'
+      });
+      if (shouldManageInitialFocus) {
+        menuListActionsRef.current.focusInitialTarget?.();
+      }
+    }
+  };
+  const handleListKeyDown = event => {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      if (onClose) {
+        onClose(event, 'tabKeyDown');
+      }
+    }
+  };
+  const externalForwardedProps = {
+    slots,
+    slotProps
+  };
+  const rootSlotProps = useSlotProps({
+    elementType: slots.root,
+    externalSlotProps: slotProps.root,
+    ownerState,
+    className: [classes.root, className]
+  });
+  const [PaperSlot, paperSlotProps] = useSlot('paper', {
+    className: classes.paper,
+    elementType: MenuPaper,
+    externalForwardedProps,
+    shouldForwardComponentProp: true,
+    ownerState
+  });
+  const [ListSlot, listSlotProps] = useSlot('list', {
+    className: classes.list,
+    elementType: MenuMenuList,
+    shouldForwardComponentProp: true,
+    externalForwardedProps,
+    getSlotProps: handlers => ({
+      ...handlers,
+      onKeyDown: event => {
+        handleListKeyDown(event);
+        handlers.onKeyDown?.(event);
+      }
+    }),
+    ownerState
+  });
+  const resolvedTransitionProps = typeof slotProps.transition === 'function' ? slotProps.transition(ownerState) : slotProps.transition;
+  return /*#__PURE__*/jsxRuntimeExports.jsx(MenuRoot
+  // `disableAutoFocus={autoFocus}` is NOT a mistake
+  //   - `autoFocus` means `Menu` will control focus and move it into `MenuList` or an active `MenuItem`
+  //   - `disableAutoFocus` means disable `MenuRoot`s underlying `Popover`'s autoFocus handling
+  // This prevents `MenuList` and `Popover` from fighting each other to control focus.
+  // (This has nothing to do with DOM `autoFocus`)
+  , {
+    disableAutoFocus: autoFocus,
+    onClose: onClose,
+    anchorOrigin: {
+      vertical: 'bottom',
+      horizontal: isRtl ? 'right' : 'left'
+    },
+    transformOrigin: isRtl ? RTL_ORIGIN : LTR_ORIGIN,
+    slots: {
+      root: slots.root,
+      paper: PaperSlot,
+      backdrop: slots.backdrop,
+      transition: slots.transition
+    },
+    slotProps: {
+      root: rootSlotProps,
+      paper: paperSlotProps,
+      backdrop: typeof slotProps.backdrop === 'function' ? slotProps.backdrop(ownerState) : slotProps.backdrop,
+      transition: {
+        ...resolvedTransitionProps,
+        onEntering: (...args) => {
+          handleEntering(...args);
+          resolvedTransitionProps?.onEntering?.(...args);
+        }
+      }
+    },
+    open: open,
+    ref: ref,
+    transitionDuration: transitionDuration,
+    ownerState: ownerState,
+    ...other,
+    classes: PopoverClasses,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(ListSlot, {
+      actions: menuListActionsRef,
+      autoFocus: shouldManageInitialFocus,
+      autoFocusItem: shouldAutoFocusActiveItem,
+      variant: variant,
+      ...listSlotProps,
+      children: children
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? Menu.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * An HTML element, or a function that returns one.
+   * It's used to set the position of the menu.
+   */
+  anchorEl: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
+  /**
+   * If `true` (Default) will focus the `[role="menu"]` if no focusable child is found. Disabled
+   * children are not focusable. If you set this prop to `false` focus will be placed
+   * on the parent modal container. This has severe accessibility implications
+   * and should only be considered if you manage focus otherwise.
+   * @default true
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * Menu contents, normally `MenuItem`s.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * When opening the menu will not focus the active item but the `[role="menu"]`
+   * unless `autoFocus` is also set to `false`. Not using the default means not
+   * following WAI-ARIA authoring practices. Please be considerate about possible
+   * accessibility implications.
+   * @default false
+   */
+  disableAutoFocusItem: PropTypes.bool,
+  /**
+   * Callback fired when the component requests to be closed.
+   *
+   * @param {object} event The event source of the callback.
+   * @param {string} reason Can be: `"escapeKeyDown"`, `"backdropClick"`, `"tabKeyDown"`.
+   */
+  onClose: PropTypes.func,
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool.isRequired,
+  /**
+   * `classes` prop applied to the [`Popover`](https://mui.com/material-ui/api/popover/) element.
+   */
+  PopoverClasses: PropTypes.object,
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    backdrop: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    list: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    paper: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    transition: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    backdrop: PropTypes.elementType,
+    list: PropTypes.elementType,
+    paper: PropTypes.elementType,
+    root: PropTypes.elementType,
+    transition: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The length of the transition in `ms`, or 'auto'
+   * @default 'auto'
+   */
+  transitionDuration: PropTypes.oneOfType([PropTypes.oneOf(['auto']), PropTypes.number, PropTypes.shape({
+    appear: PropTypes.number,
+    enter: PropTypes.number,
+    exit: PropTypes.number
+  })]),
+  /**
+   * The variant to use. Use `menu` to prevent selected items from impacting the initial focus.
+   * @default 'selectedMenu'
+   */
+  variant: PropTypes.oneOf(['menu', 'selectedMenu'])
+} : void 0;
+var Menu$1 = Menu;
+
+function getNativeSelectUtilityClasses(slot) {
+  return generateUtilityClass('MuiNativeSelect', slot);
+}
+const nativeSelectClasses = generateUtilityClasses('MuiNativeSelect', ['root', 'select', 'multiple', 'filled', 'outlined', 'standard', 'disabled', 'icon', 'iconOpen', 'iconFilled', 'iconOutlined', 'iconStandard', 'nativeInput', 'error']);
+var nativeSelectClasses$1 = nativeSelectClasses;
+
+const useUtilityClasses$d = ownerState => {
+  const {
+    classes,
+    variant,
+    disabled,
+    multiple,
+    open,
+    error
+  } = ownerState;
+  const slots = {
+    select: ['select', variant, disabled && 'disabled', multiple && 'multiple', error && 'error'],
+    icon: ['icon', `icon${capitalize$3(variant)}`, open && 'iconOpen', disabled && 'disabled']
+  };
+  return composeClasses(slots, getNativeSelectUtilityClasses, classes);
+};
+const StyledSelectSelect = styled$1('select', {
+  name: 'MuiNativeSelect'
+})(({
+  theme
+}) => ({
+  // Reset
+  MozAppearance: 'none',
+  // Reset
+  WebkitAppearance: 'none',
+  // When interacting quickly, the text can end up selected.
+  // Native select can't be selected either.
+  userSelect: 'none',
+  // Reset
+  borderRadius: 0,
+  cursor: 'pointer',
+  '&:focus': {
+    // Reset Chrome style
+    borderRadius: 0
+  },
+  [`&.${nativeSelectClasses$1.disabled}`]: {
+    cursor: 'default'
+  },
+  '&[multiple]': {
+    height: 'auto'
+  },
+  '&:not([multiple]) option, &:not([multiple]) optgroup': {
+    backgroundColor: (theme.vars || theme).palette.background.paper
+  },
+  variants: [{
+    props: ({
+      ownerState
+    }) => ownerState.variant !== 'filled' && ownerState.variant !== 'outlined',
+    style: {
+      // Bump specificity to allow extending custom inputs
+      '&&&': {
+        paddingRight: 24,
+        minWidth: 16 // So it doesn't collapse.
+      }
+    }
+  }, {
+    props: {
+      variant: 'filled'
+    },
+    style: {
+      '&&&': {
+        paddingRight: 32
+      }
+    }
+  }, {
+    props: {
+      variant: 'outlined'
+    },
+    style: {
+      borderRadius: (theme.vars || theme).shape.borderRadius,
+      '&:focus': {
+        borderRadius: (theme.vars || theme).shape.borderRadius // Reset the reset for Chrome style
+      },
+      '&&&': {
+        paddingRight: 32
+      }
+    }
+  }]
+}));
+const NativeSelectSelect = styled$1(StyledSelectSelect, {
+  name: 'MuiNativeSelect',
+  slot: 'Select',
+  shouldForwardProp: rootShouldForwardProp$1,
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.select, styles[ownerState.variant], ownerState.error && styles.error, {
+      [`&.${nativeSelectClasses$1.multiple}`]: styles.multiple
+    }];
+  }
+})({});
+const StyledSelectIcon = styled$1('svg', {
+  name: 'MuiNativeSelect'
+})(({
+  theme
+}) => ({
+  // We use a position absolute over a flexbox in order to forward the pointer events
+  // to the input and to support wrapping tags..
+  position: 'absolute',
+  right: 0,
+  // Center vertically, height is 1em
+  top: 'calc(50% - .5em)',
+  // Don't block pointer events on the select under the icon.
+  pointerEvents: 'none',
+  color: (theme.vars || theme).palette.action.active,
+  [`&.${nativeSelectClasses$1.disabled}`]: {
+    color: (theme.vars || theme).palette.action.disabled
+  },
+  variants: [{
+    props: ({
+      ownerState
+    }) => ownerState.open,
+    style: {
+      transform: 'rotate(180deg)'
+    }
+  }, {
+    props: {
+      variant: 'filled'
+    },
+    style: {
+      right: 7
+    }
+  }, {
+    props: {
+      variant: 'outlined'
+    },
+    style: {
+      right: 7
+    }
+  }]
+}));
+const NativeSelectIcon = styled$1(StyledSelectIcon, {
+  name: 'MuiNativeSelect',
+  slot: 'Icon',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.icon, ownerState.variant && styles[`icon${capitalize$3(ownerState.variant)}`], ownerState.open && styles.iconOpen];
+  }
+})({});
+
+/**
+ * @ignore - internal component.
+ */
+const NativeSelectInput = /*#__PURE__*/reactExports.forwardRef(function NativeSelectInput(props, ref) {
+  const {
+    className,
+    disabled,
+    error,
+    IconComponent,
+    inputRef,
+    variant = 'standard',
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    disabled,
+    variant,
+    error
+  };
+  const classes = useUtilityClasses$d(ownerState);
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+    children: [/*#__PURE__*/jsxRuntimeExports.jsx(NativeSelectSelect, {
+      ownerState: ownerState,
+      className: clsx(classes.select, className),
+      disabled: disabled,
+      ref: inputRef || ref,
+      ...other
+    }), props.multiple ? null : /*#__PURE__*/jsxRuntimeExports.jsx(NativeSelectIcon, {
+      as: IconComponent,
+      ownerState: ownerState,
+      className: classes.icon
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? NativeSelectInput.propTypes = {
+  /**
+   * The option elements to populate the select with.
+   * Can be some `<option>` elements.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * The CSS class name of the select element.
+   */
+  className: PropTypes.string,
+  /**
+   * If `true`, the select is disabled.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the `select input` will indicate an error.
+   */
+  error: PropTypes.bool,
+  /**
+   * The icon that displays the arrow.
+   */
+  IconComponent: PropTypes.elementType.isRequired,
+  /**
+   * Use that prop to pass a ref to the native select element.
+   * @deprecated
+   */
+  inputRef: refType$1,
+  /**
+   * @ignore
+   */
+  multiple: PropTypes.bool,
+  /**
+   * Name attribute of the `select` or hidden `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * Callback fired when a menu item is selected.
+   *
+   * @param {object} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * The input value.
+   */
+  value: PropTypes.any,
+  /**
+   * The variant to use.
+   */
+  variant: PropTypes.oneOf(['standard', 'outlined', 'filled'])
+} : void 0;
+var NativeSelectInput$1 = NativeSelectInput;
+
+function getSelectUtilityClasses(slot) {
+  return generateUtilityClass('MuiSelect', slot);
+}
+const selectClasses = generateUtilityClasses('MuiSelect', ['root', 'select', 'multiple', 'filled', 'outlined', 'standard', 'disabled', 'focused', 'icon', 'iconOpen', 'nativeInput', 'error']);
+
+var _span$1;
+const OPENING_MOUSE_UP_BOUNDARY_OFFSET = 2;
+// The initial mouseup may land on an item when the menu opens over the trigger.
+const SELECTED_MOUSE_UP_DELAY = 400;
+const UNSELECTED_MOUSE_UP_DELAY = 200;
+
+/**
+ * Returns true when a native mouse event should be treated as happening inside
+ * the element, even if a portal or backdrop retargeted the event away from it.
+ *
+ * Select uses this for the opening mouseup: when the menu opens over the
+ * trigger, the release can target the backdrop or portaled menu even though the
+ * pointer is still inside the trigger or menu bounds.
+ */
+function isMouseEventInsideElement(event, element) {
+  if (!element) {
+    return false;
+  }
+  const eventPath = event.composedPath();
+  if (eventPath.includes(element)) {
+    return true;
+  }
+  if (event.target?.nodeType && element.contains(event.target)) {
+    return true;
+  }
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) {
+    // Hidden or transition-mounted elements do not have useful bounds to hit-test.
+    return false;
+  }
+  return event.clientX >= rect.left - OPENING_MOUSE_UP_BOUNDARY_OFFSET && event.clientX <= rect.right + OPENING_MOUSE_UP_BOUNDARY_OFFSET && event.clientY >= rect.top - OPENING_MOUSE_UP_BOUNDARY_OFFSET && event.clientY <= rect.bottom + OPENING_MOUSE_UP_BOUNDARY_OFFSET;
+}
+const SelectSelect = styled$1(StyledSelectSelect, {
+  name: 'MuiSelect',
+  slot: 'Select',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [
+    // Win specificity over the input base
+    {
+      [`&.${selectClasses.select}`]: styles.select
+    }, {
+      [`&.${selectClasses.select}`]: styles[ownerState.variant]
+    }, {
+      [`&.${selectClasses.error}`]: styles.error
+    }, {
+      [`&.${selectClasses.multiple}`]: styles.multiple
+    }];
+  }
+})({
+  // Win specificity over the input base
+  [`&.${selectClasses.select}`]: {
+    height: 'auto',
+    // Resets for multiple select with chips
+    minHeight: '1.4375em',
+    // Required for select\text-field height consistency
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden'
+  }
+});
+const SelectIcon = styled$1(StyledSelectIcon, {
+  name: 'MuiSelect',
+  slot: 'Icon',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.icon, ownerState.open && styles.iconOpen];
+  }
+})({});
+const SelectNativeInput = styled$1('input', {
+  shouldForwardProp: prop => slotShouldForwardProp(prop) && prop !== 'classes',
+  name: 'MuiSelect',
+  slot: 'NativeInput'
+})({
+  bottom: 0,
+  left: 0,
+  position: 'absolute',
+  opacity: 0,
+  pointerEvents: 'none',
+  width: '100%',
+  boxSizing: 'border-box'
+});
+const useUtilityClasses$c = ownerState => {
+  const {
+    classes,
+    variant,
+    disabled,
+    multiple,
+    open,
+    error
+  } = ownerState;
+  const slots = {
+    select: ['select', variant, disabled && 'disabled', multiple && 'multiple', error && 'error'],
+    icon: ['icon', open && 'iconOpen', disabled && 'disabled'],
+    nativeInput: ['nativeInput']
+  };
+  return composeClasses(slots, getSelectUtilityClasses, classes);
+};
+
+/**
+ * @ignore - internal component.
+ */
+const SelectInput = /*#__PURE__*/reactExports.forwardRef(function SelectInput(props, ref) {
+  const {
+    'aria-describedby': ariaDescribedby,
+    'aria-label': ariaLabel,
+    autoFocus,
+    autoWidth,
+    children,
+    className,
+    defaultOpen,
+    defaultValue,
+    disabled,
+    displayEmpty,
+    error = false,
+    IconComponent,
+    inputRef: inputRefProp,
+    labelId,
+    MenuProps = {},
+    multiple,
+    name,
+    onBlur,
+    onChange,
+    onClose,
+    onFocus,
+    // eslint-disable-next-line react/prop-types
+    onKeyDown,
+    // eslint-disable-next-line react/prop-types
+    onMouseDown,
+    onOpen,
+    open: openProp,
+    readOnly,
+    renderValue,
+    required,
+    SelectDisplayProps = {},
+    tabIndex: tabIndexProp,
+    // catching `type` from Input which makes no sense for SelectInput
+    type,
+    value: valueProp,
+    variant = 'standard',
+    ...other
+  } = props;
+  const [value, setValueState] = useControlled({
+    controlled: valueProp,
+    default: defaultValue,
+    name: 'Select'
+  });
+  const [openState, setOpenState] = useControlled({
+    controlled: openProp,
+    default: defaultOpen,
+    name: 'Select'
+  });
+  const inputRef = reactExports.useRef(null);
+  const displayRef = reactExports.useRef(null);
+  const paperRef = reactExports.useRef(null);
+  const openRef = reactExports.useRef(false);
+  const hasSelectedItemInListRef = reactExports.useRef(false);
+  const openingMouseUpListenerCleanupRef = reactExports.useRef(null);
+  const didPointerDownOnItemRef = reactExports.useRef(false);
+  const selectionRef = reactExports.useRef({
+    allowSelectedMouseUp: false,
+    allowUnselectedMouseUp: false
+  });
+  const selectedMouseUpTimer = useTimeout();
+  const unselectedMouseUpTimer = useTimeout();
+  const [displayNode, setDisplayNode] = reactExports.useState(null);
+  const {
+    current: isOpenControlled
+  } = reactExports.useRef(openProp != null);
+  const [menuMinWidthState, setMenuMinWidthState] = reactExports.useState();
+  const [openInteractionType, setOpenInteractionType] = reactExports.useState(null);
+  const handleRef = useForkRef(ref, inputRefProp);
+  const handleDisplayRef = reactExports.useCallback(node => {
+    displayRef.current = node;
+    if (node) {
+      setDisplayNode(node);
+    }
+  }, []);
+  const anchorElement = displayNode?.parentNode;
+  reactExports.useImperativeHandle(handleRef, () => ({
+    focus: () => {
+      displayRef.current.focus();
+    },
+    node: inputRef.current,
+    value
+  }), [value]);
+  const open = displayNode !== null && openState;
+  useEnhancedEffect$1(() => {
+    openRef.current = open;
+  }, [open]);
+  const clearSelectionTimers = reactExports.useCallback(() => {
+    selectedMouseUpTimer.clear();
+    unselectedMouseUpTimer.clear();
+  }, [selectedMouseUpTimer, unselectedMouseUpTimer]);
+  const resetMouseUpSelection = reactExports.useCallback(() => {
+    clearSelectionTimers();
+    didPointerDownOnItemRef.current = false;
+    selectionRef.current = {
+      allowSelectedMouseUp: false,
+      allowUnselectedMouseUp: false
+    };
+  }, [clearSelectionTimers]);
+  const clearOpeningMouseUpListener = reactExports.useCallback(() => {
+    if (openingMouseUpListenerCleanupRef.current) {
+      openingMouseUpListenerCleanupRef.current();
+      openingMouseUpListenerCleanupRef.current = null;
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    if (!open) {
+      resetMouseUpSelection();
+      clearOpeningMouseUpListener();
+    }
+  }, [open, resetMouseUpSelection, clearOpeningMouseUpListener]);
+
+  // Keep unmount cleanup separate from the `open` effect. Effect cleanups also run
+  // before the next effect, which would clear the opening mouseup listener while opening.
+  reactExports.useEffect(() => {
+    return () => {
+      resetMouseUpSelection();
+      clearOpeningMouseUpListener();
+    };
+  }, [resetMouseUpSelection, clearOpeningMouseUpListener]);
+  reactExports.useEffect(() => {
+    if (!open || !anchorElement || autoWidth) {
+      return undefined;
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => {
+      setMenuMinWidthState(anchorElement.clientWidth);
+    });
+    observer.observe(anchorElement);
+    return () => {
+      observer.disconnect();
+    };
+  }, [open, anchorElement, autoWidth]);
+
+  // Resize menu on `defaultOpen` automatic toggle.
+  reactExports.useEffect(() => {
+    if (defaultOpen && openState && displayNode && !isOpenControlled) {
+      setMenuMinWidthState(autoWidth ? null : anchorElement.clientWidth);
+      displayRef.current.focus();
+    }
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayNode, autoWidth]);
+  // `isOpenControlled` is ignored because the component should never switch between controlled and uncontrolled modes.
+  // `defaultOpen` and `openState` are ignored to avoid unnecessary callbacks.
+  reactExports.useEffect(() => {
+    if (autoFocus) {
+      displayRef.current.focus();
+    }
+  }, [autoFocus]);
+  reactExports.useEffect(() => {
+    if (!labelId) {
+      return undefined;
+    }
+    const label = ownerDocument(displayRef.current).getElementById(labelId);
+    if (label) {
+      const handler = () => {
+        if (getSelection().isCollapsed) {
+          displayRef.current.focus();
+        }
+      };
+      label.addEventListener('click', handler);
+      return () => {
+        label.removeEventListener('click', handler);
+      };
+    }
+    return undefined;
+  }, [labelId]);
+  const update = useEventCallback((openParam, event) => {
+    if (!openParam) {
+      resetMouseUpSelection();
+      clearOpeningMouseUpListener();
+    }
+    if (openParam) {
+      setOpenInteractionType(getOpenInteractionType(event));
+      if (onOpen) {
+        onOpen(event);
+      }
+    } else {
+      setOpenInteractionType(null);
+      if (onClose) {
+        onClose(event);
+      }
+    }
+    if (!isOpenControlled) {
+      openRef.current = openParam;
+      setMenuMinWidthState(autoWidth ? null : anchorElement.clientWidth);
+      setOpenState(openParam);
+    }
+  });
+  const scheduleMouseUpSelection = () => {
+    resetMouseUpSelection();
+
+    // When there is no selected item in the list, a mousedown
+    // on the trigger followed by a quick mouseup over the first option can accidentally select
+    // within 200ms. Delay unselected mouseup to match the safer 400ms window.
+    if (!hasSelectedItemInListRef.current) {
+      selectedMouseUpTimer.start(SELECTED_MOUSE_UP_DELAY, () => {
+        selectionRef.current.allowSelectedMouseUp = true;
+        selectionRef.current.allowUnselectedMouseUp = true;
+      });
+    } else {
+      // mousedown -> move to unselected item -> mouseup should not select within 200ms.
+      unselectedMouseUpTimer.start(UNSELECTED_MOUSE_UP_DELAY, () => {
+        selectionRef.current.allowUnselectedMouseUp = true;
+
+        // mousedown -> mouseup on selected item should not select within 400ms.
+        selectedMouseUpTimer.start(UNSELECTED_MOUSE_UP_DELAY, () => {
+          selectionRef.current.allowSelectedMouseUp = true;
+        });
+      });
+    }
+  };
+  const handleMouseDown = event => {
+    onMouseDown?.(event);
+    // Ignore everything but left-click
+    if (event.button !== 0) {
+      return;
+    }
+    // Hijack the default focus behavior.
+    event.preventDefault();
+    displayRef.current.focus();
+    const doc = ownerDocument(event.currentTarget);
+    scheduleMouseUpSelection();
+    clearOpeningMouseUpListener();
+    const handleMouseUp = mouseEvent => {
+      openingMouseUpListenerCleanupRef.current = null;
+      if (!displayRef.current) {
+        return;
+      }
+      if (isMouseEventInsideElement(mouseEvent, displayRef.current) || isMouseEventInsideElement(mouseEvent, paperRef.current)) {
+        return;
+      }
+      if (!openRef.current && isOpenControlled) {
+        return;
+      }
+      update(false, mouseEvent);
+    };
+    doc.addEventListener('mouseup', handleMouseUp, {
+      capture: true,
+      once: true
+    });
+    openingMouseUpListenerCleanupRef.current = () => {
+      doc.removeEventListener('mouseup', handleMouseUp, true);
+    };
+    update(true, event);
+  };
+  const handleClose = event => {
+    update(false, event);
+  };
+  const childrenArray = reactExports.Children.toArray(children);
+
+  // Support autofill.
+  const handleChange = event => {
+    const child = childrenArray.find(childItem => childItem.props.value === event.target.value);
+    if (child === undefined) {
+      return;
+    }
+    setValueState(child.props.value);
+    if (onChange) {
+      onChange(event, child);
+    }
+  };
+  const handleItemClick = child => event => {
+    didPointerDownOnItemRef.current = false;
+    let newValue;
+
+    // We use the tabindex attribute to signal the available options.
+    if (!event.currentTarget.hasAttribute('tabindex')) {
+      return;
+    }
+    if (multiple) {
+      newValue = Array.isArray(value) ? value.slice() : [];
+      const itemIndex = value.indexOf(child.props.value);
+      if (itemIndex === -1) {
+        newValue.push(child.props.value);
+      } else {
+        newValue.splice(itemIndex, 1);
+      }
+    } else {
+      newValue = child.props.value;
+    }
+    if (child.props.onClick) {
+      child.props.onClick(event);
+    }
+    if (value !== newValue) {
+      setValueState(newValue);
+      if (onChange) {
+        // Redefine target to allow name and value to be read.
+        // This allows seamless integration with the most popular form libraries.
+        // https://github.com/mui/material-ui/issues/13485#issuecomment-676048492
+        // Clone the event to not override `target` of the original event.
+        const nativeEvent = event.nativeEvent || event;
+        const clonedEvent = new nativeEvent.constructor(nativeEvent.type, nativeEvent);
+        Object.defineProperty(clonedEvent, 'target', {
+          writable: true,
+          value: {
+            value: newValue,
+            name
+          }
+        });
+        onChange(clonedEvent, child);
+      }
+    }
+    if (!multiple) {
+      update(false, event);
+    }
+  };
+  const handleItemMouseUp = (child, selected) => event => {
+    child.props.onMouseUp?.(event);
+    if (didPointerDownOnItemRef.current) {
+      didPointerDownOnItemRef.current = false;
+      return;
+    }
+    const disallowSelectedMouseUp = !selectionRef.current.allowSelectedMouseUp && selected;
+    const disallowUnselectedMouseUp = !selectionRef.current.allowUnselectedMouseUp && !selected;
+    if (disallowSelectedMouseUp || disallowUnselectedMouseUp) {
+      return;
+    }
+    event.currentTarget.click();
+  };
+  const handleKeyDown = event => {
+    if (!readOnly) {
+      const validKeys = [' ', 'ArrowUp', 'ArrowDown',
+      // The native select doesn't respond to enter on macOS, but it's recommended by
+      // https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-select-only/
+      'Enter'];
+      if (validKeys.includes(event.key)) {
+        event.preventDefault();
+        update(true, event);
+      }
+      onKeyDown?.(event);
+    }
+  };
+  const handleBlur = event => {
+    // if open event.stopImmediatePropagation
+    if (!open && onBlur) {
+      // Preact support, target is read only property on a native event.
+      Object.defineProperty(event, 'target', {
+        writable: true,
+        value: {
+          value,
+          name
+        }
+      });
+      onBlur(event);
+    }
+  };
+  delete other['aria-invalid'];
+  let display;
+  let displaySingle;
+  const displayMultiple = [];
+  let computeDisplay = false;
+  let foundMatch = false;
+
+  // No need to display any value if the field is empty.
+  if (isFilled({
+    value
+  }) || displayEmpty) {
+    if (renderValue) {
+      display = renderValue(value);
+    } else {
+      computeDisplay = true;
+    }
+  }
+  const items = childrenArray.map(child => {
+    if (! /*#__PURE__*/reactExports.isValidElement(child)) {
+      return null;
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      if (reactIsExports$1.isFragment(child)) {
+        console.error(["MUI: The Select component doesn't accept a Fragment as a child.", 'Consider providing an array instead.'].join('\n'));
+      }
+    }
+    let selected;
+    if (multiple) {
+      if (!Array.isArray(value)) {
+        throw new Error(process.env.NODE_ENV !== "production" ? 'MUI: The `value` prop must be an array ' + 'when using the `Select` component with `multiple`.' : formatMuiErrorMessage(2));
+      }
+      selected = value.some(v => areEqualValues(v, child.props.value));
+      if (selected && computeDisplay) {
+        displayMultiple.push(child.props.children);
+      }
+    } else {
+      selected = areEqualValues(value, child.props.value);
+      if (selected && computeDisplay) {
+        displaySingle = child.props.children;
+      }
+    }
+    if (selected) {
+      foundMatch = true;
+    }
+    return /*#__PURE__*/reactExports.cloneElement(child, {
+      'aria-selected': selected ? 'true' : 'false',
+      onMouseDown: event => {
+        didPointerDownOnItemRef.current = true;
+        child.props.onMouseDown?.(event);
+      },
+      onPointerDown: event => {
+        didPointerDownOnItemRef.current = true;
+        child.props.onPointerDown?.(event);
+      },
+      onClick: handleItemClick(child),
+      onMouseUp: handleItemMouseUp(child, selected),
+      onKeyUp: event => {
+        if (event.key === ' ') {
+          // otherwise our MenuItems dispatches a click event
+          // it's not behavior of the native <option> and causes
+          // the select to close immediately since we open on space keydown
+          event.preventDefault();
+        }
+        if (child.props.onKeyUp) {
+          child.props.onKeyUp(event);
+        }
+      },
+      role: 'option',
+      selected,
+      value: undefined,
+      // The value is most likely not a valid HTML attribute.
+      'data-value': child.props.value // Instead, we provide it as a data attribute.
+    });
+  });
+
+  // Keep the opening mouseup guard current without mutating refs during render.
+  useEnhancedEffect$1(() => {
+    hasSelectedItemInListRef.current = foundMatch;
+  }, [foundMatch]);
+  if (process.env.NODE_ENV !== 'production') {
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    reactExports.useEffect(() => {
+      if (!foundMatch && !multiple && value !== '') {
+        const values = childrenArray.map(child => child.props.value);
+        console.warn([`MUI: You have provided an out-of-range value \`${value}\` for the select ${name ? `(name="${name}") ` : ''}component.`, "Consider providing a value that matches one of the available options or ''.", `The available values are ${values.filter(x => x != null).map(x => `\`${x}\``).join(', ') || '""'}.`].join('\n'));
+      }
+    }, [foundMatch, childrenArray, multiple, name, value]);
+  }
+  if (computeDisplay) {
+    if (multiple) {
+      if (displayMultiple.length === 0) {
+        display = null;
+      } else {
+        display = displayMultiple.reduce((output, child, index) => {
+          output.push(child);
+          if (index < displayMultiple.length - 1) {
+            output.push(', ');
+          }
+          return output;
+        }, []);
+      }
+    } else {
+      display = displaySingle;
+    }
+  }
+
+  // Avoid performing a layout computation in the render method.
+  let menuMinWidth = menuMinWidthState;
+  if (!autoWidth && isOpenControlled && displayNode) {
+    menuMinWidth = anchorElement.clientWidth;
+  }
+  let tabIndex;
+  if (typeof tabIndexProp !== 'undefined') {
+    tabIndex = tabIndexProp;
+  } else {
+    tabIndex = disabled ? null : 0;
+  }
+  const buttonId = SelectDisplayProps.id || (name ? `mui-component-select-${name}` : undefined);
+  const ownerState = {
+    ...props,
+    variant,
+    value,
+    open,
+    error
+  };
+  const classes = useUtilityClasses$c(ownerState);
+  const menuPaperSlotProps = typeof MenuProps.slotProps?.paper === 'function' ? MenuProps.slotProps.paper(ownerState) : MenuProps.slotProps?.paper;
+  const handlePaperRef = useForkRef(menuPaperSlotProps?.ref, paperRef);
+  const menuListSlotProps = typeof MenuProps.slotProps?.list === 'function' ? MenuProps.slotProps.list(ownerState) : MenuProps.slotProps?.list;
+  const listboxId = useId();
+  const nativeInputId = useId();
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+    children: [/*#__PURE__*/jsxRuntimeExports.jsx(SelectSelect, {
+      as: "div",
+      ref: handleDisplayRef,
+      tabIndex: tabIndex,
+      role: "combobox",
+      "aria-controls": open ? listboxId : undefined,
+      "aria-disabled": disabled ? 'true' : undefined,
+      "aria-expanded": open ? 'true' : 'false',
+      "aria-haspopup": "listbox",
+      "aria-label": ariaLabel,
+      "aria-labelledby": labelId,
+      "aria-describedby": ariaDescribedby,
+      "aria-required": required ? 'true' : undefined,
+      "aria-invalid": error ? 'true' : undefined,
+      onKeyDown: handleKeyDown,
+      onMouseDown: disabled || readOnly ? null : handleMouseDown,
+      onBlur: handleBlur,
+      onFocus: onFocus,
+      ...SelectDisplayProps,
+      ownerState: ownerState,
+      className: clsx(SelectDisplayProps.className, classes.select, className)
+      // The id is required for proper a11y
+      ,
+      id: buttonId,
+      children: isEmpty$2(display) ? // notranslate needed while Google Translate will not fix zero-width space issue
+      _span$1 || (_span$1 = /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+        className: "notranslate",
+        "aria-hidden": true,
+        children: "\u200B"
+      })) : display
+    }), /*#__PURE__*/jsxRuntimeExports.jsx(SelectNativeInput, {
+      "aria-invalid": error,
+      value: Array.isArray(value) ? value.join(',') : value,
+      name: name,
+      ref: inputRef,
+      "aria-hidden": true,
+      onChange: handleChange,
+      tabIndex: -1,
+      disabled: disabled,
+      className: classes.nativeInput,
+      autoFocus: autoFocus,
+      required: required,
+      ...other,
+      id: other.id ?? nativeInputId,
+      ownerState: ownerState
+    }), /*#__PURE__*/jsxRuntimeExports.jsx(SelectIcon, {
+      as: IconComponent,
+      className: classes.icon,
+      ownerState: ownerState
+    }), /*#__PURE__*/jsxRuntimeExports.jsx(SelectFocusSourceProvider, {
+      value: openInteractionType,
+      children: /*#__PURE__*/jsxRuntimeExports.jsx(Menu$1, {
+        id: `menu-${name || ''}`,
+        anchorEl: anchorElement,
+        open: open,
+        onClose: handleClose,
+        anchorOrigin: {
+          vertical: 'bottom',
+          horizontal: 'center'
+        },
+        transformOrigin: {
+          vertical: 'top',
+          horizontal: 'center'
+        },
+        ...MenuProps,
+        slotProps: {
+          ...MenuProps.slotProps,
+          list: {
+            'aria-labelledby': labelId,
+            role: 'listbox',
+            'aria-multiselectable': multiple ? 'true' : undefined,
+            disableListWrap: true,
+            id: listboxId,
+            ...menuListSlotProps
+          },
+          paper: {
+            ...menuPaperSlotProps,
+            ref: handlePaperRef,
+            style: {
+              minWidth: menuMinWidth,
+              ...menuPaperSlotProps?.style
+            }
+          }
+        },
+        children: items
+      })
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? SelectInput.propTypes = {
+  /**
+   * @ignore
+   */
+  'aria-describedby': PropTypes.string,
+  /**
+   * @ignore
+   */
+  'aria-label': PropTypes.string,
+  /**
+   * @ignore
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * If `true`, the width of the popover will automatically be set according to the items inside the
+   * menu, otherwise it will be at least the width of the select input.
+   */
+  autoWidth: PropTypes.bool,
+  /**
+   * The option elements to populate the select with.
+   * Can be some `<MenuItem>` elements.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * The CSS class name of the select element.
+   */
+  className: PropTypes.string,
+  /**
+   * If `true`, the component is toggled on mount. Use when the component open state is not controlled.
+   * You can only use it when the `native` prop is `false` (default).
+   */
+  defaultOpen: PropTypes.bool,
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, the select is disabled.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the selected item is displayed even if its value is empty.
+   */
+  displayEmpty: PropTypes.bool,
+  /**
+   * If `true`, the `select input` will indicate an error.
+   */
+  error: PropTypes.bool,
+  /**
+   * The icon that displays the arrow.
+   */
+  IconComponent: PropTypes.elementType.isRequired,
+  /**
+   * Imperative handle implementing `{ value: T, node: HTMLElement, focus(): void }`
+   * Equivalent to `ref`
+   */
+  inputRef: refType$1,
+  /**
+   * The ID of an element that acts as an additional label. The Select will
+   * be labelled by the additional label and the selected value.
+   */
+  labelId: PropTypes.string,
+  /**
+   * Props applied to the [`Menu`](/material-ui/api/menu/) element.
+   */
+  MenuProps: PropTypes.object,
+  /**
+   * If `true`, `value` must be an array and the menu will support multiple selections.
+   */
+  multiple: PropTypes.bool,
+  /**
+   * Name attribute of the `select` or hidden `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * @ignore
+   */
+  onBlur: PropTypes.func,
+  /**
+   * Callback fired when a menu item is selected.
+   *
+   * @param {object} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (any).
+   * @param {object} [child] The react element that was selected.
+   */
+  onChange: PropTypes.func,
+  /**
+   * Callback fired when the component requests to be closed.
+   * Use in controlled mode (see open).
+   *
+   * @param {object} event The event source of the callback.
+   */
+  onClose: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onFocus: PropTypes.func,
+  /**
+   * Callback fired when the component requests to be opened.
+   * Use in controlled mode (see open).
+   *
+   * @param {object} event The event source of the callback.
+   */
+  onOpen: PropTypes.func,
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  readOnly: PropTypes.bool,
+  /**
+   * Render the selected value.
+   *
+   * @param {any} value The `value` provided to the component.
+   * @returns {ReactNode}
+   */
+  renderValue: PropTypes.func,
+  /**
+   * If `true`, the component is required.
+   */
+  required: PropTypes.bool,
+  /**
+   * Props applied to the clickable div element.
+   */
+  SelectDisplayProps: PropTypes.object,
+  /**
+   * @ignore
+   */
+  tabIndex: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * @ignore
+   */
+  type: PropTypes.any,
+  /**
+   * The input value.
+   */
+  value: PropTypes.any,
+  /**
+   * The variant to use.
+   */
+  variant: PropTypes.oneOf(['standard', 'outlined', 'filled'])
+} : void 0;
+var SelectInput$1 = SelectInput;
+
+var ArrowDropDownIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M7 10l5 5 5-5z"
+}), 'ArrowDropDown');
+
+function getStyleValue(value) {
+  return parseInt(value, 10) || 0;
+}
+const styles = {
+  shadow: {
+    // Visibility needed to hide the extra text area on iPads
+    visibility: 'hidden',
+    // Remove from the content flow
+    position: 'absolute',
+    // Ignore the scrollbar width
+    overflow: 'hidden',
+    height: 0,
+    top: 0,
+    left: 0,
+    // Create a new layer, increase the isolation of the computed values
+    transform: 'translateZ(0)'
+  }
+};
+function isObjectEmpty(object) {
+  // eslint-disable-next-line
+  for (const _ in object) {
+    return false;
+  }
+  return true;
+}
+function isEmpty$1(obj) {
+  return isObjectEmpty(obj) || obj.outerHeightStyle === 0 && !obj.overflowing;
+}
+
+/**
+ *
+ * Demos:
+ *
+ * - [Textarea Autosize](https://mui.com/material-ui/react-textarea-autosize/)
+ *
+ * API:
+ *
+ * - [TextareaAutosize API](https://mui.com/material-ui/api/textarea-autosize/)
+ */
+const TextareaAutosize = /*#__PURE__*/reactExports.forwardRef(function TextareaAutosize(props, forwardedRef) {
+  const {
+    onChange,
+    maxRows,
+    minRows = 1,
+    style,
+    value,
+    ...other
+  } = props;
+  const {
+    current: isControlled
+  } = reactExports.useRef(value != null);
+  const textareaRef = reactExports.useRef(null);
+  const handleRef = useForkRef(forwardedRef, textareaRef);
+  const heightRef = reactExports.useRef(null);
+  const hiddenTextareaRef = reactExports.useRef(null);
+  const calculateTextareaStyles = reactExports.useCallback(() => {
+    const textarea = textareaRef.current;
+    const hiddenTextarea = hiddenTextareaRef.current;
+    if (!textarea || !hiddenTextarea) {
+      return undefined;
+    }
+    const containerWindow = ownerWindow(textarea);
+    const computedStyle = containerWindow.getComputedStyle(textarea);
+
+    // If input's width is shrunk and it's not visible, don't sync height.
+    if (computedStyle.width === '0px') {
+      return {
+        outerHeightStyle: 0,
+        overflowing: false
+      };
+    }
+    hiddenTextarea.style.width = computedStyle.width;
+    hiddenTextarea.value = textarea.value || props.placeholder || 'x';
+    if (hiddenTextarea.value.slice(-1) === '\n') {
+      // Certain fonts which overflow the line height will cause the textarea
+      // to report a different scrollHeight depending on whether the last line
+      // is empty. Make it non-empty to avoid this issue.
+      hiddenTextarea.value += ' ';
+    }
+    const boxSizing = computedStyle.boxSizing;
+    const padding = getStyleValue(computedStyle.paddingBottom) + getStyleValue(computedStyle.paddingTop);
+    const border = getStyleValue(computedStyle.borderBottomWidth) + getStyleValue(computedStyle.borderTopWidth);
+
+    // The height of the inner content
+    const innerHeight = hiddenTextarea.scrollHeight;
+
+    // Measure height of a textarea with a single row
+    hiddenTextarea.value = 'x';
+    const singleRowHeight = hiddenTextarea.scrollHeight;
+
+    // The height of the outer content
+    let outerHeight = innerHeight;
+    if (minRows) {
+      outerHeight = Math.max(Number(minRows) * singleRowHeight, outerHeight);
+    }
+    if (maxRows) {
+      outerHeight = Math.min(Number(maxRows) * singleRowHeight, outerHeight);
+    }
+    outerHeight = Math.max(outerHeight, singleRowHeight);
+
+    // Take the box sizing into account for applying this value as a style.
+    const outerHeightStyle = outerHeight + (boxSizing === 'border-box' ? padding + border : 0);
+    const overflowing = Math.abs(outerHeight - innerHeight) <= 1;
+    return {
+      outerHeightStyle,
+      overflowing
+    };
+  }, [maxRows, minRows, props.placeholder]);
+  const didHeightChange = useEventCallback(() => {
+    const textarea = textareaRef.current;
+    const textareaStyles = calculateTextareaStyles();
+    if (!textarea || !textareaStyles || isEmpty$1(textareaStyles)) {
+      return false;
+    }
+    const outerHeightStyle = textareaStyles.outerHeightStyle;
+    return heightRef.current != null && heightRef.current !== outerHeightStyle;
+  });
+  const syncHeight = reactExports.useCallback(() => {
+    const textarea = textareaRef.current;
+    const textareaStyles = calculateTextareaStyles();
+    if (!textarea || !textareaStyles || isEmpty$1(textareaStyles)) {
+      return;
+    }
+    const outerHeightStyle = textareaStyles.outerHeightStyle;
+    if (heightRef.current !== outerHeightStyle) {
+      heightRef.current = outerHeightStyle;
+      textarea.style.height = `${outerHeightStyle}px`;
+    }
+    textarea.style.overflow = textareaStyles.overflowing ? 'hidden' : '';
+  }, [calculateTextareaStyles]);
+  const frameRef = reactExports.useRef(-1);
+  useEnhancedEffect$1(() => {
+    const debouncedHandleResize = debounce$1(syncHeight);
+    const textarea = textareaRef?.current;
+    if (!textarea) {
+      return undefined;
+    }
+    const containerWindow = ownerWindow(textarea);
+    containerWindow.addEventListener('resize', debouncedHandleResize);
+    let resizeObserver;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        if (didHeightChange()) {
+          // avoid "ResizeObserver loop completed with undelivered notifications" error
+          // by temporarily unobserving the textarea element while manipulating the height
+          // and reobserving one frame later
+          resizeObserver.unobserve(textarea);
+          cancelAnimationFrame(frameRef.current);
+          syncHeight();
+          frameRef.current = requestAnimationFrame(() => {
+            resizeObserver.observe(textarea);
+          });
+        }
+      });
+      resizeObserver.observe(textarea);
+    }
+    return () => {
+      debouncedHandleResize.clear();
+      cancelAnimationFrame(frameRef.current);
+      containerWindow.removeEventListener('resize', debouncedHandleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, [calculateTextareaStyles, syncHeight, didHeightChange]);
+  useEnhancedEffect$1(() => {
+    syncHeight();
+  });
+  const handleChange = event => {
+    if (!isControlled) {
+      syncHeight();
+    }
+    const textarea = event.target;
+    const countOfCharacters = textarea.value.length;
+    const isLastCharacterNewLine = textarea.value.endsWith('\n');
+    const isEndOfTheLine = textarea.selectionStart === countOfCharacters;
+
+    // Set the cursor position to the very end of the text.
+    if (isLastCharacterNewLine && isEndOfTheLine) {
+      textarea.setSelectionRange(countOfCharacters, countOfCharacters);
+    }
+    if (onChange) {
+      onChange(event);
+    }
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+    children: [/*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+      value: value,
+      onChange: handleChange,
+      ref: handleRef
+      // Apply the rows prop to get a "correct" first SSR paint
+      ,
+      rows: minRows,
+      style: style,
+      ...other
+    }), /*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+      "aria-hidden": true,
+      className: props.className,
+      readOnly: true,
+      ref: hiddenTextareaRef,
+      tabIndex: -1,
+      style: {
+        ...styles.shadow,
+        ...style,
+        paddingTop: 0,
+        paddingBottom: 0
+      }
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? TextareaAutosize.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * Maximum number of rows to display.
+   */
+  maxRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Minimum number of rows to display.
+   * @default 1
+   */
+  minRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * @ignore
+   */
+  onChange: PropTypes.func,
+  /**
+   * @ignore
+   */
+  placeholder: PropTypes.string,
+  /**
+   * @ignore
+   */
+  style: PropTypes.object,
+  /**
+   * @ignore
+   */
+  value: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.string), PropTypes.number, PropTypes.string])
+} : void 0;
+var TextareaAutosize$1 = TextareaAutosize;
+
+function getInputBaseUtilityClass(slot) {
+  return generateUtilityClass('MuiInputBase', slot);
+}
+const inputBaseClasses = generateUtilityClasses('MuiInputBase', ['root', 'formControl', 'focused', 'disabled', 'adornedStart', 'adornedEnd', 'error', 'sizeSmall', 'multiline', 'colorSecondary', 'fullWidth', 'hiddenLabel', 'readOnly', 'input', 'inputTypeSearch']);
+var inputBaseClasses$1 = inputBaseClasses;
+
+var _InputGlobalStyles;
+const MUI_AUTO_FILL = 'mui-auto-fill';
+const MUI_AUTO_FILL_CANCEL = 'mui-auto-fill-cancel';
+const rootOverridesResolver = (props, styles) => {
+  const {
+    ownerState
+  } = props;
+  return [styles.root, ownerState.formControl && styles.formControl, ownerState.startAdornment && styles.adornedStart, ownerState.endAdornment && styles.adornedEnd, ownerState.error && styles.error, ownerState.size === 'small' && styles.sizeSmall, ownerState.multiline && styles.multiline, ownerState.color && styles[`color${capitalize$3(ownerState.color)}`], ownerState.fullWidth && styles.fullWidth, ownerState.hiddenLabel && styles.hiddenLabel];
+};
+const inputOverridesResolver = (props, styles) => {
+  const {
+    ownerState
+  } = props;
+  return [styles.input, ownerState.type === 'search' && styles.inputTypeSearch];
+};
+const useUtilityClasses$b = ownerState => {
+  const {
+    classes,
+    color,
+    disabled,
+    error,
+    endAdornment,
+    focused,
+    formControl,
+    fullWidth,
+    hiddenLabel,
+    multiline,
+    readOnly,
+    size,
+    startAdornment,
+    type
+  } = ownerState;
+  const slots = {
+    root: ['root', `color${capitalize$3(color)}`, disabled && 'disabled', error && 'error', fullWidth && 'fullWidth', focused && 'focused', formControl && 'formControl', size && size !== 'medium' && `size${capitalize$3(size)}`, multiline && 'multiline', startAdornment && 'adornedStart', endAdornment && 'adornedEnd', hiddenLabel && 'hiddenLabel', readOnly && 'readOnly'],
+    input: ['input', disabled && 'disabled', type === 'search' && 'inputTypeSearch', readOnly && 'readOnly']
+  };
+  return composeClasses(slots, getInputBaseUtilityClass, classes);
+};
+const InputBaseRoot = styled$1('div', {
+  name: 'MuiInputBase',
+  slot: 'Root',
+  overridesResolver: rootOverridesResolver
+})(memoTheme$1(({
+  theme
+}) => ({
+  ...theme.typography.body1,
+  color: (theme.vars || theme).palette.text.primary,
+  lineHeight: '1.4375em',
+  // 23px
+  boxSizing: 'border-box',
+  // Prevent padding issue with fullWidth.
+  position: 'relative',
+  cursor: 'text',
+  display: 'inline-flex',
+  alignItems: 'center',
+  [`&.${inputBaseClasses$1.disabled}`]: {
+    color: (theme.vars || theme).palette.text.disabled,
+    cursor: 'default'
+  },
+  variants: [{
+    props: ({
+      ownerState
+    }) => ownerState.multiline,
+    style: {
+      padding: '4px 0 5px'
+    }
+  }, {
+    props: ({
+      ownerState,
+      size
+    }) => ownerState.multiline && size === 'small',
+    style: {
+      paddingTop: 1
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.fullWidth,
+    style: {
+      width: '100%'
+    }
+  }]
+})));
+const InputBaseInput = styled$1('input', {
+  name: 'MuiInputBase',
+  slot: 'Input',
+  overridesResolver: inputOverridesResolver
+})(memoTheme$1(({
+  theme
+}) => {
+  const light = theme.palette.mode === 'light';
+  const placeholder = {
+    color: 'currentColor',
+    ...(theme.vars ? {
+      opacity: theme.vars.opacity.inputPlaceholder
+    } : {
+      opacity: light ? 0.42 : 0.5
+    }),
+    transition: theme.transitions.create('opacity', {
+      duration: theme.transitions.duration.shorter
+    })
+  };
+  const placeholderHidden = {
+    opacity: '0 !important'
+  };
+  const placeholderVisible = theme.vars ? {
+    opacity: theme.vars.opacity.inputPlaceholder
+  } : {
+    opacity: light ? 0.42 : 0.5
+  };
+  return {
+    font: 'inherit',
+    letterSpacing: 'inherit',
+    color: 'currentColor',
+    padding: '4px 0 5px',
+    border: 0,
+    boxSizing: 'content-box',
+    background: 'none',
+    height: '1.4375em',
+    // Reset 23pxthe native input line-height
+    margin: 0,
+    // Reset for Safari
+    WebkitTapHighlightColor: 'transparent',
+    display: 'block',
+    // Make the flex item shrink with Firefox
+    minWidth: 0,
+    width: '100%',
+    '&::-webkit-input-placeholder': placeholder,
+    '&::-moz-placeholder': placeholder,
+    // Firefox 19+
+    '&::-ms-input-placeholder': placeholder,
+    // Edge
+    '&:focus': {
+      outline: 0
+    },
+    // Reset Firefox invalid required input style
+    '&:invalid': {
+      boxShadow: 'none'
+    },
+    '&::-webkit-search-decoration': {
+      // Remove the padding when type=search.
+      WebkitAppearance: 'none'
+    },
+    // Show and hide the placeholder logic
+    [`label[data-shrink=false] + .${inputBaseClasses$1.formControl} &`]: {
+      '&::-webkit-input-placeholder': placeholderHidden,
+      '&::-moz-placeholder': placeholderHidden,
+      // Firefox 19+
+      '&::-ms-input-placeholder': placeholderHidden,
+      // Edge
+      '&:focus::-webkit-input-placeholder': placeholderVisible,
+      '&:focus::-moz-placeholder': placeholderVisible,
+      // Firefox 19+
+      '&:focus::-ms-input-placeholder': placeholderVisible // Edge
+    },
+    [`&.${inputBaseClasses$1.disabled}`]: {
+      opacity: 1,
+      // Reset iOS opacity
+      WebkitTextFillColor: (theme.vars || theme).palette.text.disabled // Fix opacity Safari bug
+    },
+    variants: [{
+      props: ({
+        ownerState
+      }) => !ownerState.disableInjectingGlobalStyles,
+      style: {
+        animationName: MUI_AUTO_FILL_CANCEL,
+        animationDuration: '10ms',
+        '&:-webkit-autofill': {
+          animationDuration: '5000s',
+          animationName: MUI_AUTO_FILL
+        }
+      }
+    }, {
+      props: {
+        size: 'small'
+      },
+      style: {
+        paddingTop: 1
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.multiline,
+      style: {
+        height: 'auto',
+        resize: 'none',
+        padding: 0,
+        paddingTop: 0
+      }
+    }, {
+      props: {
+        type: 'search'
+      },
+      style: {
+        MozAppearance: 'textfield' // Improve type search style.
+      }
+    }]
+  };
+}));
+const InputGlobalStyles = globalCss({
+  // Keep keyframes non-empty for Emotion production builds. Animation properties are ignored
+  // inside keyframes, avoiding the visible display animation triggered by Chrome 117+.
+  [`@keyframes ${MUI_AUTO_FILL}`]: {
+    from: {
+      animationName: MUI_AUTO_FILL
+    }
+  },
+  [`@keyframes ${MUI_AUTO_FILL_CANCEL}`]: {
+    from: {
+      animationName: MUI_AUTO_FILL_CANCEL
+    }
+  }
+});
+
+/**
+ * `InputBase` contains as few styles as possible.
+ * It aims to be a simple building block for creating an input.
+ * It contains a load of style reset and some state logic.
+ */
+const InputBase = /*#__PURE__*/reactExports.forwardRef(function InputBase(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiInputBase'
+  });
+  const {
+    'aria-describedby': ariaDescribedby,
+    'aria-label': ariaLabel,
+    autoComplete,
+    autoFocus,
+    className,
+    color,
+    defaultValue,
+    disabled,
+    disableInjectingGlobalStyles,
+    endAdornment,
+    error,
+    fullWidth = false,
+    id,
+    inputComponent = 'input',
+    inputProps: inputPropsProp = {},
+    inputRef: inputRefProp,
+    margin,
+    maxRows,
+    minRows,
+    multiline = false,
+    name,
+    onBlur,
+    onChange,
+    onClick,
+    onFocus,
+    onKeyDown,
+    onKeyUp,
+    placeholder,
+    readOnly,
+    renderSuffix,
+    rows,
+    size,
+    slotProps = {},
+    slots = {},
+    startAdornment,
+    type = 'text',
+    value: valueProp,
+    ...other
+  } = props;
+  const value = inputPropsProp.value != null ? inputPropsProp.value : valueProp;
+  const {
+    current: isControlled
+  } = reactExports.useRef(value != null);
+  const inputRef = reactExports.useRef();
+  const handleInputRefWarning = reactExports.useCallback(instance => {
+    if (process.env.NODE_ENV !== 'production') {
+      if (instance && instance.nodeName !== 'INPUT' && !instance.focus) {
+        console.error(['MUI: You have provided a `inputComponent` to the input component', 'that does not correctly handle the `ref` prop.', 'Make sure the `ref` prop is called with a HTMLInputElement.'].join('\n'));
+      }
+    }
+  }, []);
+  const handleInputRef = useForkRef(inputRef, inputRefProp, inputPropsProp.ref, handleInputRefWarning);
+  const [focused, setFocused] = reactExports.useState(false);
+  const [fcs, muiFormControl] = useFormControlState({
+    props,
+    states: ['color', 'disabled', 'error', 'hiddenLabel', 'size', 'required', 'filled']
+  });
+  if (process.env.NODE_ENV !== 'production') {
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    reactExports.useEffect(() => {
+      if (muiFormControl) {
+        return muiFormControl.registerEffect();
+      }
+      return undefined;
+    }, [muiFormControl]);
+  }
+  fcs.focused = muiFormControl ? muiFormControl.focused : focused;
+
+  // The blur won't fire when the disabled state is set on a focused input.
+  // We need to book keep the focused state manually.
+  reactExports.useEffect(() => {
+    if (!muiFormControl && disabled && focused) {
+      setFocused(false);
+      if (onBlur) {
+        onBlur();
+      }
+    }
+  }, [muiFormControl, disabled, focused, onBlur]);
+  const onFilled = muiFormControl && muiFormControl.onFilled;
+  const onEmpty = muiFormControl && muiFormControl.onEmpty;
+  const checkDirty = reactExports.useCallback(obj => {
+    if (isFilled(obj)) {
+      if (onFilled) {
+        onFilled();
+      }
+    } else if (onEmpty) {
+      onEmpty();
+    }
+  }, [onFilled, onEmpty]);
+  useEnhancedEffect$1(() => {
+    if (isControlled) {
+      checkDirty({
+        value
+      });
+    }
+  }, [value, checkDirty, isControlled]);
+
+  // Sync focused state when autoFocus is used in SSR.
+  // If the browser focused the element before hydration, the onFocus handler never
+  // fires. If it did not, React hydration does not call focus() for autoFocus.
+  useEnhancedEffect$1(() => {
+    if (!autoFocus) {
+      return;
+    }
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+    const doc = ownerDocument(input);
+    const activeElement$1 = activeElement(doc);
+    const noElementFocused = activeElement$1 == null || activeElement$1 === doc.body || activeElement$1 === doc.documentElement;
+    if (input === activeElement$1) {
+      if (muiFormControl && muiFormControl.onFocus) {
+        muiFormControl.onFocus();
+      } else {
+        setFocused(true);
+      }
+    } else if (noElementFocused) {
+      input.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFocus]);
+  const handleFocus = event => {
+    if (onFocus) {
+      onFocus(event);
+    }
+    if (inputPropsProp.onFocus) {
+      inputPropsProp.onFocus(event);
+    }
+    if (muiFormControl && muiFormControl.onFocus) {
+      muiFormControl.onFocus(event);
+    } else {
+      setFocused(true);
+    }
+  };
+  const handleBlur = event => {
+    if (onBlur) {
+      onBlur(event);
+    }
+    if (inputPropsProp.onBlur) {
+      inputPropsProp.onBlur(event);
+    }
+    if (muiFormControl && muiFormControl.onBlur) {
+      muiFormControl.onBlur(event);
+    } else {
+      setFocused(false);
+    }
+  };
+  const handleChange = (event, ...args) => {
+    if (!isControlled) {
+      const element = event.target || inputRef.current;
+      if (element == null) {
+        throw new Error(process.env.NODE_ENV !== "production" ? 'MUI: Expected valid input target. ' + 'Did you use a custom `inputComponent` and forget to forward refs? ' + 'See https://mui.com/r/input-component-ref-interface for more info.' : formatMuiErrorMessage(1));
+      }
+      checkDirty({
+        value: element.value
+      });
+    }
+    if (inputPropsProp.onChange) {
+      inputPropsProp.onChange(event, ...args);
+    }
+
+    // Perform in the willUpdate
+    if (onChange) {
+      onChange(event, ...args);
+    }
+  };
+
+  // Check the input state on mount, in case it was filled by the user
+  // or auto filled by the browser before the hydration (for SSR).
+  reactExports.useEffect(() => {
+    checkDirty(inputRef.current);
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleClick = event => {
+    if (inputRef.current && event.currentTarget === event.target) {
+      inputRef.current.focus();
+    }
+    if (onClick) {
+      onClick(event);
+    }
+  };
+  let InputComponent = inputComponent;
+  let inputProps = inputPropsProp;
+  if (multiline && InputComponent === 'input') {
+    if (rows) {
+      if (process.env.NODE_ENV !== 'production') {
+        if (minRows || maxRows) {
+          console.warn('MUI: You can not use the `minRows` or `maxRows` props when the input `rows` prop is set.');
+        }
+      }
+      inputProps = {
+        type: undefined,
+        minRows: rows,
+        maxRows: rows,
+        ...inputProps
+      };
+    } else {
+      inputProps = {
+        type: undefined,
+        maxRows,
+        minRows,
+        ...inputProps
+      };
+    }
+    InputComponent = TextareaAutosize$1;
+  }
+  const handleAutoFill = event => {
+    // Provide a fake value as Chrome might not let you access it for security reasons.
+    checkDirty(event.animationName === MUI_AUTO_FILL_CANCEL ? inputRef.current : {
+      value: 'x'
+    });
+  };
+  reactExports.useEffect(() => {
+    if (muiFormControl) {
+      muiFormControl.setAdornedStart(Boolean(startAdornment));
+    }
+  }, [muiFormControl, startAdornment]);
+  const ownerState = {
+    ...props,
+    color: fcs.color || 'primary',
+    disabled: fcs.disabled,
+    endAdornment,
+    error: fcs.error,
+    focused: fcs.focused,
+    formControl: muiFormControl,
+    fullWidth,
+    hiddenLabel: fcs.hiddenLabel,
+    multiline,
+    size: fcs.size,
+    startAdornment,
+    type
+  };
+  const classes = useUtilityClasses$b(ownerState);
+  const Root = slots.root || InputBaseRoot;
+  const rootProps = slotProps.root || {};
+  const Input = slots.input || InputBaseInput;
+  inputProps = {
+    ...inputProps,
+    ...slotProps.input
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+    children: [!disableInjectingGlobalStyles && typeof InputGlobalStyles === 'function' && (// For Emotion/Styled-components, InputGlobalStyles will be a function
+    // For Pigment CSS, this has no effect because the InputGlobalStyles will be null.
+    _InputGlobalStyles || (_InputGlobalStyles = /*#__PURE__*/jsxRuntimeExports.jsx(InputGlobalStyles, {}))), /*#__PURE__*/jsxRuntimeExports.jsxs(Root, {
+      ...rootProps,
+      ref: ref,
+      onClick: handleClick,
+      ...other,
+      ...(!isHostComponent(Root) && {
+        ownerState: {
+          ...ownerState,
+          ...rootProps.ownerState
+        }
+      }),
+      className: clsx(classes.root, rootProps.className, className, readOnly && 'MuiInputBase-readOnly'),
+      children: [startAdornment, /*#__PURE__*/jsxRuntimeExports.jsx(FormControlContext$1.Provider, {
+        value: null,
+        children: /*#__PURE__*/jsxRuntimeExports.jsx(Input, {
+          "aria-invalid": fcs.error,
+          "aria-describedby": ariaDescribedby,
+          "aria-label": ariaLabel,
+          autoComplete: autoComplete,
+          autoFocus: autoFocus,
+          defaultValue: defaultValue,
+          disabled: fcs.disabled,
+          id: id,
+          onAnimationStart: handleAutoFill,
+          name: name,
+          placeholder: placeholder,
+          readOnly: readOnly,
+          required: fcs.required,
+          rows: rows,
+          value: value,
+          onKeyDown: onKeyDown,
+          onKeyUp: onKeyUp,
+          type: type,
+          ...inputProps,
+          ...(!isHostComponent(Input) && {
+            as: InputComponent,
+            ownerState: {
+              ...ownerState,
+              ...inputProps.ownerState
+            }
+          }),
+          ref: handleInputRef,
+          className: clsx(classes.input, inputProps.className, readOnly && 'MuiInputBase-readOnly'),
+          onBlur: handleBlur,
+          onChange: handleChange,
+          onFocus: handleFocus
+        })
+      }), endAdornment, renderSuffix ? renderSuffix({
+        ...fcs,
+        startAdornment
+      }) : null]
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? InputBase.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * @ignore
+   */
+  'aria-describedby': PropTypes.string,
+  /**
+   * @ignore
+   */
+  'aria-label': PropTypes.string,
+  /**
+   * This prop helps users to fill forms faster, especially on mobile devices.
+   * The name can be confusing, as it's more like an autofill.
+   * You can learn more about it [following the specification](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill).
+   */
+  autoComplete: PropTypes.string,
+  /**
+   * If `true`, the `input` element is focused during the first mount.
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * The prop defaults to the value (`'primary'`) inherited from the parent FormControl component.
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary', 'error', 'info', 'success', 'warning']), PropTypes.string]),
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, the component is disabled.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, GlobalStyles for the auto-fill keyframes will not be injected/removed on mount/unmount. Make sure to inject them at the top of your application.
+   * This option is intended to help with boosting the initial rendering performance if you are loading a big amount of Input components at once.
+   * @default false
+   */
+  disableInjectingGlobalStyles: PropTypes.bool,
+  /**
+   * End `InputAdornment` for this component.
+   */
+  endAdornment: PropTypes.node,
+  /**
+   * If `true`, the `input` will indicate an error.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the `input` will take up the full width of its container.
+   * @default false
+   */
+  fullWidth: PropTypes.bool,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /**
+   * The component used for the `input` element.
+   * Either a string to use a HTML element or a component.
+   * @default 'input'
+   */
+  inputComponent: elementTypeAcceptingRef$1,
+  /**
+   * [Attributes](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#attributes) applied to the `input` element.
+   * @default {}
+   */
+  inputProps: PropTypes.object,
+  /**
+   * Pass a ref to the `input` element.
+   */
+  inputRef: refType$1,
+  /**
+   * If `dense`, will adjust vertical spacing. This is normally obtained via context from
+   * FormControl.
+   * The prop defaults to the value (`'none'`) inherited from the parent FormControl component.
+   */
+  margin: PropTypes.oneOf(['dense', 'none']),
+  /**
+   * Maximum number of rows to display when multiline option is set to true.
+   */
+  maxRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Minimum number of rows to display when multiline option is set to true.
+   */
+  minRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * If `true`, a [TextareaAutosize](https://mui.com/material-ui/react-textarea-autosize/) element is rendered.
+   * @default false
+   */
+  multiline: PropTypes.bool,
+  /**
+   * Name attribute of the `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * Callback fired when the `input` is blurred.
+   *
+   * Notice that the first argument (event) might be undefined.
+   */
+  onBlur: PropTypes.func,
+  /**
+   * Callback fired when the value is changed.
+   *
+   * @param {React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onClick: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onFocus: PropTypes.func,
+  /**
+   * Callback fired when the `input` doesn't satisfy its constraints.
+   */
+  onInvalid: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onKeyDown: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onKeyUp: PropTypes.func,
+  /**
+   * The short hint displayed in the `input` before the user enters a value.
+   */
+  placeholder: PropTypes.string,
+  /**
+   * It prevents the user from changing the value of the field
+   * (not from interacting with the field).
+   */
+  readOnly: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  renderSuffix: PropTypes.func,
+  /**
+   * If `true`, the `input` element is required.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  required: PropTypes.bool,
+  /**
+   * Number of rows to display when multiline option is set to true.
+   */
+  rows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * The size of the component.
+   */
+  size: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['medium', 'small']), PropTypes.string]),
+  /**
+   * The extra props for the slot components.
+   * You can override the existing props or add new ones.
+   *
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.object,
+    root: PropTypes.object
+  }),
+  /**
+   * The components used for each slot inside.
+   *
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * Start `InputAdornment` for this component.
+   */
+  startAdornment: PropTypes.node,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Type of the `input` element. It should be [a valid HTML5 input type](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#input_types).
+   * @default 'text'
+   */
+  type: PropTypes.string,
+  /**
+   * The value of the `input` element, required for a controlled component.
+   */
+  value: PropTypes.any
+} : void 0;
+var InputBase$1 = InputBase;
+
+function getInputUtilityClass(slot) {
+  return generateUtilityClass('MuiInput', slot);
+}
+const inputClasses = {
+  ...inputBaseClasses$1,
+  ...generateUtilityClasses('MuiInput', ['root', 'underline', 'input'])
+};
+var inputClasses$1 = inputClasses;
+
+const useUtilityClasses$a = ownerState => {
+  const {
+    classes,
+    disableUnderline
+  } = ownerState;
+  const slots = {
+    root: ['root', !disableUnderline && 'underline'],
+    input: ['input']
+  };
+  const composedClasses = composeClasses(slots, getInputUtilityClass, classes);
+  return {
+    ...classes,
+    // forward classes to the InputBase
+    ...composedClasses
+  };
+};
+const InputRoot = styled$1(InputBaseRoot, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiInput',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [...rootOverridesResolver(props, styles), !ownerState.disableUnderline && styles.underline];
+  }
+})(memoTheme$1(({
+  theme
+}) => {
+  const light = theme.palette.mode === 'light';
+  let bottomLineColor = light ? 'rgba(0, 0, 0, 0.42)' : 'rgba(255, 255, 255, 0.7)';
+  if (theme.vars) {
+    bottomLineColor = theme.alpha(theme.vars.palette.common.onBackground, theme.vars.opacity.inputUnderline);
+  }
+  return {
+    position: 'relative',
+    variants: [{
+      props: ({
+        ownerState
+      }) => ownerState.formControl,
+      style: {
+        [`label + &, .${inputLabelClasses$1.root} + &`]: {
+          marginTop: 16
+        }
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => !ownerState.disableUnderline,
+      style: {
+        '&::after': {
+          left: 0,
+          bottom: 0,
+          content: '""',
+          position: 'absolute',
+          right: 0,
+          transform: 'scaleX(0)',
+          transition: theme.transitions.create('transform', {
+            duration: theme.transitions.duration.shorter,
+            easing: theme.transitions.easing.easeOut
+          }),
+          pointerEvents: 'none' // Transparent to the hover style.
+        },
+        [`&.${inputClasses$1.focused}:after`]: {
+          // translateX(0) is a workaround for Safari transform scale bug
+          // See https://github.com/mui/material-ui/issues/31766
+          transform: 'scaleX(1) translateX(0)'
+        },
+        [`&.${inputClasses$1.error}`]: {
+          '&::before, &::after': {
+            borderBottomColor: (theme.vars || theme).palette.error.main
+          }
+        },
+        '&::before': {
+          borderBottom: `1px solid ${bottomLineColor}`,
+          left: 0,
+          bottom: 0,
+          content: '""',
+          position: 'absolute',
+          right: 0,
+          transition: theme.transitions.create('border-bottom-color', {
+            duration: theme.transitions.duration.shorter
+          }),
+          pointerEvents: 'none' // Transparent to the hover style.
+        },
+        [`&:hover:not(.${inputClasses$1.disabled}, .${inputClasses$1.error}):before`]: {
+          borderBottom: `2px solid ${(theme.vars || theme).palette.text.primary}`,
+          // Reset on touch devices, it doesn't add specificity
+          '@media (hover: none)': {
+            borderBottom: `1px solid ${bottomLineColor}`
+          }
+        },
+        [`&.${inputClasses$1.disabled}:before`]: {
+          borderBottomStyle: 'dotted'
+        }
+      }
+    }, ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+      props: {
+        color,
+        disableUnderline: false
+      },
+      style: {
+        '&::after': {
+          borderBottom: `2px solid ${(theme.vars || theme).palette[color].main}`
+        }
+      }
+    }))]
+  };
+}));
+const InputInput = styled$1(InputBaseInput, {
+  name: 'MuiInput',
+  slot: 'Input',
+  overridesResolver: inputOverridesResolver
+})({});
+const Input$1 = /*#__PURE__*/reactExports.forwardRef(function Input(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiInput'
+  });
+  const {
+    disableUnderline = false,
+    fullWidth = false,
+    inputComponent = 'input',
+    multiline = false,
+    notched,
+    // declare here to prevent spreading to DOM
+    slotProps,
+    slots = {},
+    type = 'text',
+    ...other
+  } = props;
+  const classes = useUtilityClasses$a(props);
+  const ownerState = {
+    disableUnderline
+  };
+  const inputComponentsProps = {
+    root: {
+      ownerState
+    }
+  };
+  const componentsProps = slotProps ? deepmerge(slotProps, inputComponentsProps) : inputComponentsProps;
+  const RootSlot = slots.root ?? InputRoot;
+  const InputSlot = slots.input ?? InputInput;
+  return /*#__PURE__*/jsxRuntimeExports.jsx(InputBase$1, {
+    slots: {
+      root: RootSlot,
+      input: InputSlot
+    },
+    slotProps: componentsProps,
+    fullWidth: fullWidth,
+    inputComponent: inputComponent,
+    multiline: multiline,
+    ref: ref,
+    type: type,
+    ...other,
+    classes: classes
+  });
+});
+process.env.NODE_ENV !== "production" ? Input$1.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * This prop helps users to fill forms faster, especially on mobile devices.
+   * The name can be confusing, as it's more like an autofill.
+   * You can learn more about it [following the specification](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill).
+   */
+  autoComplete: PropTypes.string,
+  /**
+   * If `true`, the `input` element is focused during the first mount.
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * The prop defaults to the value (`'primary'`) inherited from the parent FormControl component.
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary']), PropTypes.string]),
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, the component is disabled.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the `input` will not have an underline.
+   * @default false
+   */
+  disableUnderline: PropTypes.bool,
+  /**
+   * End `InputAdornment` for this component.
+   */
+  endAdornment: PropTypes.node,
+  /**
+   * If `true`, the `input` will indicate an error.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the `input` will take up the full width of its container.
+   * @default false
+   */
+  fullWidth: PropTypes.bool,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /**
+   * The component used for the `input` element.
+   * Either a string to use a HTML element or a component.
+   * @default 'input'
+   */
+  inputComponent: PropTypes.elementType,
+  /**
+   * [Attributes](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#attributes) applied to the `input` element.
+   * @default {}
+   */
+  inputProps: PropTypes.object,
+  /**
+   * Pass a ref to the `input` element.
+   */
+  inputRef: refType$1,
+  /**
+   * If `dense`, will adjust vertical spacing. This is normally obtained via context from
+   * FormControl.
+   * The prop defaults to the value (`'none'`) inherited from the parent FormControl component.
+   */
+  margin: PropTypes.oneOf(['dense', 'none']),
+  /**
+   * Maximum number of rows to display when multiline option is set to true.
+   */
+  maxRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Minimum number of rows to display when multiline option is set to true.
+   */
+  minRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * If `true`, a [TextareaAutosize](https://mui.com/material-ui/react-textarea-autosize/) element is rendered.
+   * @default false
+   */
+  multiline: PropTypes.bool,
+  /**
+   * Name attribute of the `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * @internal
+   */
+  notched: PropTypes.bool,
+  /**
+   * Callback fired when the value is changed.
+   *
+   * @param {React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * The short hint displayed in the `input` before the user enters a value.
+   */
+  placeholder: PropTypes.string,
+  /**
+   * It prevents the user from changing the value of the field
+   * (not from interacting with the field).
+   */
+  readOnly: PropTypes.bool,
+  /**
+   * If `true`, the `input` element is required.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  required: PropTypes.bool,
+  /**
+   * Number of rows to display when multiline option is set to true.
+   */
+  rows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * The extra props for the slot components.
+   * You can override the existing props or add new ones.
+   *
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.object,
+    root: PropTypes.object
+  }),
+  /**
+   * The components used for each slot inside.
+   *
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * Start `InputAdornment` for this component.
+   */
+  startAdornment: PropTypes.node,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Type of the `input` element. It should be [a valid HTML5 input type](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#input_types).
+   * @default 'text'
+   */
+  type: PropTypes.string,
+  /**
+   * The value of the `input` element, required for a controlled component.
+   */
+  value: PropTypes.any
+} : void 0;
+Input$1.muiName = 'Input';
+var Input$2 = Input$1;
+
+function getFilledInputUtilityClass(slot) {
+  return generateUtilityClass('MuiFilledInput', slot);
+}
+const filledInputClasses = {
+  ...inputBaseClasses$1,
+  ...generateUtilityClasses('MuiFilledInput', ['root', 'underline', 'input', 'adornedStart', 'adornedEnd', 'sizeSmall', 'multiline', 'hiddenLabel'])
+};
+var filledInputClasses$1 = filledInputClasses;
+
+const useUtilityClasses$9 = ownerState => {
+  const {
+    classes,
+    disableUnderline,
+    startAdornment,
+    endAdornment,
+    size,
+    hiddenLabel,
+    multiline
+  } = ownerState;
+  const slots = {
+    root: ['root', !disableUnderline && 'underline', startAdornment && 'adornedStart', endAdornment && 'adornedEnd', size === 'small' && `size${capitalize$3(size)}`, hiddenLabel && 'hiddenLabel', multiline && 'multiline'],
+    input: ['input']
+  };
+  const composedClasses = composeClasses(slots, getFilledInputUtilityClass, classes);
+  return {
+    ...classes,
+    // forward classes to the InputBase
+    ...composedClasses
+  };
+};
+const FilledInputRoot = styled$1(InputBaseRoot, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiFilledInput',
+  slot: 'Root',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [...rootOverridesResolver(props, styles), !ownerState.disableUnderline && styles.underline];
+  }
+})(memoTheme$1(({
+  theme
+}) => {
+  const light = theme.palette.mode === 'light';
+  const bottomLineColor = light ? 'rgba(0, 0, 0, 0.42)' : 'rgba(255, 255, 255, 0.7)';
+  const backgroundColor = light ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.09)';
+  const hoverBackground = light ? 'rgba(0, 0, 0, 0.09)' : 'rgba(255, 255, 255, 0.13)';
+  const disabledBackground = light ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.12)';
+  return {
+    position: 'relative',
+    backgroundColor: theme.vars ? theme.vars.palette.FilledInput.bg : backgroundColor,
+    borderTopLeftRadius: (theme.vars || theme).shape.borderRadius,
+    borderTopRightRadius: (theme.vars || theme).shape.borderRadius,
+    transition: theme.transitions.create('background-color', {
+      duration: theme.transitions.duration.shorter,
+      easing: theme.transitions.easing.easeOut
+    }),
+    '&:hover': {
+      backgroundColor: theme.vars ? theme.vars.palette.FilledInput.hoverBg : hoverBackground,
+      // Reset on touch devices, it doesn't add specificity
+      '@media (hover: none)': {
+        backgroundColor: theme.vars ? theme.vars.palette.FilledInput.bg : backgroundColor
+      }
+    },
+    [`&.${filledInputClasses$1.focused}`]: {
+      backgroundColor: theme.vars ? theme.vars.palette.FilledInput.bg : backgroundColor
+    },
+    [`&.${filledInputClasses$1.disabled}`]: {
+      backgroundColor: theme.vars ? theme.vars.palette.FilledInput.disabledBg : disabledBackground
+    },
+    variants: [{
+      props: ({
+        ownerState
+      }) => !ownerState.disableUnderline,
+      style: {
+        '&::after': {
+          left: 0,
+          bottom: 0,
+          content: '""',
+          position: 'absolute',
+          right: 0,
+          transform: 'scaleX(0)',
+          transition: theme.transitions.create('transform', {
+            duration: theme.transitions.duration.shorter,
+            easing: theme.transitions.easing.easeOut
+          }),
+          pointerEvents: 'none' // Transparent to the hover style.
+        },
+        [`&.${filledInputClasses$1.focused}:after`]: {
+          // translateX(0) is a workaround for Safari transform scale bug
+          // See https://github.com/mui/material-ui/issues/31766
+          transform: 'scaleX(1) translateX(0)'
+        },
+        [`&.${filledInputClasses$1.error}`]: {
+          '&::before, &::after': {
+            borderBottomColor: (theme.vars || theme).palette.error.main
+          }
+        },
+        '&::before': {
+          borderBottom: `1px solid ${theme.vars ? theme.alpha(theme.vars.palette.common.onBackground, theme.vars.opacity.inputUnderline) : bottomLineColor}`,
+          left: 0,
+          bottom: 0,
+          content: '""',
+          position: 'absolute',
+          right: 0,
+          transition: theme.transitions.create('border-bottom-color', {
+            duration: theme.transitions.duration.shorter
+          }),
+          pointerEvents: 'none' // Transparent to the hover style.
+        },
+        [`&:hover:not(.${filledInputClasses$1.disabled}, .${filledInputClasses$1.error}):before`]: {
+          borderBottom: `1px solid ${(theme.vars || theme).palette.text.primary}`
+        },
+        [`&.${filledInputClasses$1.disabled}:before`]: {
+          borderBottomStyle: 'dotted'
+        }
+      }
+    }, ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()) // check all the used fields in the style below
+    .map(([color]) => ({
+      props: {
+        disableUnderline: false,
+        color
+      },
+      style: {
+        '&::after': {
+          borderBottom: `2px solid ${(theme.vars || theme).palette[color]?.main}`
+        }
+      }
+    })), {
+      props: ({
+        ownerState
+      }) => ownerState.startAdornment,
+      style: {
+        paddingLeft: 12
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.endAdornment,
+      style: {
+        paddingRight: 12
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.multiline,
+      style: {
+        padding: '25px 12px 8px'
+      }
+    }, {
+      props: ({
+        ownerState,
+        size
+      }) => ownerState.multiline && size === 'small',
+      style: {
+        paddingTop: 21,
+        paddingBottom: 4
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.multiline && ownerState.hiddenLabel,
+      style: {
+        paddingTop: 16,
+        paddingBottom: 17
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.multiline && ownerState.hiddenLabel && ownerState.size === 'small',
+      style: {
+        paddingTop: 8,
+        paddingBottom: 9
+      }
+    }]
+  };
+}));
+const FilledInputInput = styled$1(InputBaseInput, {
+  name: 'MuiFilledInput',
+  slot: 'Input',
+  overridesResolver: inputOverridesResolver
+})(memoTheme$1(({
+  theme
+}) => ({
+  paddingTop: 25,
+  paddingRight: 12,
+  paddingBottom: 8,
+  paddingLeft: 12,
+  '&:-webkit-autofill': {
+    ...(!theme.vars && {
+      WebkitBoxShadow: theme.palette.mode === 'light' ? null : '0 0 0 100px #266798 inset',
+      WebkitTextFillColor: theme.palette.mode === 'light' ? null : '#fff',
+      caretColor: theme.palette.mode === 'light' ? null : '#fff'
+    }),
+    borderTopLeftRadius: 'inherit',
+    borderTopRightRadius: 'inherit',
+    ...(theme.vars && theme.applyStyles('dark', {
+      WebkitBoxShadow: '0 0 0 100px #266798 inset',
+      WebkitTextFillColor: '#fff',
+      caretColor: '#fff'
+    }))
+  },
+  variants: [{
+    props: {
+      size: 'small'
+    },
+    style: {
+      paddingTop: 21,
+      paddingBottom: 4
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.hiddenLabel,
+    style: {
+      paddingTop: 16,
+      paddingBottom: 17
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.startAdornment,
+    style: {
+      paddingLeft: 0
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.endAdornment,
+    style: {
+      paddingRight: 0
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.hiddenLabel && ownerState.size === 'small',
+    style: {
+      paddingTop: 8,
+      paddingBottom: 9
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.multiline,
+    style: {
+      paddingTop: 0,
+      paddingBottom: 0,
+      paddingLeft: 0,
+      paddingRight: 0
+    }
+  }]
+})));
+const FilledInput = /*#__PURE__*/reactExports.forwardRef(function FilledInput(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiFilledInput'
+  });
+  const {
+    disableUnderline = false,
+    fullWidth = false,
+    hiddenLabel,
+    // declare here to prevent spreading to DOM
+    inputComponent = 'input',
+    multiline = false,
+    notched,
+    // declare here to prevent spreading to DOM
+    slotProps,
+    slots = {},
+    type = 'text',
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    disableUnderline,
+    fullWidth,
+    inputComponent,
+    multiline,
+    type
+  };
+  const classes = useUtilityClasses$9(props);
+  const filledInputComponentsProps = {
+    root: {
+      ownerState
+    },
+    input: {
+      ownerState
+    }
+  };
+  const componentsProps = slotProps ? deepmerge(filledInputComponentsProps, slotProps) : filledInputComponentsProps;
+  const RootSlot = slots.root ?? FilledInputRoot;
+  const InputSlot = slots.input ?? FilledInputInput;
+  return /*#__PURE__*/jsxRuntimeExports.jsx(InputBase$1, {
+    slots: {
+      root: RootSlot,
+      input: InputSlot
+    },
+    slotProps: componentsProps,
+    fullWidth: fullWidth,
+    inputComponent: inputComponent,
+    multiline: multiline,
+    ref: ref,
+    type: type,
+    ...other,
+    classes: classes
+  });
+});
+process.env.NODE_ENV !== "production" ? FilledInput.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * This prop helps users to fill forms faster, especially on mobile devices.
+   * The name can be confusing, as it's more like an autofill.
+   * You can learn more about it [following the specification](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill).
+   */
+  autoComplete: PropTypes.string,
+  /**
+   * If `true`, the `input` element is focused during the first mount.
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * The prop defaults to the value (`'primary'`) inherited from the parent FormControl component.
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary']), PropTypes.string]),
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, the component is disabled.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the input will not have an underline.
+   * @default false
+   */
+  disableUnderline: PropTypes.bool,
+  /**
+   * End `InputAdornment` for this component.
+   */
+  endAdornment: PropTypes.node,
+  /**
+   * If `true`, the `input` will indicate an error.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the `input` will take up the full width of its container.
+   * @default false
+   */
+  fullWidth: PropTypes.bool,
+  /**
+   * If `true`, the label is hidden.
+   * This is used to increase density for a `FilledInput`.
+   * Be sure to add `aria-label` to the `input` element.
+   * @default false
+   */
+  hiddenLabel: PropTypes.bool,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /**
+   * The component used for the `input` element.
+   * Either a string to use a HTML element or a component.
+   * @default 'input'
+   */
+  inputComponent: PropTypes.elementType,
+  /**
+   * [Attributes](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#attributes) applied to the `input` element.
+   * @default {}
+   */
+  inputProps: PropTypes.object,
+  /**
+   * Pass a ref to the `input` element.
+   */
+  inputRef: refType$1,
+  /**
+   * If `dense`, will adjust vertical spacing. This is normally obtained via context from
+   * FormControl.
+   * The prop defaults to the value (`'none'`) inherited from the parent FormControl component.
+   */
+  margin: PropTypes.oneOf(['dense', 'none']),
+  /**
+   * Maximum number of rows to display when multiline option is set to true.
+   */
+  maxRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Minimum number of rows to display when multiline option is set to true.
+   */
+  minRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * If `true`, a [TextareaAutosize](https://mui.com/material-ui/react-textarea-autosize/) element is rendered.
+   * @default false
+   */
+  multiline: PropTypes.bool,
+  /**
+   * Name attribute of the `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * @internal
+   */
+  notched: PropTypes.bool,
+  /**
+   * Callback fired when the value is changed.
+   *
+   * @param {React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * The short hint displayed in the `input` before the user enters a value.
+   */
+  placeholder: PropTypes.string,
+  /**
+   * It prevents the user from changing the value of the field
+   * (not from interacting with the field).
+   */
+  readOnly: PropTypes.bool,
+  /**
+   * If `true`, the `input` element is required.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  required: PropTypes.bool,
+  /**
+   * Number of rows to display when multiline option is set to true.
+   */
+  rows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * The extra props for the slot components.
+   * You can override the existing props or add new ones.
+   *
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.object,
+    root: PropTypes.object
+  }),
+  /**
+   * The components used for each slot inside.
+   *
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * Start `InputAdornment` for this component.
+   */
+  startAdornment: PropTypes.node,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Type of the `input` element. It should be [a valid HTML5 input type](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#input_types).
+   * @default 'text'
+   */
+  type: PropTypes.string,
+  /**
+   * The value of the `input` element, required for a controlled component.
+   */
+  value: PropTypes.any
+} : void 0;
+FilledInput.muiName = 'Input';
+var FilledInput$1 = FilledInput;
+
+var _span;
+const NotchedOutlineRoot$1 = styled$1('fieldset', {
+  name: 'MuiNotchedOutlined',
+  shouldForwardProp: rootShouldForwardProp$1
+})({
+  textAlign: 'left',
+  position: 'absolute',
+  bottom: 0,
+  right: 0,
+  top: -5,
+  left: 0,
+  margin: 0,
+  padding: '0 8px',
+  pointerEvents: 'none',
+  borderRadius: 'inherit',
+  borderStyle: 'solid',
+  borderWidth: 1,
+  overflow: 'hidden',
+  minWidth: '0%'
+});
+const NotchedOutlineLegend = styled$1('legend', {
+  name: 'MuiNotchedOutlined',
+  shouldForwardProp: rootShouldForwardProp$1
+})(memoTheme$1(({
+  theme
+}) => ({
+  float: 'unset',
+  // Fix conflict with bootstrap
+  width: 'auto',
+  // Fix conflict with bootstrap
+  overflow: 'hidden',
+  // Fix Horizontal scroll when label too long
+  variants: [{
+    props: ({
+      ownerState
+    }) => !ownerState.withLabel,
+    style: {
+      padding: 0,
+      lineHeight: '11px',
+      // sync with `height` in `legend` styles
+      transition: theme.transitions.create('width', {
+        duration: 150,
+        easing: theme.transitions.easing.easeOut
+      })
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.withLabel,
+    style: {
+      display: 'block',
+      // Fix conflict with normalize.css and sanitize.css
+      padding: 0,
+      height: 11,
+      // sync with `lineHeight` in `legend` styles
+      fontSize: '0.75em',
+      visibility: 'hidden',
+      maxWidth: 0.01,
+      transition: theme.transitions.create('max-width', {
+        duration: 50,
+        easing: theme.transitions.easing.easeOut
+      }),
+      whiteSpace: 'nowrap',
+      '& > span': {
+        paddingLeft: 5,
+        paddingRight: 5,
+        display: 'inline-block',
+        opacity: 0,
+        visibility: 'visible'
+      }
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.withLabel && ownerState.notched,
+    style: {
+      maxWidth: '100%',
+      transition: theme.transitions.create('max-width', {
+        duration: 100,
+        easing: theme.transitions.easing.easeOut,
+        delay: 50
+      })
+    }
+  }]
+})));
+
+/**
+ * @ignore - internal component.
+ */
+function NotchedOutline(props) {
+  const {
+    children,
+    classes,
+    className,
+    label,
+    notched,
+    ...other
+  } = props;
+  const withLabel = label != null && label !== '';
+  const ownerState = {
+    ...props,
+    notched,
+    withLabel
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsx(NotchedOutlineRoot$1, {
+    "aria-hidden": true,
+    className: className,
+    ownerState: ownerState,
+    ...other,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(NotchedOutlineLegend, {
+      ownerState: ownerState,
+      children: withLabel ? /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+        children: label
+      }) : // notranslate needed while Google Translate will not fix zero-width space issue
+      _span || (_span = /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+        className: "notranslate",
+        "aria-hidden": true,
+        children: "\u200B"
+      }))
+    })
+  });
+}
+process.env.NODE_ENV !== "production" ? NotchedOutline.propTypes /* remove-proptypes */ = {
+  /**
+   * The content of the component.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The label.
+   */
+  label: PropTypes.node,
+  /**
+   * If `true`, the outline is notched to accommodate the label.
+   */
+  notched: PropTypes.bool.isRequired,
+  /**
+   * @ignore
+   */
+  style: PropTypes.object
+} : void 0;
+
+function getOutlinedInputUtilityClass(slot) {
+  return generateUtilityClass('MuiOutlinedInput', slot);
+}
+const outlinedInputClasses = {
+  ...inputBaseClasses$1,
+  ...generateUtilityClasses('MuiOutlinedInput', ['root', 'notchedOutline', 'input'])
+};
+var outlinedInputClasses$1 = outlinedInputClasses;
+
+const useUtilityClasses$8 = ownerState => {
+  const {
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root'],
+    notchedOutline: ['notchedOutline'],
+    input: ['input']
+  };
+  const composedClasses = composeClasses(slots, getOutlinedInputUtilityClass, classes);
+  return {
+    ...classes,
+    // forward classes to the InputBase
+    ...composedClasses
+  };
+};
+const OutlinedInputRoot = styled$1(InputBaseRoot, {
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) || prop === 'classes',
+  name: 'MuiOutlinedInput',
+  slot: 'Root',
+  overridesResolver: rootOverridesResolver
+})(memoTheme$1(({
+  theme
+}) => {
+  const borderColor = theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.23)' : 'rgba(255, 255, 255, 0.23)';
+  return {
+    position: 'relative',
+    borderRadius: (theme.vars || theme).shape.borderRadius,
+    [`&:hover .${outlinedInputClasses$1.notchedOutline}`]: {
+      borderColor: (theme.vars || theme).palette.text.primary
+    },
+    // Reset on touch devices, it doesn't add specificity
+    '@media (hover: none)': {
+      [`&:hover .${outlinedInputClasses$1.notchedOutline}`]: {
+        borderColor: theme.vars ? theme.alpha(theme.vars.palette.common.onBackground, 0.23) : borderColor
+      }
+    },
+    [`&.${outlinedInputClasses$1.focused} .${outlinedInputClasses$1.notchedOutline}`]: {
+      borderWidth: 2
+    },
+    variants: [...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
+      props: {
+        color
+      },
+      style: {
+        [`&.${outlinedInputClasses$1.focused} .${outlinedInputClasses$1.notchedOutline}`]: {
+          borderColor: (theme.vars || theme).palette[color].main
+        }
+      }
+    })), {
+      props: {},
+      // to override the above style
+      style: {
+        [`&.${outlinedInputClasses$1.error} .${outlinedInputClasses$1.notchedOutline}`]: {
+          borderColor: (theme.vars || theme).palette.error.main
+        },
+        [`&.${outlinedInputClasses$1.disabled} .${outlinedInputClasses$1.notchedOutline}`]: {
+          borderColor: (theme.vars || theme).palette.action.disabled
+        }
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.startAdornment,
+      style: {
+        paddingLeft: 14
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.endAdornment,
+      style: {
+        paddingRight: 14
+      }
+    }, {
+      props: ({
+        ownerState
+      }) => ownerState.multiline,
+      style: {
+        padding: '16.5px 14px'
+      }
+    }, {
+      props: ({
+        ownerState,
+        size
+      }) => ownerState.multiline && size === 'small',
+      style: {
+        padding: '8.5px 14px'
+      }
+    }]
+  };
+}));
+const NotchedOutlineRoot = styled$1(NotchedOutline, {
+  name: 'MuiOutlinedInput',
+  slot: 'NotchedOutline'
+})(memoTheme$1(({
+  theme
+}) => {
+  const borderColor = theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.23)' : 'rgba(255, 255, 255, 0.23)';
+  return {
+    borderColor: theme.vars ? theme.alpha(theme.vars.palette.common.onBackground, 0.23) : borderColor
+  };
+}));
+const OutlinedInputInput = styled$1(InputBaseInput, {
+  name: 'MuiOutlinedInput',
+  slot: 'Input',
+  overridesResolver: inputOverridesResolver
+})(memoTheme$1(({
+  theme
+}) => ({
+  padding: '16.5px 14px',
+  '&:-webkit-autofill': {
+    ...(!theme.vars && {
+      WebkitBoxShadow: theme.palette.mode === 'light' ? null : '0 0 0 100px #266798 inset',
+      WebkitTextFillColor: theme.palette.mode === 'light' ? null : '#fff',
+      caretColor: theme.palette.mode === 'light' ? null : '#fff'
+    }),
+    borderRadius: 'inherit',
+    ...(theme.vars && theme.applyStyles('dark', {
+      WebkitBoxShadow: '0 0 0 100px #266798 inset',
+      WebkitTextFillColor: '#fff',
+      caretColor: '#fff'
+    }))
+  },
+  variants: [{
+    props: {
+      size: 'small'
+    },
+    style: {
+      padding: '8.5px 14px'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.multiline,
+    style: {
+      padding: 0
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.startAdornment,
+    style: {
+      paddingLeft: 0
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.endAdornment,
+    style: {
+      paddingRight: 0
+    }
+  }]
+})));
+const OutlinedInput = /*#__PURE__*/reactExports.forwardRef(function OutlinedInput(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiOutlinedInput'
+  });
+  const {
+    fullWidth = false,
+    inputComponent = 'input',
+    label,
+    multiline = false,
+    notched,
+    slots = {},
+    slotProps = {},
+    type = 'text',
+    ...other
+  } = props;
+  const classes = useUtilityClasses$8(props);
+  const [fcs, muiFormControl] = useFormControlState({
+    props,
+    states: ['color', 'disabled', 'error', 'focused', 'hiddenLabel', 'size', 'required']
+  });
+  const ownerState = {
+    ...props,
+    color: fcs.color || 'primary',
+    disabled: fcs.disabled,
+    error: fcs.error,
+    focused: fcs.focused,
+    formControl: muiFormControl,
+    fullWidth,
+    hiddenLabel: fcs.hiddenLabel,
+    multiline,
+    size: fcs.size,
+    type
+  };
+  const RootSlot = slots.root ?? OutlinedInputRoot;
+  const InputSlot = slots.input ?? OutlinedInputInput;
+  const [NotchedSlot, notchedProps] = useSlot('notchedOutline', {
+    elementType: NotchedOutlineRoot,
+    className: classes.notchedOutline,
+    shouldForwardComponentProp: true,
+    ownerState,
+    externalForwardedProps: {
+      slots,
+      slotProps
+    },
+    additionalProps: {
+      label: label != null && label !== '' && fcs.required ? /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+        children: [label, "\u2009", '*']
+      }) : label
+    }
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(InputBase$1, {
+    slots: {
+      root: RootSlot,
+      input: InputSlot
+    },
+    slotProps: slotProps,
+    renderSuffix: state => /*#__PURE__*/jsxRuntimeExports.jsx(NotchedSlot, {
+      ...notchedProps,
+      notched: typeof notched !== 'undefined' ? notched : Boolean(state.startAdornment || state.filled || state.focused)
+    }),
+    fullWidth: fullWidth,
+    inputComponent: inputComponent,
+    multiline: multiline,
+    ref: ref,
+    type: type,
+    ...other,
+    classes: {
+      ...classes,
+      notchedOutline: null
+    }
+  });
+});
+process.env.NODE_ENV !== "production" ? OutlinedInput.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * This prop helps users to fill forms faster, especially on mobile devices.
+   * The name can be confusing, as it's more like an autofill.
+   * You can learn more about it [following the specification](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill).
+   */
+  autoComplete: PropTypes.string,
+  /**
+   * If `true`, the `input` element is focused during the first mount.
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * The prop defaults to the value (`'primary'`) inherited from the parent FormControl component.
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary']), PropTypes.string]),
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, the component is disabled.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  disabled: PropTypes.bool,
+  /**
+   * End `InputAdornment` for this component.
+   */
+  endAdornment: PropTypes.node,
+  /**
+   * If `true`, the `input` will indicate an error.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the `input` will take up the full width of its container.
+   * @default false
+   */
+  fullWidth: PropTypes.bool,
+  /**
+   * The id of the `input` element.
+   */
+  id: PropTypes.string,
+  /**
+   * The component used for the `input` element.
+   * Either a string to use a HTML element or a component.
+   * @default 'input'
+   */
+  inputComponent: PropTypes.elementType,
+  /**
+   * [Attributes](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#attributes) applied to the `input` element.
+   * @default {}
+   */
+  inputProps: PropTypes.object,
+  /**
+   * Pass a ref to the `input` element.
+   */
+  inputRef: refType$1,
+  /**
+   * The label of the `input`. It is only used for layout. The actual labelling
+   * is handled by `InputLabel`.
+   */
+  label: PropTypes.node,
+  /**
+   * If `dense`, will adjust vertical spacing. This is normally obtained via context from
+   * FormControl.
+   * The prop defaults to the value (`'none'`) inherited from the parent FormControl component.
+   */
+  margin: PropTypes.oneOf(['dense', 'none']),
+  /**
+   * Maximum number of rows to display when multiline option is set to true.
+   */
+  maxRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Minimum number of rows to display when multiline option is set to true.
+   */
+  minRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * If `true`, a [TextareaAutosize](https://mui.com/material-ui/react-textarea-autosize/) element is rendered.
+   * @default false
+   */
+  multiline: PropTypes.bool,
+  /**
+   * Name attribute of the `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * If `true`, the outline is notched to accommodate the label.
+   */
+  notched: PropTypes.bool,
+  /**
+   * Callback fired when the value is changed.
+   *
+   * @param {React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * The short hint displayed in the `input` before the user enters a value.
+   */
+  placeholder: PropTypes.string,
+  /**
+   * It prevents the user from changing the value of the field
+   * (not from interacting with the field).
+   */
+  readOnly: PropTypes.bool,
+  /**
+   * If `true`, the `input` element is required.
+   * The prop defaults to the value (`false`) inherited from the parent FormControl component.
+   */
+  required: PropTypes.bool,
+  /**
+   * Number of rows to display when multiline option is set to true.
+   */
+  rows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    input: PropTypes.object,
+    notchedOutline: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    root: PropTypes.object
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    input: PropTypes.elementType,
+    notchedOutline: PropTypes.elementType,
+    root: PropTypes.elementType
+  }),
+  /**
+   * Start `InputAdornment` for this component.
+   */
+  startAdornment: PropTypes.node,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Type of the `input` element. It should be [a valid HTML5 input type](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#input_types).
+   * @default 'text'
+   */
+  type: PropTypes.string,
+  /**
+   * The value of the `input` element, required for a controlled component.
+   */
+  value: PropTypes.any
+} : void 0;
+OutlinedInput.muiName = 'Input';
+var OutlinedInput$1 = OutlinedInput;
+
+const useUtilityClasses$7 = ownerState => {
+  const {
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root']
+  };
+  const composedClasses = composeClasses(slots, getSelectUtilityClasses, classes);
+  return {
+    ...classes,
+    ...composedClasses
+  };
+};
+const styledRootConfig = {
+  name: 'MuiSelect',
+  slot: 'Root',
+  shouldForwardProp: prop => rootShouldForwardProp$1(prop) && prop !== 'variant'
+};
+const StyledInput = styled$1(Input$2, styledRootConfig)('');
+const StyledOutlinedInput = styled$1(OutlinedInput$1, styledRootConfig)('');
+const StyledFilledInput = styled$1(FilledInput$1, styledRootConfig)('');
+const Select = /*#__PURE__*/reactExports.forwardRef(function Select(inProps, ref) {
+  const props = useDefaultProps({
+    name: 'MuiSelect',
+    props: inProps
+  });
+  const {
+    autoWidth = false,
+    children,
+    classes: classesProp = {},
+    className,
+    defaultOpen = false,
+    displayEmpty = false,
+    IconComponent = ArrowDropDownIcon,
+    id,
+    input,
+    inputProps,
+    label,
+    labelId,
+    MenuProps,
+    multiple = false,
+    native = false,
+    onClose,
+    onOpen,
+    open,
+    renderValue,
+    SelectDisplayProps,
+    variant: variantProp = 'outlined',
+    ...other
+  } = props;
+  const inputComponent = native ? NativeSelectInput$1 : SelectInput$1;
+  const [fcs] = useFormControlState({
+    props,
+    states: ['variant', 'error']
+  });
+  const variant = fcs.variant || variantProp;
+  const ownerState = {
+    ...props,
+    variant,
+    classes: classesProp
+  };
+  const classes = useUtilityClasses$7(ownerState);
+  const {
+    root,
+    ...restOfClasses
+  } = classes;
+  const InputComponent = input || {
+    standard: /*#__PURE__*/jsxRuntimeExports.jsx(StyledInput, {
+      ownerState: ownerState
+    }),
+    outlined: /*#__PURE__*/jsxRuntimeExports.jsx(StyledOutlinedInput, {
+      label: label,
+      ownerState: ownerState
+    }),
+    filled: /*#__PURE__*/jsxRuntimeExports.jsx(StyledFilledInput, {
+      ownerState: ownerState
+    })
+  }[variant];
+  const inputComponentRef = useForkRef(ref, getReactElementRef(InputComponent));
+  return /*#__PURE__*/jsxRuntimeExports.jsx(reactExports.Fragment, {
+    children: /*#__PURE__*/reactExports.cloneElement(InputComponent, {
+      // Most of the logic is implemented in `SelectInput`.
+      // The `Select` component is a simple API wrapper to expose something better to play with.
+      inputComponent,
+      inputProps: {
+        children,
+        error: fcs.error,
+        IconComponent,
+        variant,
+        type: undefined,
+        // We render a select. We can ignore the type provided by the `Input`.
+        multiple,
+        ...(native ? {
+          id
+        } : {
+          autoWidth,
+          defaultOpen,
+          displayEmpty,
+          labelId,
+          MenuProps,
+          onClose,
+          onOpen,
+          open,
+          renderValue,
+          SelectDisplayProps: {
+            id,
+            ...SelectDisplayProps
+          }
+        }),
+        ...inputProps,
+        classes: inputProps ? deepmerge(restOfClasses, inputProps.classes) : restOfClasses,
+        ...(input ? input.props.inputProps : {})
+      },
+      ...((multiple && native || displayEmpty) && variant === 'outlined' ? {
+        notched: true
+      } : {}),
+      ref: inputComponentRef,
+      className: clsx(InputComponent.props.className, className, classes.root),
+      // If a custom input is provided via 'input' prop, do not allow 'variant' to be propagated to it's root element. See https://github.com/mui/material-ui/issues/33894.
+      ...(!input && {
+        variant
+      }),
+      ...other
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? Select.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, the width of the popover will automatically be set according to the items inside the
+   * menu, otherwise it will be at least the width of the select input.
+   * @default false
+   */
+  autoWidth: PropTypes.bool,
+  /**
+   * The option elements to populate the select with.
+   * Can be some `MenuItem` when `native` is false and `option` when `native` is true.
+   *
+   * ⚠️The `MenuItem` elements **must** be direct descendants when `native` is false.
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   * @default {}
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * If `true`, the component is initially open. Use when the component open state is not controlled (i.e. the `open` prop is not defined).
+   * You can only use it when the `native` prop is `false` (default).
+   * @default false
+   */
+  defaultOpen: PropTypes.bool,
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, a value is displayed even if no items are selected.
+   *
+   * In order to display a meaningful value, a function can be passed to the `renderValue` prop which
+   * returns the value to be displayed when no items are selected.
+   *
+   * ⚠️ When using this prop, make sure the label doesn't overlap with the empty displayed value.
+   * The label should either be hidden or forced to a shrunk state.
+   * @default false
+   */
+  displayEmpty: PropTypes.bool,
+  /**
+   * The icon that displays the arrow.
+   * @default ArrowDropDownIcon
+   */
+  IconComponent: PropTypes.elementType,
+  /**
+   * The `id` of the wrapper element or the `select` element when `native`.
+   */
+  id: PropTypes.string,
+  /**
+   * An `Input` element; does not have to be a material-ui specific `Input`.
+   */
+  input: PropTypes.element,
+  /**
+   * [Attributes](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#attributes) applied to the `input` element.
+   * When `native` is `true`, the attributes are applied on the `select` element.
+   */
+  inputProps: PropTypes.object,
+  /**
+   * See [OutlinedInput#label](https://mui.com/material-ui/api/outlined-input/#props)
+   */
+  label: PropTypes.node,
+  /**
+   * The ID of an element that acts as an additional label. The Select will
+   * be labelled by the additional label and the selected value.
+   */
+  labelId: PropTypes.string,
+  /**
+   * Props applied to the [`Menu`](https://mui.com/material-ui/api/menu/) element.
+   */
+  MenuProps: PropTypes.object,
+  /**
+   * If `true`, `value` must be an array and the menu will support multiple selections.
+   * @default false
+   */
+  multiple: PropTypes.bool,
+  /**
+   * If `true`, the component uses a native `select` element.
+   * @default false
+   */
+  native: PropTypes.bool,
+  /**
+   * Callback fired when a menu item is selected.
+   *
+   * @param {SelectChangeEvent<Value>} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (any).
+   * **Warning**: This is a generic event, not a change event, unless the change event is caused by browser autofill.
+   * @param {object} [child] The react element that was selected when `native` is `false` (default).
+   */
+  onChange: PropTypes.func,
+  /**
+   * Callback fired when the component requests to be closed.
+   * Use it in either controlled (see the `open` prop), or uncontrolled mode (to detect when the Select collapses).
+   *
+   * @param {object} event The event source of the callback.
+   */
+  onClose: PropTypes.func,
+  /**
+   * Callback fired when the component requests to be opened.
+   * Use it in either controlled (see the `open` prop), or uncontrolled mode (to detect when the Select expands).
+   *
+   * @param {object} event The event source of the callback.
+   */
+  onOpen: PropTypes.func,
+  /**
+   * If `true`, the component is shown.
+   * You can only use it when the `native` prop is `false` (default).
+   */
+  open: PropTypes.bool,
+  /**
+   * Render the selected value.
+   * You can only use it when the `native` prop is `false` (default).
+   *
+   * @param {any} value The `value` provided to the component.
+   * @returns {ReactNode}
+   */
+  renderValue: PropTypes.func,
+  /**
+   * Props applied to the clickable div element.
+   */
+  SelectDisplayProps: PropTypes.object,
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * The `input` value. Providing an empty string will select no options.
+   * Set to an empty string `''` if you don't want any of the available options to be selected.
+   *
+   * If the value is an object it must have reference equality with the option in order to be selected.
+   * If the value is not an object, the string representation must match with the string representation of the option in order to be selected.
+   */
+  value: PropTypes.oneOfType([PropTypes.oneOf(['']), PropTypes.any]),
+  /**
+   * The variant to use.
+   * @default 'outlined'
+   */
+  variant: PropTypes.oneOf(['filled', 'outlined', 'standard'])
+} : void 0;
+Select.muiName = 'Select';
+var Select$1 = Select;
+
+function BaseSelect({
+  className,
+  error = false,
+  helperText,
+  id,
+  label,
+  labelFallback = '',
+  localizeOptions = true,
+  onChange,
+  options = [],
+  selectProps = {},
+  size,
+  value,
+  variant = 'outlined',
+  ...formControlProps
+}) {
+  const fallbackId = reactExports.useId();
+  const {
+    localize
+  } = reactExports.useContext(MusicNotebookContext);
+  const selectId = id || `base-select-${fallbackId}`;
+  const labelId = `${selectId}-label`;
+  const helperId = helperText ? `${selectId}-helper` : undefined;
+  const resolvedLabel = getLocalizedText(localize, label, labelFallback);
+  const resolvedHelperText = getLocalizedText(localize, helperText);
+  return /*#__PURE__*/React$1.createElement(FormControl$1, _extends$2({}, formControlProps, {
+    className: className ? `base-select ${className}` : 'base-select',
+    error: Boolean(error),
+    fullWidth: formControlProps.fullWidth ?? true,
+    size: size,
+    variant: variant
+  }), /*#__PURE__*/React$1.createElement(InputLabel$1, {
+    id: labelId
+  }, resolvedLabel), /*#__PURE__*/React$1.createElement(Select$1, _extends$2({}, selectProps, {
+    "aria-describedby": helperId,
+    id: selectId,
+    label: resolvedLabel,
+    labelId: labelId,
+    onChange: (event, child) => onChange?.(event.target.value, event, child),
+    value: value
+  }), options.map(option => {
+    const optionLabel = localizeOptions ? getLocalizedText(localize, option.label, option.fallback) : option.label;
+    const ariaLabel = getLocalizedText(localize, option.ariaLabel, optionLabel);
+    return /*#__PURE__*/React$1.createElement(MenuItem$1, _extends$2({}, option.props, {
+      "aria-label": ariaLabel,
+      key: option.value ?? 'empty',
+      value: option.value
+    }), optionLabel);
+  })), resolvedHelperText ? /*#__PURE__*/React$1.createElement(FormHelperText$1, {
+    id: helperId
+  }, resolvedHelperText) : null);
+}
+
+function getTextFieldUtilityClass(slot) {
+  return generateUtilityClass('MuiTextField', slot);
+}
+generateUtilityClasses('MuiTextField', ['root']);
+
+const variantComponent = {
+  standard: Input$2,
+  filled: FilledInput$1,
+  outlined: OutlinedInput$1
+};
+const useUtilityClasses$6 = ownerState => {
+  const {
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root']
+  };
+  return composeClasses(slots, getTextFieldUtilityClass, classes);
+};
+const TextFieldRoot = styled$1(FormControl$1, {
+  name: 'MuiTextField',
+  slot: 'Root'
+})({});
+
+/**
+ * The `TextField` is a convenience wrapper for the most common cases (80%).
+ * It cannot be all things to all people, otherwise the API would grow out of control.
+ *
+ * ## Advanced Configuration
+ *
+ * It's important to understand that the text field is a simple abstraction
+ * on top of the following components:
+ *
+ * - [FormControl](/material-ui/api/form-control/)
+ * - [InputLabel](/material-ui/api/input-label/)
+ * - [FilledInput](/material-ui/api/filled-input/)
+ * - [OutlinedInput](/material-ui/api/outlined-input/)
+ * - [Input](/material-ui/api/input/)
+ * - [FormHelperText](/material-ui/api/form-helper-text/)
+ *
+ * If you wish to alter the props applied to the `input` element, you can do so as follows:
+ *
+ * ```jsx
+ * const slotProps = {
+ *   htmlInput: {
+ *      step: 300
+ *   }
+ * };
+ *
+ * return <TextField id="time" type="time" slotProps={slotProps} />;
+ * ```
+ *
+ * For advanced cases, please look at the source of TextField by clicking on the
+ * "Edit this page" button above. Consider either:
+ *
+ * - using the `slotProps` prop for passing values directly to the components
+ * - using the underlying components directly as shown in the demos
+ */
+const TextField = /*#__PURE__*/reactExports.forwardRef(function TextField(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiTextField'
+  });
+  const {
+    autoComplete,
+    autoFocus = false,
+    children,
+    className,
+    color = 'primary',
+    defaultValue,
+    disabled = false,
+    error = false,
+    fullWidth = false,
+    helperText,
+    id: idOverride,
+    inputRef,
+    label,
+    maxRows,
+    minRows,
+    multiline = false,
+    name,
+    onBlur,
+    onChange,
+    onFocus,
+    placeholder,
+    required = false,
+    rows,
+    select = false,
+    slots = {},
+    slotProps = {},
+    type,
+    value,
+    variant = 'outlined',
+    ...other
+  } = props;
+  const ownerState = {
+    ...props,
+    autoFocus,
+    color,
+    disabled,
+    error,
+    fullWidth,
+    multiline,
+    required,
+    select,
+    variant
+  };
+  const classes = useUtilityClasses$6(ownerState);
+  if (process.env.NODE_ENV !== 'production') {
+    if (select && !children) {
+      console.error('MUI: `children` must be passed when using the `TextField` component with `select`.');
+    }
+  }
+  const id = useId(idOverride);
+  const helperTextId = helperText && id ? `${id}-helper-text` : undefined;
+  const inputLabelId = label && id ? `${id}-label` : undefined;
+  const InputComponent = variantComponent[variant];
+  const externalForwardedProps = {
+    slots,
+    slotProps
+  };
+  const [SelectSlot, selectProps] = useSlot('select', {
+    elementType: Select$1,
+    externalForwardedProps,
+    ownerState
+  });
+  const nativeSelect = select && selectProps.native;
+  const inputAdditionalProps = {};
+  const inputLabelSlotProps = externalForwardedProps.slotProps.inputLabel;
+  if (variant === 'outlined') {
+    if (inputLabelSlotProps && typeof inputLabelSlotProps.shrink !== 'undefined') {
+      inputAdditionalProps.notched = inputLabelSlotProps.shrink;
+    }
+    inputAdditionalProps.label = label;
+  }
+  if (select) {
+    // unset defaults from textbox inputs
+    if (!nativeSelect) {
+      inputAdditionalProps.id = undefined;
+    }
+    inputAdditionalProps['aria-describedby'] = undefined;
+  }
+  const [RootSlot, rootProps] = useSlot('root', {
+    elementType: TextFieldRoot,
+    shouldForwardComponentProp: true,
+    externalForwardedProps: {
+      ...externalForwardedProps,
+      ...other
+    },
+    ownerState,
+    className: clsx(classes.root, className),
+    ref,
+    additionalProps: {
+      disabled,
+      error,
+      fullWidth,
+      required,
+      color,
+      variant
+    }
+  });
+  const [InputSlot, inputProps] = useSlot('input', {
+    elementType: InputComponent,
+    externalForwardedProps,
+    additionalProps: inputAdditionalProps,
+    ownerState
+  });
+  const [InputLabelSlot, inputLabelProps] = useSlot('inputLabel', {
+    elementType: InputLabel$1,
+    externalForwardedProps,
+    ownerState
+  });
+  const [HtmlInputSlot, htmlInputProps] = useSlot('htmlInput', {
+    elementType: 'input',
+    externalForwardedProps,
+    ownerState
+  });
+  const [FormHelperTextSlot, formHelperTextProps] = useSlot('formHelperText', {
+    elementType: FormHelperText$1,
+    externalForwardedProps,
+    ownerState
+  });
+  const InputElement = /*#__PURE__*/jsxRuntimeExports.jsx(InputSlot, {
+    "aria-describedby": helperTextId,
+    autoComplete: autoComplete,
+    autoFocus: autoFocus,
+    defaultValue: defaultValue,
+    fullWidth: fullWidth,
+    multiline: multiline,
+    name: name,
+    rows: rows,
+    maxRows: maxRows,
+    minRows: minRows,
+    type: type,
+    value: value,
+    id: id,
+    inputRef: inputRef,
+    onBlur: onBlur,
+    onChange: onChange,
+    onFocus: onFocus,
+    placeholder: placeholder,
+    inputProps: htmlInputProps,
+    slots: {
+      input: slots.htmlInput ? HtmlInputSlot : undefined
+    },
+    ...inputProps
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(RootSlot, {
+    ...rootProps,
+    children: [label != null && label !== '' && /*#__PURE__*/jsxRuntimeExports.jsx(InputLabelSlot, {
+      htmlFor: select && !nativeSelect ? undefined : id,
+      id: inputLabelId,
+      ...(select && !nativeSelect && {
+        component: 'div'
+      }),
+      ...inputLabelProps,
+      children: label
+    }), select ? /*#__PURE__*/jsxRuntimeExports.jsx(SelectSlot, {
+      "aria-describedby": helperTextId,
+      id: id,
+      labelId: inputLabelId,
+      value: value,
+      input: InputElement,
+      ...selectProps,
+      children: children
+    }) : InputElement, helperText && /*#__PURE__*/jsxRuntimeExports.jsx(FormHelperTextSlot, {
+      id: helperTextId,
+      ...formHelperTextProps,
+      children: helperText
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? TextField.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * This prop helps users to fill forms faster, especially on mobile devices.
+   * The name can be confusing, as it's more like an autofill.
+   * You can learn more about it [following the specification](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill).
+   */
+  autoComplete: PropTypes.string,
+  /**
+   * If `true`, the `input` element is focused during the first mount.
+   * @default false
+   */
+  autoFocus: PropTypes.bool,
+  /**
+   * @ignore
+   */
+  children: PropTypes.node,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * The color of the component.
+   * It supports both default and custom theme colors, which can be added as shown in the
+   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
+   * @default 'primary'
+   */
+  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary', 'error', 'info', 'success', 'warning']), PropTypes.string]),
+  /**
+   * The default value. Use when the component is not controlled.
+   */
+  defaultValue: PropTypes.any,
+  /**
+   * If `true`, the component is disabled.
+   * @default false
+   */
+  disabled: PropTypes.bool,
+  /**
+   * If `true`, the label is displayed in an error state.
+   * @default false
+   */
+  error: PropTypes.bool,
+  /**
+   * If `true`, the input will take up the full width of its container.
+   * @default false
+   */
+  fullWidth: PropTypes.bool,
+  /**
+   * The helper text content.
+   */
+  helperText: PropTypes.node,
+  /**
+   * The id of the `input` element.
+   * Use this prop to make `label` and `helperText` accessible for screen readers.
+   */
+  id: PropTypes.string,
+  /**
+   * Pass a ref to the `input` element.
+   */
+  inputRef: refType$1,
+  /**
+   * The label content.
+   */
+  label: PropTypes.node,
+  /**
+   * If `dense` or `normal`, will adjust vertical spacing of this and contained components.
+   * @default 'none'
+   */
+  margin: PropTypes.oneOf(['dense', 'none', 'normal']),
+  /**
+   * Maximum number of rows to display when multiline option is set to true.
+   */
+  maxRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Minimum number of rows to display when multiline option is set to true.
+   */
+  minRows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * If `true`, a `textarea` element is rendered instead of an input.
+   * @default false
+   */
+  multiline: PropTypes.bool,
+  /**
+   * Name attribute of the `input` element.
+   */
+  name: PropTypes.string,
+  /**
+   * @ignore
+   */
+  onBlur: PropTypes.func,
+  /**
+   * Callback fired when the value is changed.
+   *
+   * @param {object} event The event source of the callback.
+   * You can pull out the new value by accessing `event.target.value` (string).
+   */
+  onChange: PropTypes.func,
+  /**
+   * @ignore
+   */
+  onFocus: PropTypes.func,
+  /**
+   * The short hint displayed in the `input` before the user enters a value.
+   */
+  placeholder: PropTypes.string,
+  /**
+   * If `true`, the label is displayed as required and the `input` element is required.
+   * @default false
+   */
+  required: PropTypes.bool,
+  /**
+   * Number of rows to display when multiline option is set to true.
+   */
+  rows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  /**
+   * Render a [`Select`](https://mui.com/material-ui/api/select/) element while passing the Input element to `Select` as `input` parameter.
+   * If this option is set you must pass the options of the select as children.
+   * @default false
+   */
+  select: PropTypes.bool,
+  /**
+   * The size of the component.
+   * @default 'medium'
+   */
+  size: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['medium', 'small']), PropTypes.string]),
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes /* @typescript-to-proptypes-ignore */.shape({
+    formHelperText: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    htmlInput: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    input: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    inputLabel: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    select: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    formHelperText: PropTypes.elementType,
+    htmlInput: PropTypes.elementType,
+    input: PropTypes.elementType,
+    inputLabel: PropTypes.elementType,
+    root: PropTypes.elementType,
+    select: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Type of the `input` element. It should be [a valid HTML5 input type](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/input#input_types).
+   */
+  type: PropTypes.string,
+  /**
+   * The value of the `input` element, required for a controlled component.
+   */
+  value: PropTypes.any,
+  /**
+   * The variant to use.
+   * @default 'outlined'
+   */
+  variant: PropTypes.oneOf(['filled', 'outlined', 'standard'])
+} : void 0;
+var TextField$1 = TextField;
+
+function BaseTextInput({
+  ariaLabel,
+  autoComplete,
+  autocomplete,
+  className,
+  helperText,
+  label,
+  labelFallback = '',
+  localizeHelperText = true,
+  slotProps,
+  variant,
+  ...textFieldProps
+}) {
+  const {
+    localize
+  } = reactExports.useContext(MusicNotebookContext);
+  const resolvedLabel = getLocalizedText(localize, label, labelFallback);
+  const resolvedAriaLabel = ariaLabel ? getLocalizedText(localize, ariaLabel, resolvedLabel) : undefined;
+  const resolvedHelperText = localizeHelperText ? getLocalizedText(localize, helperText) : helperText;
+  const inputSlotProps = {
+    ...(slotProps?.htmlInput || {}),
+    ...(resolvedAriaLabel ? {
+      'aria-label': resolvedAriaLabel
+    } : {}),
+    ...(autoComplete || autocomplete ? {
+      autoComplete: autoComplete || autocomplete
+    } : {})
+  };
+  return /*#__PURE__*/React$1.createElement(TextField$1, _extends$2({}, textFieldProps, {
+    className: className ? `base-text-input ${className}` : 'base-text-input',
+    helperText: resolvedHelperText || undefined,
+    label: resolvedLabel,
+    slotProps: {
+      ...slotProps,
+      htmlInput: inputSlotProps
+    },
+    variant: variant || 'outlined'
+  }));
+}
+
+function makeLocalizeMock$1() {
+  return {
+    getLocale() {
+      return 'en-US-u-ms-ussystem';
+    },
+    listen() {},
+    t(phrase) {
+      return {
+        'field.choice': 'Choice',
+        'field.enabled': 'Enabled',
+        'field.name': 'Name',
+        'field.mode': 'Mode',
+        'helper.choice': 'Choose one',
+        'helper.enabled': 'Turns the option on',
+        'helper.name': 'Enter a name',
+        'helper.mode': 'Pick a mode',
+        'mode.major': 'Major',
+        'mode.minor': 'Minor',
+        'option.first': 'First',
+        'option.second': 'Second'
+      }[phrase] || '';
+    },
+    unlisten() {}
+  };
+}
+describe('Base form controls', function () {
+  let harness;
+  afterEach(function () {
+    harness?.unmount();
+    harness = null;
+  });
+  it('renders a localized MUI text input with helper text and accessible description', function () {
+    const localize = makeLocalizeMock$1();
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(BaseTextInput, {
+      helperText: 'helper.name',
+      label: 'field.name',
+      value: 'C'
+    });
+    const input = result.container.querySelector('input');
+    const helper = result.container.querySelector('.MuiFormHelperText-root');
+    expect(input).toBeTruthy();
+    expect(input.value).toBe('C');
+    expect(result.container.textContent).toContain('Name');
+    expect(helper.textContent).toBe('Enter a name');
+    expect(input.getAttribute('aria-describedby')).toBe(helper.id);
+  });
+  it('reports text input changes through the wrapped MUI input', function () {
+    const localize = makeLocalizeMock$1();
+    let nextValue = '';
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(BaseTextInput, {
+      label: 'field.name',
+      onChange(event) {
+        nextValue = event.target.value;
+      }
+    });
+    const input = result.container.querySelector('input');
+    reactExports.act(() => {
+      setInputValue$1(input, 'D');
+      input.dispatchEvent(new Event('input', {
+        bubbles: true
+      }));
+    });
+    expect(nextValue).toBe('D');
+  });
+  it('renders a localized MUI select with selected option and helper text', function () {
+    const localize = makeLocalizeMock$1();
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(BaseSelect, {
+      helperText: 'helper.mode',
+      label: 'field.mode',
+      options: [{
+        label: 'mode.major',
+        value: 'major'
+      }, {
+        label: 'mode.minor',
+        value: 'minor'
+      }],
+      value: 'minor'
+    });
+    expect(result.container.textContent).toContain('Mode');
+    expect(result.container.textContent).toContain('Minor');
+    expect(result.container.querySelector('.MuiFormHelperText-root').textContent).toBe('Pick a mode');
+    expect(result.container.querySelector('[role="combobox"]')).toBeTruthy();
+  });
+  it('renders a localized MUI checkbox with helper text and checked callback', function () {
+    const localize = makeLocalizeMock$1();
+    let checkedValue = null;
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(BaseCheckbox, {
+      checked: false,
+      helperText: 'helper.enabled',
+      label: 'field.enabled',
+      onChange(checked) {
+        checkedValue = checked;
+      }
+    });
+    const checkbox = result.container.querySelector('input[type="checkbox"]');
+    const helper = result.container.querySelector('.MuiFormHelperText-root');
+    reactExports.act(() => {
+      checkbox.dispatchEvent(new MouseEvent('click', {
+        bubbles: true
+      }));
+    });
+    expect(result.container.textContent).toContain('Enabled');
+    expect(helper.textContent).toBe('Turns the option on');
+    expect(checkbox.getAttribute('aria-describedby')).toBe(helper.id);
+    expect(checkedValue).toBe(true);
+  });
+  it('renders localized radio buttons with group labeling', function () {
+    const localize = makeLocalizeMock$1();
+    let nextValue = '';
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(BaseRadioButtons, {
+      helperText: 'helper.choice',
+      label: 'field.choice',
+      onChange(value) {
+        nextValue = value;
+      },
+      options: [{
+        label: 'option.first',
+        value: 'first'
+      }, {
+        label: 'option.second',
+        value: 'second'
+      }],
+      value: 'first'
+    });
+    const radios = result.container.querySelectorAll('input[type="radio"]');
+    const group = result.container.querySelector('[role="radiogroup"]');
+    reactExports.act(() => {
+      radios[1].dispatchEvent(new MouseEvent('click', {
+        bubbles: true
+      }));
+    });
+    expect(result.container.textContent).toContain('Choice');
+    expect(result.container.textContent).toContain('First');
+    expect(result.container.textContent).toContain('Second');
+    expect(group.getAttribute('aria-labelledby')).toBeTruthy();
+    expect(nextValue).toBe('second');
+  });
+});
+function setInputValue$1(input, value) {
+  const valueSetter = Object.getOwnPropertyDescriptor(input, 'value')?.set;
+  const prototypeValueSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')?.set;
+  if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
+    prototypeValueSetter.call(input, value);
+    return;
+  }
+  valueSetter?.call(input, value);
+}
 
 // index.ts
 function isNamedPitch(src) {
@@ -30423,9 +45445,9 @@ var NoMode = {
   seventh: "",
   aliases: []
 };
-var modes$1 = MODES.map(toMode);
+var modes = MODES.map(toMode);
 var index = {};
-modes$1.forEach((mode2) => {
+modes.forEach((mode2) => {
   index[mode2.name] = mode2;
   mode2.aliases.forEach((alias) => {
     index[alias] = mode2;
@@ -30658,13 +45680,35 @@ function normalizeKey(value, fallback = 'C') {
 }
 
 const DEFAULT_ROMAN_NUMERAL = 'I';
+const DEFAULT_KEY_MODE = 'major';
+const MAJOR_NUMERIC_DEGREES = Object.freeze({
+  1: 'I',
+  2: 'ii',
+  3: 'iii',
+  4: 'IV',
+  5: 'V',
+  6: 'vi',
+  7: 'vii\u00b0'
+});
+const MINOR_NUMERIC_DEGREES = Object.freeze({
+  1: 'i',
+  2: 'ii\u00b0',
+  3: 'III',
+  4: 'iv',
+  5: 'v',
+  6: 'VI',
+  7: 'VII'
+});
 function buildKeyboardProgressionPayload({
   key = 'C',
+  keyMode = DEFAULT_KEY_MODE,
   romanNumeral = DEFAULT_ROMAN_NUMERAL
 } = {}, options = {}) {
   const normalizedKey = normalizeKey(key, 'C');
+  const normalizedKeyMode = normalizeKeyMode(keyMode);
   const input = String(romanNumeral || '').trim();
-  const roman = get$3(input);
+  const effectiveRomanNumeral = getEffectiveRomanNumeral(input, normalizedKeyMode);
+  const roman = get$3(effectiveRomanNumeral);
   if (!input || roman.empty) {
     return {
       chordSymbol: '',
@@ -30696,16 +45740,34 @@ function buildKeyboardProgressionPayload({
     chord,
     chordSymbol,
     error: '',
+    effectiveRomanNumeral,
     input,
     isValid: true,
+    keyMode: normalizedKeyMode,
     payload: {
       ...chordResult.payload,
+      displayKeyMode: normalizedKeyMode,
       label: `${normalizedKey}: ${roman.name}`,
+      progressionInput: input,
       progressionId: `typed:${normalizedKey}:${roman.name}`,
       sourceChordSymbol: chordSymbol
     },
     roman
   };
+}
+function getEffectiveRomanNumeral(input, keyMode) {
+  const numericDegree = getNumericDegree(input);
+  if (!numericDegree) {
+    return input;
+  }
+  return keyMode === 'minor' ? MINOR_NUMERIC_DEGREES[numericDegree] : MAJOR_NUMERIC_DEGREES[numericDegree];
+}
+function getNumericDegree(input) {
+  const match = /^([1-7])$/.exec(String(input || '').trim());
+  return match ? Number(match[1]) : null;
+}
+function normalizeKeyMode(keyMode) {
+  return keyMode === 'minor' ? 'minor' : DEFAULT_KEY_MODE;
 }
 function getChordSymbol(key, roman) {
   const root = transpose(key, roman.interval);
@@ -30794,6 +45856,34 @@ describe('ProgressionBuilder', function () {
     expect(result.isValid).toBeTrue();
     expect(result.chordSymbol).toBe('Dm');
     expect(result.payload.notes).toEqual(['D4', 'F4', 'A4']);
+  });
+  it('uses numeric input with major key defaults', function () {
+    const result = buildKeyboardProgressionPayload({
+      key: 'C',
+      keyMode: 'major',
+      romanNumeral: '2'
+    });
+    expect(result.isValid).toBeTrue();
+    expect(result.effectiveRomanNumeral).toBe('ii');
+    expect(result.chordSymbol).toBe('Dm');
+    expect(result.payload.displayKeyMode).toBe('major');
+    expect(result.payload.label).toBe('C: ii');
+    expect(result.payload.progressionInput).toBe('2');
+    expect(result.payload.notes).toEqual(['D4', 'F4', 'A4']);
+  });
+  it('uses numeric input with minor key defaults', function () {
+    const result = buildKeyboardProgressionPayload({
+      key: 'C',
+      keyMode: 'minor',
+      romanNumeral: '2'
+    });
+    expect(result.isValid).toBeTrue();
+    expect(result.effectiveRomanNumeral).toBe('ii\u00b0');
+    expect(result.chordSymbol).toBe('Ddim');
+    expect(result.payload.displayKeyMode).toBe('minor');
+    expect(result.payload.label).toBe('C: ii\u00b0');
+    expect(result.payload.progressionInput).toBe('2');
+    expect(result.payload.notes).toEqual(['D4', 'F4', 'Ab4']);
   });
   it('accepts typed key names beyond the dropdown defaults', function () {
     const result = buildKeyboardProgressionPayload({
@@ -32180,7 +47270,7 @@ LazyWrapper.prototype.constructor = LazyWrapper;
  * _.times(2, _.noop);
  * // => [undefined, undefined]
  */
-function noop$2() {
+function noop() {
   // No operation performed.
 }
 
@@ -32191,7 +47281,7 @@ function noop$2() {
  * @param {Function} func The function to query.
  * @returns {*} Returns the metadata for `func`.
  */
-var getData = !metaMap ? noop$2 : function (func) {
+var getData = !metaMap ? noop : function (func) {
   return metaMap.get(func);
 };
 
@@ -40851,7 +55941,7 @@ function baseValues(object, props) {
  * _.values('hi');
  * // => ['h', 'i']
  */
-function values$1(object) {
+function values(object) {
   return object == null ? [] : baseValues(object, keys(object));
 }
 
@@ -40889,7 +55979,7 @@ var nativeMax$8 = Math.max;
  * // => true
  */
 function includes(collection, value, fromIndex, guard) {
-  collection = isArrayLike$1(collection) ? collection : values$1(collection);
+  collection = isArrayLike$1(collection) ? collection : values(collection);
   fromIndex = fromIndex && !guard ? toInteger(fromIndex) : 0;
   var length = collection.length;
   if (fromIndex < 0) {
@@ -42915,7 +58005,7 @@ function toArray(value) {
     return iteratorToArray(value[symIterator$1]());
   }
   var tag = getTag$1(value),
-    func = tag == mapTag$1 ? mapToArray : tag == setTag$1 ? setToArray : values$1;
+    func = tag == mapTag$1 ? mapToArray : tag == setTag$1 ? setToArray : values;
   return func(value);
 }
 
@@ -44994,7 +60084,7 @@ function arraySample(array) {
  * @returns {*} Returns the random element.
  */
 function baseSample(collection) {
-  return arraySample(values$1(collection));
+  return arraySample(values(collection));
 }
 
 /**
@@ -45060,7 +60150,7 @@ function arraySampleSize(array, n) {
  * @returns {Array} Returns the random elements.
  */
 function baseSampleSize(collection, n) {
-  var array = values$1(collection);
+  var array = values(collection);
   return shuffleSelf(array, baseClamp(n, 0, array.length));
 }
 
@@ -45174,7 +60264,7 @@ function arrayShuffle(array) {
  * @returns {Array} Returns the new shuffled array.
  */
 function baseShuffle(collection) {
-  return shuffleSelf(values$1(collection));
+  return shuffleSelf(values(collection));
 }
 
 /**
@@ -47178,7 +62268,7 @@ var INFINITY = 1 / 0;
  * @param {Array} values The values to add to the set.
  * @returns {Object} Returns the new set.
  */
-var createSet = !(Set$1 && 1 / setToArray(new Set$1([, -0]))[1] == INFINITY) ? noop$2 : function (values) {
+var createSet = !(Set$1 && 1 / setToArray(new Set$1([, -0]))[1] == INFINITY) ? noop : function (values) {
   return new Set$1(values);
 };
 
@@ -48277,7 +63367,7 @@ var object = {
   unset,
   update,
   updateWith,
-  values: values$1,
+  values,
   valuesIn
 };
 
@@ -48348,7 +63438,7 @@ var util = {
   method,
   methodOf,
   mixin: mixin$1,
-  noop: noop$2,
+  noop,
   nthArg,
   over,
   overEvery,
@@ -56040,7 +71130,7 @@ class Selection {
     return [range, normalized];
   }
   hasFocus() {
-    return document.activeElement === this.root || document.activeElement != null && contains$1(this.root, document.activeElement);
+    return document.activeElement === this.root || document.activeElement != null && contains(this.root, document.activeElement);
   }
   normalizedToRange(range) {
     const positions = [[range.start.node, range.start.offset]];
@@ -56066,7 +71156,7 @@ class Selection {
     return new Range(start, end - start);
   }
   normalizeNative(nativeRange) {
-    if (!contains$1(this.root, nativeRange.startContainer) || !nativeRange.collapsed && !contains$1(this.root, nativeRange.endContainer)) {
+    if (!contains(this.root, nativeRange.startContainer) || !nativeRange.collapsed && !contains(this.root, nativeRange.endContainer)) {
       return null;
     }
     const range = {
@@ -56202,7 +71292,7 @@ class Selection {
     }
   }
 }
-function contains$1(parent, descendant) {
+function contains(parent, descendant) {
   try {
     // Firefox inserts inaccessible nodes around video elements
     descendant.parentNode; // eslint-disable-line @typescript-eslint/no-unused-expressions
@@ -57811,13 +72901,13 @@ function insertInlineContents(parent, index, inlineContents) {
   }, index);
 }
 
-const config$3 = {
+const config$2 = {
   scope: Scope.BLOCK,
   whitelist: ['right', 'center', 'justify']
 };
-const AlignAttribute = new Attributor('align', 'align', config$3);
-const AlignClass = new ClassAttributor$1('align', 'ql-align', config$3);
-const AlignStyle = new StyleAttributor$1('align', 'text-align', config$3);
+const AlignAttribute = new Attributor('align', 'align', config$2);
+const AlignClass = new ClassAttributor$1('align', 'ql-align', config$2);
+const AlignStyle = new StyleAttributor$1('align', 'text-align', config$2);
 
 class ColorAttributor extends StyleAttributor$1 {
   value(domNode) {
@@ -57878,25 +72968,25 @@ CodeBlockContainer.allowedChildren = [CodeBlock];
 CodeBlock.allowedChildren = [Text$1, Break, Cursor];
 CodeBlock.requiredContainer = CodeBlockContainer;
 
-const config$2 = {
+const config$1 = {
   scope: Scope.BLOCK,
   whitelist: ['rtl']
 };
-const DirectionAttribute = new Attributor('direction', 'dir', config$2);
-const DirectionClass = new ClassAttributor$1('direction', 'ql-direction', config$2);
-const DirectionStyle = new StyleAttributor$1('direction', 'direction', config$2);
+const DirectionAttribute = new Attributor('direction', 'dir', config$1);
+const DirectionClass = new ClassAttributor$1('direction', 'ql-direction', config$1);
+const DirectionStyle = new StyleAttributor$1('direction', 'direction', config$1);
 
-const config$1 = {
+const config = {
   scope: Scope.INLINE,
   whitelist: ['serif', 'monospace']
 };
-const FontClass = new ClassAttributor$1('font', 'ql-font', config$1);
+const FontClass = new ClassAttributor$1('font', 'ql-font', config);
 class FontStyleAttributor extends StyleAttributor$1 {
   value(node) {
     return super.value(node).replace(/["']/g, '');
   }
 }
-const FontStyle = new FontStyleAttributor('font', 'font-family', config$1);
+const FontStyle = new FontStyleAttributor('font', 'font-family', config);
 
 const SizeClass = new ClassAttributor$1('size', 'ql-size', {
   scope: Scope.INLINE,
@@ -77394,3073 +92484,6 @@ n(css$2,{});
 var css$1 = "/*!\n * Quill Editor v2.0.3\n * https://quilljs.com\n * Copyright (c) 2017-2024, Slab\n * Copyright (c) 2014, Jason Chen\n * Copyright (c) 2013, salesforce.com\n */\n.ql-container{box-sizing:border-box;font-family:Helvetica,Arial,sans-serif;font-size:13px;height:100%;margin:0;position:relative}.ql-container.ql-disabled .ql-tooltip{visibility:hidden}.ql-container:not(.ql-disabled) li[data-list=checked] > .ql-ui,.ql-container:not(.ql-disabled) li[data-list=unchecked] > .ql-ui{cursor:pointer}.ql-clipboard{left:-100000px;height:1px;overflow-y:hidden;position:absolute;top:50%}.ql-clipboard p{margin:0;padding:0}.ql-editor{box-sizing:border-box;counter-reset:list-0 list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9;line-height:1.42;height:100%;outline:none;overflow-y:auto;padding:12px 15px;tab-size:4;-moz-tab-size:4;text-align:left;white-space:pre-wrap;word-wrap:break-word}.ql-editor > *{cursor:text}.ql-editor p,.ql-editor ol,.ql-editor pre,.ql-editor blockquote,.ql-editor h1,.ql-editor h2,.ql-editor h3,.ql-editor h4,.ql-editor h5,.ql-editor h6{margin:0;padding:0}@supports (counter-set:none){.ql-editor p,.ql-editor h1,.ql-editor h2,.ql-editor h3,.ql-editor h4,.ql-editor h5,.ql-editor h6{counter-set:list-0 list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor p,.ql-editor h1,.ql-editor h2,.ql-editor h3,.ql-editor h4,.ql-editor h5,.ql-editor h6{counter-reset:list-0 list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9}}.ql-editor table{border-collapse:collapse}.ql-editor td{border:1px solid #000;padding:2px 5px}.ql-editor ol{padding-left:1.5em}.ql-editor li{list-style-type:none;padding-left:1.5em;position:relative}.ql-editor li > .ql-ui:before{display:inline-block;margin-left:-1.5em;margin-right:.3em;text-align:right;white-space:nowrap;width:1.2em}.ql-editor li[data-list=checked] > .ql-ui,.ql-editor li[data-list=unchecked] > .ql-ui{color:#777}.ql-editor li[data-list=bullet] > .ql-ui:before{content:'\\2022'}.ql-editor li[data-list=checked] > .ql-ui:before{content:'\\2611'}.ql-editor li[data-list=unchecked] > .ql-ui:before{content:'\\2610'}@supports (counter-set:none){.ql-editor li[data-list]{counter-set:list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list]{counter-reset:list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9}}.ql-editor li[data-list=ordered]{counter-increment:list-0}.ql-editor li[data-list=ordered] > .ql-ui:before{content:counter(list-0, decimal) '. '}.ql-editor li[data-list=ordered].ql-indent-1{counter-increment:list-1}.ql-editor li[data-list=ordered].ql-indent-1 > .ql-ui:before{content:counter(list-1, lower-alpha) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-1{counter-set:list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-1{counter-reset:list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-2{counter-increment:list-2}.ql-editor li[data-list=ordered].ql-indent-2 > .ql-ui:before{content:counter(list-2, lower-roman) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-2{counter-set:list-3 list-4 list-5 list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-2{counter-reset:list-3 list-4 list-5 list-6 list-7 list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-3{counter-increment:list-3}.ql-editor li[data-list=ordered].ql-indent-3 > .ql-ui:before{content:counter(list-3, decimal) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-3{counter-set:list-4 list-5 list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-3{counter-reset:list-4 list-5 list-6 list-7 list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-4{counter-increment:list-4}.ql-editor li[data-list=ordered].ql-indent-4 > .ql-ui:before{content:counter(list-4, lower-alpha) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-4{counter-set:list-5 list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-4{counter-reset:list-5 list-6 list-7 list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-5{counter-increment:list-5}.ql-editor li[data-list=ordered].ql-indent-5 > .ql-ui:before{content:counter(list-5, lower-roman) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-5{counter-set:list-6 list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-5{counter-reset:list-6 list-7 list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-6{counter-increment:list-6}.ql-editor li[data-list=ordered].ql-indent-6 > .ql-ui:before{content:counter(list-6, decimal) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-6{counter-set:list-7 list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-6{counter-reset:list-7 list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-7{counter-increment:list-7}.ql-editor li[data-list=ordered].ql-indent-7 > .ql-ui:before{content:counter(list-7, lower-alpha) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-7{counter-set:list-8 list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-7{counter-reset:list-8 list-9}}.ql-editor li[data-list=ordered].ql-indent-8{counter-increment:list-8}.ql-editor li[data-list=ordered].ql-indent-8 > .ql-ui:before{content:counter(list-8, lower-roman) '. '}@supports (counter-set:none){.ql-editor li[data-list].ql-indent-8{counter-set:list-9}}@supports not (counter-set:none){.ql-editor li[data-list].ql-indent-8{counter-reset:list-9}}.ql-editor li[data-list=ordered].ql-indent-9{counter-increment:list-9}.ql-editor li[data-list=ordered].ql-indent-9 > .ql-ui:before{content:counter(list-9, decimal) '. '}.ql-editor .ql-indent-1:not(.ql-direction-rtl){padding-left:3em}.ql-editor li.ql-indent-1:not(.ql-direction-rtl){padding-left:4.5em}.ql-editor .ql-indent-1.ql-direction-rtl.ql-align-right{padding-right:3em}.ql-editor li.ql-indent-1.ql-direction-rtl.ql-align-right{padding-right:4.5em}.ql-editor .ql-indent-2:not(.ql-direction-rtl){padding-left:6em}.ql-editor li.ql-indent-2:not(.ql-direction-rtl){padding-left:7.5em}.ql-editor .ql-indent-2.ql-direction-rtl.ql-align-right{padding-right:6em}.ql-editor li.ql-indent-2.ql-direction-rtl.ql-align-right{padding-right:7.5em}.ql-editor .ql-indent-3:not(.ql-direction-rtl){padding-left:9em}.ql-editor li.ql-indent-3:not(.ql-direction-rtl){padding-left:10.5em}.ql-editor .ql-indent-3.ql-direction-rtl.ql-align-right{padding-right:9em}.ql-editor li.ql-indent-3.ql-direction-rtl.ql-align-right{padding-right:10.5em}.ql-editor .ql-indent-4:not(.ql-direction-rtl){padding-left:12em}.ql-editor li.ql-indent-4:not(.ql-direction-rtl){padding-left:13.5em}.ql-editor .ql-indent-4.ql-direction-rtl.ql-align-right{padding-right:12em}.ql-editor li.ql-indent-4.ql-direction-rtl.ql-align-right{padding-right:13.5em}.ql-editor .ql-indent-5:not(.ql-direction-rtl){padding-left:15em}.ql-editor li.ql-indent-5:not(.ql-direction-rtl){padding-left:16.5em}.ql-editor .ql-indent-5.ql-direction-rtl.ql-align-right{padding-right:15em}.ql-editor li.ql-indent-5.ql-direction-rtl.ql-align-right{padding-right:16.5em}.ql-editor .ql-indent-6:not(.ql-direction-rtl){padding-left:18em}.ql-editor li.ql-indent-6:not(.ql-direction-rtl){padding-left:19.5em}.ql-editor .ql-indent-6.ql-direction-rtl.ql-align-right{padding-right:18em}.ql-editor li.ql-indent-6.ql-direction-rtl.ql-align-right{padding-right:19.5em}.ql-editor .ql-indent-7:not(.ql-direction-rtl){padding-left:21em}.ql-editor li.ql-indent-7:not(.ql-direction-rtl){padding-left:22.5em}.ql-editor .ql-indent-7.ql-direction-rtl.ql-align-right{padding-right:21em}.ql-editor li.ql-indent-7.ql-direction-rtl.ql-align-right{padding-right:22.5em}.ql-editor .ql-indent-8:not(.ql-direction-rtl){padding-left:24em}.ql-editor li.ql-indent-8:not(.ql-direction-rtl){padding-left:25.5em}.ql-editor .ql-indent-8.ql-direction-rtl.ql-align-right{padding-right:24em}.ql-editor li.ql-indent-8.ql-direction-rtl.ql-align-right{padding-right:25.5em}.ql-editor .ql-indent-9:not(.ql-direction-rtl){padding-left:27em}.ql-editor li.ql-indent-9:not(.ql-direction-rtl){padding-left:28.5em}.ql-editor .ql-indent-9.ql-direction-rtl.ql-align-right{padding-right:27em}.ql-editor li.ql-indent-9.ql-direction-rtl.ql-align-right{padding-right:28.5em}.ql-editor li.ql-direction-rtl{padding-right:1.5em}.ql-editor li.ql-direction-rtl > .ql-ui:before{margin-left:.3em;margin-right:-1.5em;text-align:left}.ql-editor table{table-layout:fixed;width:100%}.ql-editor table td{outline:none}.ql-editor .ql-code-block-container{font-family:monospace}.ql-editor .ql-video{display:block;max-width:100%}.ql-editor .ql-video.ql-align-center{margin:0 auto}.ql-editor .ql-video.ql-align-right{margin:0 0 0 auto}.ql-editor .ql-bg-black{background-color:#000}.ql-editor .ql-bg-red{background-color:#e60000}.ql-editor .ql-bg-orange{background-color:#f90}.ql-editor .ql-bg-yellow{background-color:#ff0}.ql-editor .ql-bg-green{background-color:#008a00}.ql-editor .ql-bg-blue{background-color:#06c}.ql-editor .ql-bg-purple{background-color:#93f}.ql-editor .ql-color-white{color:#fff}.ql-editor .ql-color-red{color:#e60000}.ql-editor .ql-color-orange{color:#f90}.ql-editor .ql-color-yellow{color:#ff0}.ql-editor .ql-color-green{color:#008a00}.ql-editor .ql-color-blue{color:#06c}.ql-editor .ql-color-purple{color:#93f}.ql-editor .ql-font-serif{font-family:Georgia,Times New Roman,serif}.ql-editor .ql-font-monospace{font-family:Monaco,Courier New,monospace}.ql-editor .ql-size-small{font-size:.75em}.ql-editor .ql-size-large{font-size:1.5em}.ql-editor .ql-size-huge{font-size:2.5em}.ql-editor .ql-direction-rtl{direction:rtl;text-align:inherit}.ql-editor .ql-align-center{text-align:center}.ql-editor .ql-align-justify{text-align:justify}.ql-editor .ql-align-right{text-align:right}.ql-editor .ql-ui{position:absolute}.ql-editor.ql-blank::before{color:rgba(0,0,0,0.6);content:attr(data-placeholder);font-style:italic;left:15px;pointer-events:none;position:absolute;right:15px}.ql-snow.ql-toolbar:after,.ql-snow .ql-toolbar:after{clear:both;content:'';display:table}.ql-snow.ql-toolbar button,.ql-snow .ql-toolbar button{background:none;border:none;cursor:pointer;display:inline-block;float:left;height:24px;padding:3px 5px;width:28px}.ql-snow.ql-toolbar button svg,.ql-snow .ql-toolbar button svg{float:left;height:100%}.ql-snow.ql-toolbar button:active:hover,.ql-snow .ql-toolbar button:active:hover{outline:none}.ql-snow.ql-toolbar input.ql-image[type=file],.ql-snow .ql-toolbar input.ql-image[type=file]{display:none}.ql-snow.ql-toolbar button:hover,.ql-snow .ql-toolbar button:hover,.ql-snow.ql-toolbar button:focus,.ql-snow .ql-toolbar button:focus,.ql-snow.ql-toolbar button.ql-active,.ql-snow .ql-toolbar button.ql-active,.ql-snow.ql-toolbar .ql-picker-label:hover,.ql-snow .ql-toolbar .ql-picker-label:hover,.ql-snow.ql-toolbar .ql-picker-label.ql-active,.ql-snow .ql-toolbar .ql-picker-label.ql-active,.ql-snow.ql-toolbar .ql-picker-item:hover,.ql-snow .ql-toolbar .ql-picker-item:hover,.ql-snow.ql-toolbar .ql-picker-item.ql-selected,.ql-snow .ql-toolbar .ql-picker-item.ql-selected{color:#06c}.ql-snow.ql-toolbar button:hover .ql-fill,.ql-snow .ql-toolbar button:hover .ql-fill,.ql-snow.ql-toolbar button:focus .ql-fill,.ql-snow .ql-toolbar button:focus .ql-fill,.ql-snow.ql-toolbar button.ql-active .ql-fill,.ql-snow .ql-toolbar button.ql-active .ql-fill,.ql-snow.ql-toolbar .ql-picker-label:hover .ql-fill,.ql-snow .ql-toolbar .ql-picker-label:hover .ql-fill,.ql-snow.ql-toolbar .ql-picker-label.ql-active .ql-fill,.ql-snow .ql-toolbar .ql-picker-label.ql-active .ql-fill,.ql-snow.ql-toolbar .ql-picker-item:hover .ql-fill,.ql-snow .ql-toolbar .ql-picker-item:hover .ql-fill,.ql-snow.ql-toolbar .ql-picker-item.ql-selected .ql-fill,.ql-snow .ql-toolbar .ql-picker-item.ql-selected .ql-fill,.ql-snow.ql-toolbar button:hover .ql-stroke.ql-fill,.ql-snow .ql-toolbar button:hover .ql-stroke.ql-fill,.ql-snow.ql-toolbar button:focus .ql-stroke.ql-fill,.ql-snow .ql-toolbar button:focus .ql-stroke.ql-fill,.ql-snow.ql-toolbar button.ql-active .ql-stroke.ql-fill,.ql-snow .ql-toolbar button.ql-active .ql-stroke.ql-fill,.ql-snow.ql-toolbar .ql-picker-label:hover .ql-stroke.ql-fill,.ql-snow .ql-toolbar .ql-picker-label:hover .ql-stroke.ql-fill,.ql-snow.ql-toolbar .ql-picker-label.ql-active .ql-stroke.ql-fill,.ql-snow .ql-toolbar .ql-picker-label.ql-active .ql-stroke.ql-fill,.ql-snow.ql-toolbar .ql-picker-item:hover .ql-stroke.ql-fill,.ql-snow .ql-toolbar .ql-picker-item:hover .ql-stroke.ql-fill,.ql-snow.ql-toolbar .ql-picker-item.ql-selected .ql-stroke.ql-fill,.ql-snow .ql-toolbar .ql-picker-item.ql-selected .ql-stroke.ql-fill{fill:#06c}.ql-snow.ql-toolbar button:hover .ql-stroke,.ql-snow .ql-toolbar button:hover .ql-stroke,.ql-snow.ql-toolbar button:focus .ql-stroke,.ql-snow .ql-toolbar button:focus .ql-stroke,.ql-snow.ql-toolbar button.ql-active .ql-stroke,.ql-snow .ql-toolbar button.ql-active .ql-stroke,.ql-snow.ql-toolbar .ql-picker-label:hover .ql-stroke,.ql-snow .ql-toolbar .ql-picker-label:hover .ql-stroke,.ql-snow.ql-toolbar .ql-picker-label.ql-active .ql-stroke,.ql-snow .ql-toolbar .ql-picker-label.ql-active .ql-stroke,.ql-snow.ql-toolbar .ql-picker-item:hover .ql-stroke,.ql-snow .ql-toolbar .ql-picker-item:hover .ql-stroke,.ql-snow.ql-toolbar .ql-picker-item.ql-selected .ql-stroke,.ql-snow .ql-toolbar .ql-picker-item.ql-selected .ql-stroke,.ql-snow.ql-toolbar button:hover .ql-stroke-miter,.ql-snow .ql-toolbar button:hover .ql-stroke-miter,.ql-snow.ql-toolbar button:focus .ql-stroke-miter,.ql-snow .ql-toolbar button:focus .ql-stroke-miter,.ql-snow.ql-toolbar button.ql-active .ql-stroke-miter,.ql-snow .ql-toolbar button.ql-active .ql-stroke-miter,.ql-snow.ql-toolbar .ql-picker-label:hover .ql-stroke-miter,.ql-snow .ql-toolbar .ql-picker-label:hover .ql-stroke-miter,.ql-snow.ql-toolbar .ql-picker-label.ql-active .ql-stroke-miter,.ql-snow .ql-toolbar .ql-picker-label.ql-active .ql-stroke-miter,.ql-snow.ql-toolbar .ql-picker-item:hover .ql-stroke-miter,.ql-snow .ql-toolbar .ql-picker-item:hover .ql-stroke-miter,.ql-snow.ql-toolbar .ql-picker-item.ql-selected .ql-stroke-miter,.ql-snow .ql-toolbar .ql-picker-item.ql-selected .ql-stroke-miter{stroke:#06c}@media (pointer:coarse){.ql-snow.ql-toolbar button:hover:not(.ql-active),.ql-snow .ql-toolbar button:hover:not(.ql-active){color:#444}.ql-snow.ql-toolbar button:hover:not(.ql-active) .ql-fill,.ql-snow .ql-toolbar button:hover:not(.ql-active) .ql-fill,.ql-snow.ql-toolbar button:hover:not(.ql-active) .ql-stroke.ql-fill,.ql-snow .ql-toolbar button:hover:not(.ql-active) .ql-stroke.ql-fill{fill:#444}.ql-snow.ql-toolbar button:hover:not(.ql-active) .ql-stroke,.ql-snow .ql-toolbar button:hover:not(.ql-active) .ql-stroke,.ql-snow.ql-toolbar button:hover:not(.ql-active) .ql-stroke-miter,.ql-snow .ql-toolbar button:hover:not(.ql-active) .ql-stroke-miter{stroke:#444}}.ql-snow{box-sizing:border-box}.ql-snow *{box-sizing:border-box}.ql-snow .ql-hidden{display:none}.ql-snow .ql-out-bottom,.ql-snow .ql-out-top{visibility:hidden}.ql-snow .ql-tooltip{position:absolute;transform:translateY(10px)}.ql-snow .ql-tooltip a{cursor:pointer;text-decoration:none}.ql-snow .ql-tooltip.ql-flip{transform:translateY(-10px)}.ql-snow .ql-formats{display:inline-block;vertical-align:middle}.ql-snow .ql-formats:after{clear:both;content:'';display:table}.ql-snow .ql-stroke{fill:none;stroke:#444;stroke-linecap:round;stroke-linejoin:round;stroke-width:2}.ql-snow .ql-stroke-miter{fill:none;stroke:#444;stroke-miterlimit:10;stroke-width:2}.ql-snow .ql-fill,.ql-snow .ql-stroke.ql-fill{fill:#444}.ql-snow .ql-empty{fill:none}.ql-snow .ql-even{fill-rule:evenodd}.ql-snow .ql-thin,.ql-snow .ql-stroke.ql-thin{stroke-width:1}.ql-snow .ql-transparent{opacity:.4}.ql-snow .ql-direction svg:last-child{display:none}.ql-snow .ql-direction.ql-active svg:last-child{display:inline}.ql-snow .ql-direction.ql-active svg:first-child{display:none}.ql-snow .ql-editor h1{font-size:2em}.ql-snow .ql-editor h2{font-size:1.5em}.ql-snow .ql-editor h3{font-size:1.17em}.ql-snow .ql-editor h4{font-size:1em}.ql-snow .ql-editor h5{font-size:.83em}.ql-snow .ql-editor h6{font-size:.67em}.ql-snow .ql-editor a{text-decoration:underline}.ql-snow .ql-editor blockquote{border-left:4px solid #ccc;margin-bottom:5px;margin-top:5px;padding-left:16px}.ql-snow .ql-editor code,.ql-snow .ql-editor .ql-code-block-container{background-color:#f0f0f0;border-radius:3px}.ql-snow .ql-editor .ql-code-block-container{margin-bottom:5px;margin-top:5px;padding:5px 10px}.ql-snow .ql-editor code{font-size:85%;padding:2px 4px}.ql-snow .ql-editor .ql-code-block-container{background-color:#23241f;color:#f8f8f2;overflow:visible}.ql-snow .ql-editor img{max-width:100%}.ql-snow .ql-picker{color:#444;display:inline-block;float:left;font-size:14px;font-weight:500;height:24px;position:relative;vertical-align:middle}.ql-snow .ql-picker-label{cursor:pointer;display:inline-block;height:100%;padding-left:8px;padding-right:2px;position:relative;width:100%}.ql-snow .ql-picker-label::before{display:inline-block;line-height:22px}.ql-snow .ql-picker-options{background-color:#fff;display:none;min-width:100%;padding:4px 8px;position:absolute;white-space:nowrap}.ql-snow .ql-picker-options .ql-picker-item{cursor:pointer;display:block;padding-bottom:5px;padding-top:5px}.ql-snow .ql-picker.ql-expanded .ql-picker-label{color:#ccc;z-index:2}.ql-snow .ql-picker.ql-expanded .ql-picker-label .ql-fill{fill:#ccc}.ql-snow .ql-picker.ql-expanded .ql-picker-label .ql-stroke{stroke:#ccc}.ql-snow .ql-picker.ql-expanded .ql-picker-options{display:block;margin-top:-1px;top:100%;z-index:1}.ql-snow .ql-color-picker,.ql-snow .ql-icon-picker{width:28px}.ql-snow .ql-color-picker .ql-picker-label,.ql-snow .ql-icon-picker .ql-picker-label{padding:2px 4px}.ql-snow .ql-color-picker .ql-picker-label svg,.ql-snow .ql-icon-picker .ql-picker-label svg{right:4px}.ql-snow .ql-icon-picker .ql-picker-options{padding:4px 0}.ql-snow .ql-icon-picker .ql-picker-item{height:24px;width:24px;padding:2px 4px}.ql-snow .ql-color-picker .ql-picker-options{padding:3px 5px;width:152px}.ql-snow .ql-color-picker .ql-picker-item{border:1px solid transparent;float:left;height:16px;margin:2px;padding:0;width:16px}.ql-snow .ql-picker:not(.ql-color-picker):not(.ql-icon-picker) svg{position:absolute;margin-top:-9px;right:0;top:50%;width:18px}.ql-snow .ql-picker.ql-header .ql-picker-label[data-label]:not([data-label=''])::before,.ql-snow .ql-picker.ql-font .ql-picker-label[data-label]:not([data-label=''])::before,.ql-snow .ql-picker.ql-size .ql-picker-label[data-label]:not([data-label=''])::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-label]:not([data-label=''])::before,.ql-snow .ql-picker.ql-font .ql-picker-item[data-label]:not([data-label=''])::before,.ql-snow .ql-picker.ql-size .ql-picker-item[data-label]:not([data-label=''])::before{content:attr(data-label)}.ql-snow .ql-picker.ql-header{width:98px}.ql-snow .ql-picker.ql-header .ql-picker-label::before,.ql-snow .ql-picker.ql-header .ql-picker-item::before{content:'Normal'}.ql-snow .ql-picker.ql-header .ql-picker-label[data-value=\"1\"]::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"1\"]::before{content:'Heading 1'}.ql-snow .ql-picker.ql-header .ql-picker-label[data-value=\"2\"]::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"2\"]::before{content:'Heading 2'}.ql-snow .ql-picker.ql-header .ql-picker-label[data-value=\"3\"]::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"3\"]::before{content:'Heading 3'}.ql-snow .ql-picker.ql-header .ql-picker-label[data-value=\"4\"]::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"4\"]::before{content:'Heading 4'}.ql-snow .ql-picker.ql-header .ql-picker-label[data-value=\"5\"]::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"5\"]::before{content:'Heading 5'}.ql-snow .ql-picker.ql-header .ql-picker-label[data-value=\"6\"]::before,.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"6\"]::before{content:'Heading 6'}.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"1\"]::before{font-size:2em}.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"2\"]::before{font-size:1.5em}.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"3\"]::before{font-size:1.17em}.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"4\"]::before{font-size:1em}.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"5\"]::before{font-size:.83em}.ql-snow .ql-picker.ql-header .ql-picker-item[data-value=\"6\"]::before{font-size:.67em}.ql-snow .ql-picker.ql-font{width:108px}.ql-snow .ql-picker.ql-font .ql-picker-label::before,.ql-snow .ql-picker.ql-font .ql-picker-item::before{content:'Sans Serif'}.ql-snow .ql-picker.ql-font .ql-picker-label[data-value=serif]::before,.ql-snow .ql-picker.ql-font .ql-picker-item[data-value=serif]::before{content:'Serif'}.ql-snow .ql-picker.ql-font .ql-picker-label[data-value=monospace]::before,.ql-snow .ql-picker.ql-font .ql-picker-item[data-value=monospace]::before{content:'Monospace'}.ql-snow .ql-picker.ql-font .ql-picker-item[data-value=serif]::before{font-family:Georgia,Times New Roman,serif}.ql-snow .ql-picker.ql-font .ql-picker-item[data-value=monospace]::before{font-family:Monaco,Courier New,monospace}.ql-snow .ql-picker.ql-size{width:98px}.ql-snow .ql-picker.ql-size .ql-picker-label::before,.ql-snow .ql-picker.ql-size .ql-picker-item::before{content:'Normal'}.ql-snow .ql-picker.ql-size .ql-picker-label[data-value=small]::before,.ql-snow .ql-picker.ql-size .ql-picker-item[data-value=small]::before{content:'Small'}.ql-snow .ql-picker.ql-size .ql-picker-label[data-value=large]::before,.ql-snow .ql-picker.ql-size .ql-picker-item[data-value=large]::before{content:'Large'}.ql-snow .ql-picker.ql-size .ql-picker-label[data-value=huge]::before,.ql-snow .ql-picker.ql-size .ql-picker-item[data-value=huge]::before{content:'Huge'}.ql-snow .ql-picker.ql-size .ql-picker-item[data-value=small]::before{font-size:10px}.ql-snow .ql-picker.ql-size .ql-picker-item[data-value=large]::before{font-size:18px}.ql-snow .ql-picker.ql-size .ql-picker-item[data-value=huge]::before{font-size:32px}.ql-snow .ql-color-picker.ql-background .ql-picker-item{background-color:#fff}.ql-snow .ql-color-picker.ql-color .ql-picker-item{background-color:#000}.ql-code-block-container{position:relative}.ql-code-block-container .ql-ui{right:5px;top:5px}.ql-toolbar.ql-snow{border:1px solid #ccc;box-sizing:border-box;font-family:'Helvetica Neue','Helvetica','Arial',sans-serif;padding:8px}.ql-toolbar.ql-snow .ql-formats{margin-right:15px}.ql-toolbar.ql-snow .ql-picker-label{border:1px solid transparent}.ql-toolbar.ql-snow .ql-picker-options{border:1px solid transparent;box-shadow:rgba(0,0,0,0.2) 0 2px 8px}.ql-toolbar.ql-snow .ql-picker.ql-expanded .ql-picker-label{border-color:#ccc}.ql-toolbar.ql-snow .ql-picker.ql-expanded .ql-picker-options{border-color:#ccc}.ql-toolbar.ql-snow .ql-color-picker .ql-picker-item.ql-selected,.ql-toolbar.ql-snow .ql-color-picker .ql-picker-item:hover{border-color:#000}.ql-toolbar.ql-snow + .ql-container.ql-snow{border-top:0}.ql-snow .ql-tooltip{background-color:#fff;border:1px solid #ccc;box-shadow:0 0 5px #ddd;color:#444;padding:5px 12px;white-space:nowrap}.ql-snow .ql-tooltip::before{content:\"Visit URL:\";line-height:26px;margin-right:8px}.ql-snow .ql-tooltip input[type=text]{display:none;border:1px solid #ccc;font-size:13px;height:26px;margin:0;padding:3px 5px;width:170px}.ql-snow .ql-tooltip a.ql-preview{display:inline-block;max-width:200px;overflow-x:hidden;text-overflow:ellipsis;vertical-align:top}.ql-snow .ql-tooltip a.ql-action::after{border-right:1px solid #ccc;content:'Edit';margin-left:16px;padding-right:8px}.ql-snow .ql-tooltip a.ql-remove::before{content:'Remove';margin-left:8px}.ql-snow .ql-tooltip a{line-height:26px}.ql-snow .ql-tooltip.ql-editing a.ql-preview,.ql-snow .ql-tooltip.ql-editing a.ql-remove{display:none}.ql-snow .ql-tooltip.ql-editing input[type=text]{display:inline-block}.ql-snow .ql-tooltip.ql-editing a.ql-action::after{border-right:0;content:'Save';padding-right:0}.ql-snow .ql-tooltip[data-mode=link]::before{content:\"Enter link:\"}.ql-snow .ql-tooltip[data-mode=formula]::before{content:\"Enter formula:\"}.ql-snow .ql-tooltip[data-mode=video]::before{content:\"Enter video:\"}.ql-snow a{color:#06c}.ql-container.ql-snow{border:1px solid #ccc}\n";
 n(css$1,{});
 
-/**
- * Safe chained function.
- *
- * Will only create a new function if needed,
- * otherwise will pass back existing functions or null.
- */
-function createChainedFunction(...funcs) {
-  return funcs.reduce((acc, func) => {
-    if (func == null) {
-      return acc;
-    }
-    return function chainedFunction(...args) {
-      acc.apply(this, args);
-      func.apply(this, args);
-    };
-  }, () => {});
-}
-
-/**
- * Gets the actual active element, traversing through shadow roots if necessary.
- *
- * When an element inside a shadow root has focus, `document.activeElement` returns
- * the shadow host element. This function recursively traverses shadow roots to find
- * the actual focused element.
- *
- * @param root - The document or shadow root to start the search from.
- * @returns The actual focused element, or null if no element has focus.
- *
- * @example
- * // In a shadow DOM context
- * const activeElement = getActiveElement(document);
- * // Returns the actual focused element inside the shadow root
- *
- * @example
- * // Starting from a specific document
- * const activeElement = getActiveElement(ownerDocument(element));
- */
-function activeElement(doc) {
-  let element = doc.activeElement;
-  while (element?.shadowRoot?.activeElement != null) {
-    element = element.shadowRoot.activeElement;
-  }
-  return element;
-}
-
-function ownerDocument(node) {
-  return node && node.ownerDocument || document;
-}
-
-function ownerWindow(node) {
-  const doc = ownerDocument(node);
-  return doc.defaultView || window;
-}
-
-/**
- * TODO v5: consider making it private
- *
- * passes {value} to {ref}
- *
- * WARNING: Be sure to only call this inside a callback that is passed as a ref.
- * Otherwise, make sure to cleanup the previous {ref} if it changes. See
- * https://github.com/mui/material-ui/issues/13539
- *
- * Useful if you want to expose the ref of an inner component to the public API
- * while still using it inside the component.
- * @param ref A ref callback or ref object. If anything falsy, this is a no-op.
- */
-function setRef(ref, value) {
-  if (typeof ref === 'function') {
-    ref(value);
-  } else if (ref) {
-    ref.current = value;
-  }
-}
-
-/**
- * Inspired by https://github.com/facebook/react/issues/14099#issuecomment-440013892
- * See RFC in https://github.com/reactjs/rfcs/pull/220
- */
-
-function useEventCallback(fn) {
-  const ref = reactExports.useRef(fn);
-  useEnhancedEffect$1(() => {
-    ref.current = fn;
-  });
-  return reactExports.useRef((...args) =>
-  // @ts-expect-error hide `this`
-  (0, ref.current)(...args)).current;
-}
-
-/**
- * Merges refs into a single memoized callback ref or `null`.
- *
- * ```tsx
- * const rootRef = React.useRef<Instance>(null);
- * const refFork = useForkRef(rootRef, props.ref);
- *
- * return (
- *   <Root {...props} ref={refFork} />
- * );
- * ```
- *
- * @param {Array<React.Ref<Instance> | undefined>} refs The ref array.
- * @returns {React.RefCallback<Instance> | null} The new ref callback.
- */
-function useForkRef(...refs) {
-  const cleanupRef = reactExports.useRef(undefined);
-  const refEffect = reactExports.useCallback(instance => {
-    const cleanups = refs.map(ref => {
-      if (ref == null) {
-        return null;
-      }
-      if (typeof ref === 'function') {
-        const refCallback = ref;
-        const refCleanup = refCallback(instance);
-        return typeof refCleanup === 'function' ? refCleanup : () => {
-          refCallback(null);
-        };
-      }
-      ref.current = instance;
-      return () => {
-        ref.current = null;
-      };
-    });
-    return () => {
-      cleanups.forEach(refCleanup => refCleanup?.());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, refs);
-  return reactExports.useMemo(() => {
-    if (refs.every(ref => ref == null)) {
-      return null;
-    }
-    return value => {
-      if (cleanupRef.current) {
-        cleanupRef.current();
-        cleanupRef.current = undefined;
-      }
-      if (value != null) {
-        cleanupRef.current = refEffect(value);
-      }
-    };
-    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler -- intentionally ignoring that the dependency array must be an array literal
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, refs);
-}
-
-// Brought from [Base UI](https://github.com/mui/base-ui/blob/master/packages/react/src/merge-props/mergeProps.ts#L119)
-// Use it directly from Base UI once it's a package dependency.
-function isEventHandler(key, value) {
-  // This approach is more efficient than using a regex.
-  const thirdCharCode = key.charCodeAt(2);
-  return key[0] === 'o' && key[1] === 'n' && thirdCharCode >= 65 /* A */ && thirdCharCode <= 90 /* Z */ && typeof value === 'function';
-}
-
-const refType = PropTypes.oneOfType([PropTypes.func, PropTypes.object]);
-var refType$1 = refType;
-
-function chainPropTypes(propType1, propType2) {
-  if (process.env.NODE_ENV === 'production') {
-    return () => null;
-  }
-  return function validate(...args) {
-    return propType1(...args) || propType2(...args);
-  };
-}
-
-function isClassComponent$1(elementType) {
-  // elementType.prototype?.isReactComponent
-  const {
-    prototype = {}
-  } = elementType;
-  return Boolean(prototype.isReactComponent);
-}
-function elementTypeAcceptingRef(props, propName, componentName, location, propFullName) {
-  const propValue = props[propName];
-  const safePropName = propFullName || propName;
-  if (propValue == null ||
-  // When server-side rendering React doesn't warn either.
-  // This is not an accurate check for SSR.
-  // This is only in place for emotion compat.
-  // TODO: Revisit once https://github.com/facebook/react/issues/20047 is resolved.
-  typeof window === 'undefined') {
-    return null;
-  }
-  let warningHint;
-
-  /**
-   * Blacklisting instead of whitelisting
-   *
-   * Blacklisting will miss some components, such as React.Fragment. Those will at least
-   * trigger a warning in React.
-   * We can't whitelist because there is no safe way to detect React.forwardRef
-   * or class components. "Safe" means there's no public API.
-   *
-   */
-  if (typeof propValue === 'function' && !isClassComponent$1(propValue)) {
-    warningHint = 'Did you accidentally provide a plain function component instead?';
-  }
-  if (propValue === reactExports.Fragment) {
-    warningHint = 'Did you accidentally provide a React.Fragment instead?';
-  }
-  if (warningHint !== undefined) {
-    // #host-reference
-    return new Error(`Invalid ${location} \`${safePropName}\` supplied to \`${componentName}\`. ` + `Expected an element type that can hold a ref. ${warningHint} ` + 'For more information see https://mui.com/r/caveat-with-refs-guide');
-  }
-  return null;
-}
-var elementTypeAcceptingRef$1 = chainPropTypes(PropTypes.elementType, elementTypeAcceptingRef);
-
-/**
- * Returns a boolean indicating if the event's target has :focus-visible
- */
-function isFocusVisible(element) {
-  try {
-    return element.matches(':focus-visible');
-  } catch (error) {
-    // Do not warn on jsdom tests, otherwise all tests that rely on focus have to be skipped
-    // Tests that rely on `:focus-visible` will still have to be skipped in jsdom
-    if (process.env.NODE_ENV !== 'production' && !window.navigator.userAgent.includes('jsdom')) {
-      console.warn(['MUI: The `:focus-visible` pseudo class is not supported in this browser.', 'Some components rely on this feature to work properly.'].join('\n'));
-    }
-  }
-  return false;
-}
-
-function useFocusableWhenDisabled(parameters) {
-  const {
-    focusableWhenDisabled,
-    disabled,
-    composite = false,
-    tabIndex: tabIndexProp = 0,
-    isNativeButton
-  } = parameters;
-  const isFocusableComposite = composite && focusableWhenDisabled !== false;
-  const isNonFocusableComposite = composite && focusableWhenDisabled === false;
-
-  // we can't explicitly assign `undefined` to any of these props because it
-  // would otherwise prevent subsequently merged props from setting them
-  const props = reactExports.useMemo(() => {
-    const additionalProps = {
-      // allow Tabbing away from focusableWhenDisabled elements
-      onKeyDown(event) {
-        if (disabled && focusableWhenDisabled && event.key !== 'Tab') {
-          event.preventDefault();
-        }
-      }
-    };
-    if (!composite) {
-      additionalProps.tabIndex = tabIndexProp;
-      if (!isNativeButton && disabled) {
-        additionalProps.tabIndex = focusableWhenDisabled ? tabIndexProp : -1;
-      }
-    }
-    if (isNativeButton && (focusableWhenDisabled || isFocusableComposite) || !isNativeButton && disabled) {
-      additionalProps['aria-disabled'] = disabled;
-    }
-    if (isNativeButton && (!focusableWhenDisabled || isNonFocusableComposite)) {
-      additionalProps.disabled = disabled;
-    }
-    return additionalProps;
-  }, [composite, disabled, focusableWhenDisabled, isFocusableComposite, isNonFocusableComposite, isNativeButton, tabIndexProp]);
-  return props;
-}
-
-const EMPTY$1 = {};
-function useButtonBase(parameters) {
-  const {
-    nativeButton,
-    nativeButtonProp,
-    internalNativeButton = nativeButton,
-    allowInferredHostMismatch = false,
-    disabled,
-    type,
-    hasFormAction = false,
-    tabIndex = 0,
-    focusableWhenDisabled: focusableWhenDisabledParam,
-    stopEventPropagation = false,
-    onBeforeKeyDown,
-    onBeforeKeyUp
-  } = parameters;
-  const rootRef = reactExports.useRef(null);
-  const focusableWhenDisabled = focusableWhenDisabledParam === true;
-  const focusableWhenDisabledProps = useFocusableWhenDisabled({
-    focusableWhenDisabled,
-    disabled,
-    isNativeButton: nativeButton,
-    tabIndex
-  });
-  if (process.env.NODE_ENV !== 'production') {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    reactExports.useEffect(() => {
-      const root = rootRef.current;
-      if (root == null) {
-        return;
-      }
-      const isButtonTag = root.tagName === 'BUTTON';
-      if (nativeButtonProp !== undefined) {
-        if (nativeButtonProp && !isButtonTag) {
-          const message = 'MUI: A component that acts as a button expected a native <button> because the ' + '`nativeButton` prop is true. Rendering a non-<button> removes native button ' + 'semantics, which can impact forms and accessibility. Render a real <button> ' + 'or set `nativeButton` to `false`.';
-          console.error(message);
-        }
-        if (!nativeButtonProp && isButtonTag) {
-          const message = 'MUI: A component that acts as a button expected a non-<button> because the `nativeButton` ' + 'prop is false. Rendering a <button> keeps native behavior while additionally applies ' + 'non-native attributes and handlers, which can add unintended extra attributes (such ' + 'as `role` or `aria-disabled`). Render a non-<button> such as <div>, or set ' + '`nativeButton` to `true`.';
-          console.error(message);
-        }
-        return;
-      }
-      if (allowInferredHostMismatch) {
-        return;
-      }
-
-      // warn when expecting a native <button> element but a non-string `component` prop resolved to a non-button element
-      if (internalNativeButton && !isButtonTag) {
-        const message = 'MUI: A component rendering a native <button> resolved to a non-<button> element, ' + 'but `nativeButton={false}` was not specified and the resolved root is a non-<button>. ' + 'When rendering a custom component, set `nativeButton={false}` explicitly or render a <button> element.';
-        console.error(message);
-      }
-
-      // warn when expecting a non-button but a non-string `component` prop resolved to a native <button> element
-      if (!internalNativeButton && isButtonTag) {
-        const message = 'MUI: A component that acts as a non-native button resolved to a native <button> element, ' + 'but `nativeButton={true}` was not specified. ' + 'When rendering a custom component, set `nativeButton={true}` explicitly or render a non-<button> element.';
-        console.error(message);
-      }
-    }, [allowInferredHostMismatch, internalNativeButton, nativeButtonProp]);
-  }
-
-  // A helper for event handlers to determine whether to use browser-defined keyboard activation
-  // for native elements like <button> and <a href>, or synthesize Enter/Space clicks for non-native
-  // elements like `<div role="button">`.
-  // This is UNSAFE TO USE outside of event handers, e.g. in render.
-  const hasNativeKeyboardActivation = reactExports.useCallback(() => {
-    const root = rootRef.current;
-    if (root == null) {
-      return nativeButton;
-    }
-    if (root.tagName === 'BUTTON') {
-      return true;
-    }
-
-    // Although this hook is not intended for links, this check is for
-    // backward compatibility with `<ButtonBase href="#" />` since ButtonBase
-    // uses the returned event handlers.
-    return Boolean(root.tagName === 'A' && root.href);
-  }, [nativeButton]);
-  const buttonProps = reactExports.useMemo(() => {
-    const resolvedButtonProps = focusableWhenDisabled ? {} : {
-      tabIndex: disabled ? -1 : tabIndex
-    };
-    if (nativeButton) {
-      resolvedButtonProps.type = type === undefined && !hasFormAction ? 'button' : type;
-      if (!focusableWhenDisabled) {
-        resolvedButtonProps.disabled = disabled;
-      }
-    } else {
-      resolvedButtonProps.role = 'button';
-      if (!focusableWhenDisabled && disabled) {
-        resolvedButtonProps['aria-disabled'] = disabled;
-      }
-    }
-    if (focusableWhenDisabled) {
-      return {
-        ...resolvedButtonProps,
-        ...focusableWhenDisabledProps
-      };
-    }
-    return resolvedButtonProps;
-  }, [disabled, focusableWhenDisabled, focusableWhenDisabledProps, hasFormAction, nativeButton, tabIndex, type]);
-  const getButtonProps = reactExports.useCallback((externalProps = EMPTY$1) => {
-    const {
-      onClick: externalOnClick,
-      onKeyDown: externalOnKeyDown,
-      onKeyUp: externalOnKeyUp,
-      ...otherExternalProps
-    } = externalProps;
-    const handleClick = event => {
-      if (stopEventPropagation) {
-        event.stopPropagation();
-      }
-      if (disabled) {
-        event.preventDefault();
-        return;
-      }
-      externalOnClick?.(event);
-    };
-    const handleKeyDown = event => {
-      if (focusableWhenDisabled) {
-        focusableWhenDisabledProps.onKeyDown(event);
-      }
-      if (disabled) {
-        return;
-      }
-      onBeforeKeyDown?.(event);
-      externalOnKeyDown?.(event);
-      if (event.target !== event.currentTarget || hasNativeKeyboardActivation()) {
-        return;
-      }
-      if (event.key === ' ') {
-        event.preventDefault();
-        return;
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        event.currentTarget.click();
-      }
-    };
-    const handleKeyUp = event => {
-      if (disabled) {
-        return;
-      }
-      onBeforeKeyUp?.(event);
-      externalOnKeyUp?.(event);
-      if (event.target === event.currentTarget && !hasNativeKeyboardActivation() && event.key === ' ' && !event.defaultPrevented) {
-        event.currentTarget.click();
-      }
-    };
-    return {
-      ...buttonProps,
-      ...otherExternalProps,
-      onClick: handleClick,
-      onKeyDown: handleKeyDown,
-      onKeyUp: handleKeyUp
-    };
-  }, [buttonProps, disabled, focusableWhenDisabled, focusableWhenDisabledProps, hasNativeKeyboardActivation, onBeforeKeyDown, onBeforeKeyUp, stopEventPropagation]);
-  return {
-    getButtonProps,
-    rootRef
-  };
-}
-
-const UNINITIALIZED = {};
-
-/**
- * A React.useRef() that is initialized lazily with a function. Note that it accepts an optional
- * initialization argument, so the initialization function doesn't need to be an inline closure.
- *
- * @usage
- *   const ref = useLazyRef(sortColumns, columns)
- */
-function useLazyRef(init, initArg) {
-  const ref = reactExports.useRef(UNINITIALIZED);
-  if (ref.current === UNINITIALIZED) {
-    ref.current = init(initArg);
-  }
-  return ref;
-}
-
-/**
- * Lazy initialization container for the Ripple instance. This improves
- * performance by delaying mounting the ripple until it's needed.
- */
-class LazyRipple {
-  /** React ref to the ripple instance */
-
-  /** If the ripple component should be mounted */
-
-  /** Promise that resolves when the ripple component is mounted */
-
-  /** If the ripple component has been mounted */
-
-  /** React state hook setter */
-
-  static create() {
-    return new LazyRipple();
-  }
-  static use() {
-    /* eslint-disable */
-    const ripple = useLazyRef(LazyRipple.create).current;
-    const [shouldMount, setShouldMount] = reactExports.useState(false);
-    ripple.shouldMount = shouldMount;
-    ripple.setShouldMount = setShouldMount;
-    reactExports.useEffect(ripple.mountEffect, [shouldMount]);
-    /* eslint-enable */
-
-    return ripple;
-  }
-  constructor() {
-    this.ref = {
-      current: null
-    };
-    this.mounted = null;
-    this.didMount = false;
-    this.shouldMount = false;
-    this.setShouldMount = null;
-  }
-  mount() {
-    if (!this.mounted) {
-      this.mounted = createControlledPromise();
-      this.shouldMount = true;
-      this.setShouldMount(this.shouldMount);
-    }
-    return this.mounted;
-  }
-  mountEffect = () => {
-    if (this.shouldMount && !this.didMount) {
-      if (this.ref.current !== null) {
-        this.didMount = true;
-        this.mounted.resolve();
-      }
-    }
-  };
-
-  /* Ripple API */
-
-  start(...args) {
-    this.mount().then(() => this.ref.current?.start(...args));
-  }
-  stop(...args) {
-    this.mount().then(() => this.ref.current?.stop(...args));
-  }
-  pulsate(...args) {
-    this.mount().then(() => this.ref.current?.pulsate(...args));
-  }
-}
-function useLazyRipple() {
-  return LazyRipple.use();
-}
-function createControlledPromise() {
-  let resolve;
-  let reject;
-  const p = new Promise((resolveFn, rejectFn) => {
-    resolve = resolveFn;
-    reject = rejectFn;
-  });
-  p.resolve = resolve;
-  p.reject = reject;
-  return p;
-}
-
-function _objectWithoutPropertiesLoose$1(r, e) {
-  if (null == r) return {};
-  var t = {};
-  for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
-    if (-1 !== e.indexOf(n)) continue;
-    t[n] = r[n];
-  }
-  return t;
-}
-
-function _setPrototypeOf$1(t, e) {
-  return _setPrototypeOf$1 = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (t, e) {
-    return t.__proto__ = e, t;
-  }, _setPrototypeOf$1(t, e);
-}
-
-function _inheritsLoose(t, o) {
-  t.prototype = Object.create(o.prototype), t.prototype.constructor = t, _setPrototypeOf$1(t, o);
-}
-
-/**
- * Checks if a given element has a CSS class.
- * 
- * @param element the element
- * @param className the CSS class name
- */
-function hasClass(element, className) {
-  if (element.classList) return !!className && element.classList.contains(className);
-  return (" " + (element.className.baseVal || element.className) + " ").indexOf(" " + className + " ") !== -1;
-}
-
-/**
- * Adds a CSS class to a given element.
- * 
- * @param element the element
- * @param className the CSS class name
- */
-
-function addClass(element, className) {
-  if (element.classList) element.classList.add(className);else if (!hasClass(element, className)) if (typeof element.className === 'string') element.className = element.className + " " + className;else element.setAttribute('class', (element.className && element.className.baseVal || '') + " " + className);
-}
-
-function replaceClassName(origClass, classToRemove) {
-  return origClass.replace(new RegExp("(^|\\s)" + classToRemove + "(?:\\s|$)", 'g'), '$1').replace(/\s+/g, ' ').replace(/^\s*|\s*$/g, '');
-}
-/**
- * Removes a CSS class from a given element.
- * 
- * @param element the element
- * @param className the CSS class name
- */
-
-function removeClass$1(element, className) {
-  if (element.classList) {
-    element.classList.remove(className);
-  } else if (typeof element.className === 'string') {
-    element.className = replaceClassName(element.className, className);
-  } else {
-    element.setAttribute('class', replaceClassName(element.className && element.className.baseVal || '', className));
-  }
-}
-
-var config = {
-  disabled: false
-};
-
-var timeoutsShape = browser$1.env.NODE_ENV !== 'production' ? PropTypes.oneOfType([PropTypes.number, PropTypes.shape({
-  enter: PropTypes.number,
-  exit: PropTypes.number,
-  appear: PropTypes.number
-}).isRequired]) : null;
-var classNamesShape = browser$1.env.NODE_ENV !== 'production' ? PropTypes.oneOfType([PropTypes.string, PropTypes.shape({
-  enter: PropTypes.string,
-  exit: PropTypes.string,
-  active: PropTypes.string
-}), PropTypes.shape({
-  enter: PropTypes.string,
-  enterDone: PropTypes.string,
-  enterActive: PropTypes.string,
-  exit: PropTypes.string,
-  exitDone: PropTypes.string,
-  exitActive: PropTypes.string
-})]) : null;
-
-var TransitionGroupContext = /*#__PURE__*/React$1.createContext(null);
-
-var forceReflow = function forceReflow(node) {
-  return node.scrollTop;
-};
-
-var UNMOUNTED = 'unmounted';
-var EXITED = 'exited';
-var ENTERING = 'entering';
-var ENTERED = 'entered';
-var EXITING = 'exiting';
-/**
- * The Transition component lets you describe a transition from one component
- * state to another _over time_ with a simple declarative API. Most commonly
- * it's used to animate the mounting and unmounting of a component, but can also
- * be used to describe in-place transition states as well.
- *
- * ---
- *
- * **Note**: `Transition` is a platform-agnostic base component. If you're using
- * transitions in CSS, you'll probably want to use
- * [`CSSTransition`](https://reactcommunity.org/react-transition-group/css-transition)
- * instead. It inherits all the features of `Transition`, but contains
- * additional features necessary to play nice with CSS transitions (hence the
- * name of the component).
- *
- * ---
- *
- * By default the `Transition` component does not alter the behavior of the
- * component it renders, it only tracks "enter" and "exit" states for the
- * components. It's up to you to give meaning and effect to those states. For
- * example we can add styles to a component when it enters or exits:
- *
- * ```jsx
- * import { Transition } from 'react-transition-group';
- *
- * const duration = 300;
- *
- * const defaultStyle = {
- *   transition: `opacity ${duration}ms ease-in-out`,
- *   opacity: 0,
- * }
- *
- * const transitionStyles = {
- *   entering: { opacity: 1 },
- *   entered:  { opacity: 1 },
- *   exiting:  { opacity: 0 },
- *   exited:  { opacity: 0 },
- * };
- *
- * const Fade = ({ in: inProp }) => (
- *   <Transition in={inProp} timeout={duration}>
- *     {state => (
- *       <div style={{
- *         ...defaultStyle,
- *         ...transitionStyles[state]
- *       }}>
- *         I'm a fade Transition!
- *       </div>
- *     )}
- *   </Transition>
- * );
- * ```
- *
- * There are 4 main states a Transition can be in:
- *  - `'entering'`
- *  - `'entered'`
- *  - `'exiting'`
- *  - `'exited'`
- *
- * Transition state is toggled via the `in` prop. When `true` the component
- * begins the "Enter" stage. During this stage, the component will shift from
- * its current transition state, to `'entering'` for the duration of the
- * transition and then to the `'entered'` stage once it's complete. Let's take
- * the following example (we'll use the
- * [useState](https://reactjs.org/docs/hooks-reference.html#usestate) hook):
- *
- * ```jsx
- * function App() {
- *   const [inProp, setInProp] = useState(false);
- *   return (
- *     <div>
- *       <Transition in={inProp} timeout={500}>
- *         {state => (
- *           // ...
- *         )}
- *       </Transition>
- *       <button onClick={() => setInProp(true)}>
- *         Click to Enter
- *       </button>
- *     </div>
- *   );
- * }
- * ```
- *
- * When the button is clicked the component will shift to the `'entering'` state
- * and stay there for 500ms (the value of `timeout`) before it finally switches
- * to `'entered'`.
- *
- * When `in` is `false` the same thing happens except the state moves from
- * `'exiting'` to `'exited'`.
- */
-
-var Transition = /*#__PURE__*/function (_React$Component) {
-  _inheritsLoose(Transition, _React$Component);
-  function Transition(props, context) {
-    var _this;
-    _this = _React$Component.call(this, props, context) || this;
-    var parentGroup = context; // In the context of a TransitionGroup all enters are really appears
-
-    var appear = parentGroup && !parentGroup.isMounting ? props.enter : props.appear;
-    var initialStatus;
-    _this.appearStatus = null;
-    if (props.in) {
-      if (appear) {
-        initialStatus = EXITED;
-        _this.appearStatus = ENTERING;
-      } else {
-        initialStatus = ENTERED;
-      }
-    } else {
-      if (props.unmountOnExit || props.mountOnEnter) {
-        initialStatus = UNMOUNTED;
-      } else {
-        initialStatus = EXITED;
-      }
-    }
-    _this.state = {
-      status: initialStatus
-    };
-    _this.nextCallback = null;
-    return _this;
-  }
-  Transition.getDerivedStateFromProps = function getDerivedStateFromProps(_ref, prevState) {
-    var nextIn = _ref.in;
-    if (nextIn && prevState.status === UNMOUNTED) {
-      return {
-        status: EXITED
-      };
-    }
-    return null;
-  } // getSnapshotBeforeUpdate(prevProps) {
-  //   let nextStatus = null
-  //   if (prevProps !== this.props) {
-  //     const { status } = this.state
-  //     if (this.props.in) {
-  //       if (status !== ENTERING && status !== ENTERED) {
-  //         nextStatus = ENTERING
-  //       }
-  //     } else {
-  //       if (status === ENTERING || status === ENTERED) {
-  //         nextStatus = EXITING
-  //       }
-  //     }
-  //   }
-  //   return { nextStatus }
-  // }
-;
-  var _proto = Transition.prototype;
-  _proto.componentDidMount = function componentDidMount() {
-    this.updateStatus(true, this.appearStatus);
-  };
-  _proto.componentDidUpdate = function componentDidUpdate(prevProps) {
-    var nextStatus = null;
-    if (prevProps !== this.props) {
-      var status = this.state.status;
-      if (this.props.in) {
-        if (status !== ENTERING && status !== ENTERED) {
-          nextStatus = ENTERING;
-        }
-      } else {
-        if (status === ENTERING || status === ENTERED) {
-          nextStatus = EXITING;
-        }
-      }
-    }
-    this.updateStatus(false, nextStatus);
-  };
-  _proto.componentWillUnmount = function componentWillUnmount() {
-    this.cancelNextCallback();
-  };
-  _proto.getTimeouts = function getTimeouts() {
-    var timeout = this.props.timeout;
-    var exit, enter, appear;
-    exit = enter = appear = timeout;
-    if (timeout != null && typeof timeout !== 'number') {
-      exit = timeout.exit;
-      enter = timeout.enter; // TODO: remove fallback for next major
-
-      appear = timeout.appear !== undefined ? timeout.appear : enter;
-    }
-    return {
-      exit: exit,
-      enter: enter,
-      appear: appear
-    };
-  };
-  _proto.updateStatus = function updateStatus(mounting, nextStatus) {
-    if (mounting === void 0) {
-      mounting = false;
-    }
-    if (nextStatus !== null) {
-      // nextStatus will always be ENTERING or EXITING.
-      this.cancelNextCallback();
-      if (nextStatus === ENTERING) {
-        if (this.props.unmountOnExit || this.props.mountOnEnter) {
-          var node = this.props.nodeRef ? this.props.nodeRef.current : ReactDOM.findDOMNode(this); // https://github.com/reactjs/react-transition-group/pull/749
-          // With unmountOnExit or mountOnEnter, the enter animation should happen at the transition between `exited` and `entering`.
-          // To make the animation happen,  we have to separate each rendering and avoid being processed as batched.
-
-          if (node) forceReflow(node);
-        }
-        this.performEnter(mounting);
-      } else {
-        this.performExit();
-      }
-    } else if (this.props.unmountOnExit && this.state.status === EXITED) {
-      this.setState({
-        status: UNMOUNTED
-      });
-    }
-  };
-  _proto.performEnter = function performEnter(mounting) {
-    var _this2 = this;
-    var enter = this.props.enter;
-    var appearing = this.context ? this.context.isMounting : mounting;
-    var _ref2 = this.props.nodeRef ? [appearing] : [ReactDOM.findDOMNode(this), appearing],
-      maybeNode = _ref2[0],
-      maybeAppearing = _ref2[1];
-    var timeouts = this.getTimeouts();
-    var enterTimeout = appearing ? timeouts.appear : timeouts.enter; // no enter animation skip right to ENTERED
-    // if we are mounting and running this it means appear _must_ be set
-
-    if (!mounting && !enter || config.disabled) {
-      this.safeSetState({
-        status: ENTERED
-      }, function () {
-        _this2.props.onEntered(maybeNode);
-      });
-      return;
-    }
-    this.props.onEnter(maybeNode, maybeAppearing);
-    this.safeSetState({
-      status: ENTERING
-    }, function () {
-      _this2.props.onEntering(maybeNode, maybeAppearing);
-      _this2.onTransitionEnd(enterTimeout, function () {
-        _this2.safeSetState({
-          status: ENTERED
-        }, function () {
-          _this2.props.onEntered(maybeNode, maybeAppearing);
-        });
-      });
-    });
-  };
-  _proto.performExit = function performExit() {
-    var _this3 = this;
-    var exit = this.props.exit;
-    var timeouts = this.getTimeouts();
-    var maybeNode = this.props.nodeRef ? undefined : ReactDOM.findDOMNode(this); // no exit animation skip right to EXITED
-
-    if (!exit || config.disabled) {
-      this.safeSetState({
-        status: EXITED
-      }, function () {
-        _this3.props.onExited(maybeNode);
-      });
-      return;
-    }
-    this.props.onExit(maybeNode);
-    this.safeSetState({
-      status: EXITING
-    }, function () {
-      _this3.props.onExiting(maybeNode);
-      _this3.onTransitionEnd(timeouts.exit, function () {
-        _this3.safeSetState({
-          status: EXITED
-        }, function () {
-          _this3.props.onExited(maybeNode);
-        });
-      });
-    });
-  };
-  _proto.cancelNextCallback = function cancelNextCallback() {
-    if (this.nextCallback !== null) {
-      this.nextCallback.cancel();
-      this.nextCallback = null;
-    }
-  };
-  _proto.safeSetState = function safeSetState(nextState, callback) {
-    // This shouldn't be necessary, but there are weird race conditions with
-    // setState callbacks and unmounting in testing, so always make sure that
-    // we can cancel any pending setState callbacks after we unmount.
-    callback = this.setNextCallback(callback);
-    this.setState(nextState, callback);
-  };
-  _proto.setNextCallback = function setNextCallback(callback) {
-    var _this4 = this;
-    var active = true;
-    this.nextCallback = function (event) {
-      if (active) {
-        active = false;
-        _this4.nextCallback = null;
-        callback(event);
-      }
-    };
-    this.nextCallback.cancel = function () {
-      active = false;
-    };
-    return this.nextCallback;
-  };
-  _proto.onTransitionEnd = function onTransitionEnd(timeout, handler) {
-    this.setNextCallback(handler);
-    var node = this.props.nodeRef ? this.props.nodeRef.current : ReactDOM.findDOMNode(this);
-    var doesNotHaveTimeoutOrListener = timeout == null && !this.props.addEndListener;
-    if (!node || doesNotHaveTimeoutOrListener) {
-      setTimeout(this.nextCallback, 0);
-      return;
-    }
-    if (this.props.addEndListener) {
-      var _ref3 = this.props.nodeRef ? [this.nextCallback] : [node, this.nextCallback],
-        maybeNode = _ref3[0],
-        maybeNextCallback = _ref3[1];
-      this.props.addEndListener(maybeNode, maybeNextCallback);
-    }
-    if (timeout != null) {
-      setTimeout(this.nextCallback, timeout);
-    }
-  };
-  _proto.render = function render() {
-    var status = this.state.status;
-    if (status === UNMOUNTED) {
-      return null;
-    }
-    var _this$props = this.props,
-      children = _this$props.children;
-      _this$props.in;
-      _this$props.mountOnEnter;
-      _this$props.unmountOnExit;
-      _this$props.appear;
-      _this$props.enter;
-      _this$props.exit;
-      _this$props.timeout;
-      _this$props.addEndListener;
-      _this$props.onEnter;
-      _this$props.onEntering;
-      _this$props.onEntered;
-      _this$props.onExit;
-      _this$props.onExiting;
-      _this$props.onExited;
-      _this$props.nodeRef;
-      var childProps = _objectWithoutPropertiesLoose$1(_this$props, ["children", "in", "mountOnEnter", "unmountOnExit", "appear", "enter", "exit", "timeout", "addEndListener", "onEnter", "onEntering", "onEntered", "onExit", "onExiting", "onExited", "nodeRef"]);
-    return (/*#__PURE__*/
-      // allows for nested Transitions
-      React$1.createElement(TransitionGroupContext.Provider, {
-        value: null
-      }, typeof children === 'function' ? children(status, childProps) : /*#__PURE__*/React$1.cloneElement(React$1.Children.only(children), childProps))
-    );
-  };
-  return Transition;
-}(React$1.Component);
-Transition.contextType = TransitionGroupContext;
-Transition.propTypes = browser$1.env.NODE_ENV !== "production" ? {
-  /**
-   * A React reference to DOM element that need to transition:
-   * https://stackoverflow.com/a/51127130/4671932
-   *
-   *   - When `nodeRef` prop is used, `node` is not passed to callback functions
-   *      (e.g. `onEnter`) because user already has direct access to the node.
-   *   - When changing `key` prop of `Transition` in a `TransitionGroup` a new
-   *     `nodeRef` need to be provided to `Transition` with changed `key` prop
-   *     (see
-   *     [test/CSSTransition-test.js](https://github.com/reactjs/react-transition-group/blob/13435f897b3ab71f6e19d724f145596f5910581c/test/CSSTransition-test.js#L362-L437)).
-   */
-  nodeRef: PropTypes.shape({
-    current: typeof Element === 'undefined' ? PropTypes.any : function (propValue, key, componentName, location, propFullName, secret) {
-      var value = propValue[key];
-      return PropTypes.instanceOf(value && 'ownerDocument' in value ? value.ownerDocument.defaultView.Element : Element)(propValue, key, componentName, location, propFullName, secret);
-    }
-  }),
-  /**
-   * A `function` child can be used instead of a React element. This function is
-   * called with the current transition status (`'entering'`, `'entered'`,
-   * `'exiting'`, `'exited'`), which can be used to apply context
-   * specific props to a component.
-   *
-   * ```jsx
-   * <Transition in={this.state.in} timeout={150}>
-   *   {state => (
-   *     <MyComponent className={`fade fade-${state}`} />
-   *   )}
-   * </Transition>
-   * ```
-   */
-  children: PropTypes.oneOfType([PropTypes.func.isRequired, PropTypes.element.isRequired]).isRequired,
-  /**
-   * Show the component; triggers the enter or exit states
-   */
-  in: PropTypes.bool,
-  /**
-   * By default the child component is mounted immediately along with
-   * the parent `Transition` component. If you want to "lazy mount" the component on the
-   * first `in={true}` you can set `mountOnEnter`. After the first enter transition the component will stay
-   * mounted, even on "exited", unless you also specify `unmountOnExit`.
-   */
-  mountOnEnter: PropTypes.bool,
-  /**
-   * By default the child component stays mounted after it reaches the `'exited'` state.
-   * Set `unmountOnExit` if you'd prefer to unmount the component after it finishes exiting.
-   */
-  unmountOnExit: PropTypes.bool,
-  /**
-   * By default the child component does not perform the enter transition when
-   * it first mounts, regardless of the value of `in`. If you want this
-   * behavior, set both `appear` and `in` to `true`.
-   *
-   * > **Note**: there are no special appear states like `appearing`/`appeared`, this prop
-   * > only adds an additional enter transition. However, in the
-   * > `<CSSTransition>` component that first enter transition does result in
-   * > additional `.appear-*` classes, that way you can choose to style it
-   * > differently.
-   */
-  appear: PropTypes.bool,
-  /**
-   * Enable or disable enter transitions.
-   */
-  enter: PropTypes.bool,
-  /**
-   * Enable or disable exit transitions.
-   */
-  exit: PropTypes.bool,
-  /**
-   * The duration of the transition, in milliseconds.
-   * Required unless `addEndListener` is provided.
-   *
-   * You may specify a single timeout for all transitions:
-   *
-   * ```jsx
-   * timeout={500}
-   * ```
-   *
-   * or individually:
-   *
-   * ```jsx
-   * timeout={{
-   *  appear: 500,
-   *  enter: 300,
-   *  exit: 500,
-   * }}
-   * ```
-   *
-   * - `appear` defaults to the value of `enter`
-   * - `enter` defaults to `0`
-   * - `exit` defaults to `0`
-   *
-   * @type {number | { enter?: number, exit?: number, appear?: number }}
-   */
-  timeout: function timeout(props) {
-    var pt = timeoutsShape;
-    if (!props.addEndListener) pt = pt.isRequired;
-    for (var _len = arguments.length, args = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
-      args[_key - 1] = arguments[_key];
-    }
-    return pt.apply(void 0, [props].concat(args));
-  },
-  /**
-   * Add a custom transition end trigger. Called with the transitioning
-   * DOM node and a `done` callback. Allows for more fine grained transition end
-   * logic. Timeouts are still used as a fallback if provided.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * ```jsx
-   * addEndListener={(node, done) => {
-   *   // use the css transitionend event to mark the finish of a transition
-   *   node.addEventListener('transitionend', done, false);
-   * }}
-   * ```
-   */
-  addEndListener: PropTypes.func,
-  /**
-   * Callback fired before the "entering" status is applied. An extra parameter
-   * `isAppearing` is supplied to indicate if the enter stage is occurring on the initial mount
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement, isAppearing: bool) -> void
-   */
-  onEnter: PropTypes.func,
-  /**
-   * Callback fired after the "entering" status is applied. An extra parameter
-   * `isAppearing` is supplied to indicate if the enter stage is occurring on the initial mount
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement, isAppearing: bool)
-   */
-  onEntering: PropTypes.func,
-  /**
-   * Callback fired after the "entered" status is applied. An extra parameter
-   * `isAppearing` is supplied to indicate if the enter stage is occurring on the initial mount
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement, isAppearing: bool) -> void
-   */
-  onEntered: PropTypes.func,
-  /**
-   * Callback fired before the "exiting" status is applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement) -> void
-   */
-  onExit: PropTypes.func,
-  /**
-   * Callback fired after the "exiting" status is applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement) -> void
-   */
-  onExiting: PropTypes.func,
-  /**
-   * Callback fired after the "exited" status is applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed
-   *
-   * @type Function(node: HtmlElement) -> void
-   */
-  onExited: PropTypes.func
-} : {}; // Name the function so it is clearer in the documentation
-
-function noop$1() {}
-Transition.defaultProps = {
-  in: false,
-  mountOnEnter: false,
-  unmountOnExit: false,
-  appear: false,
-  enter: true,
-  exit: true,
-  onEnter: noop$1,
-  onEntering: noop$1,
-  onEntered: noop$1,
-  onExit: noop$1,
-  onExiting: noop$1,
-  onExited: noop$1
-};
-Transition.UNMOUNTED = UNMOUNTED;
-Transition.EXITED = EXITED;
-Transition.ENTERING = ENTERING;
-Transition.ENTERED = ENTERED;
-Transition.EXITING = EXITING;
-
-var _addClass = function addClass$1(node, classes) {
-  return node && classes && classes.split(' ').forEach(function (c) {
-    return addClass(node, c);
-  });
-};
-var removeClass = function removeClass(node, classes) {
-  return node && classes && classes.split(' ').forEach(function (c) {
-    return removeClass$1(node, c);
-  });
-};
-/**
- * A transition component inspired by the excellent
- * [ng-animate](https://docs.angularjs.org/api/ngAnimate) library, you should
- * use it if you're using CSS transitions or animations. It's built upon the
- * [`Transition`](https://reactcommunity.org/react-transition-group/transition)
- * component, so it inherits all of its props.
- *
- * `CSSTransition` applies a pair of class names during the `appear`, `enter`,
- * and `exit` states of the transition. The first class is applied and then a
- * second `*-active` class in order to activate the CSS transition. After the
- * transition, matching `*-done` class names are applied to persist the
- * transition state.
- *
- * ```jsx
- * function App() {
- *   const [inProp, setInProp] = useState(false);
- *   return (
- *     <div>
- *       <CSSTransition in={inProp} timeout={200} classNames="my-node">
- *         <div>
- *           {"I'll receive my-node-* classes"}
- *         </div>
- *       </CSSTransition>
- *       <button type="button" onClick={() => setInProp(true)}>
- *         Click to Enter
- *       </button>
- *     </div>
- *   );
- * }
- * ```
- *
- * When the `in` prop is set to `true`, the child component will first receive
- * the class `example-enter`, then the `example-enter-active` will be added in
- * the next tick. `CSSTransition` [forces a
- * reflow](https://github.com/reactjs/react-transition-group/blob/5007303e729a74be66a21c3e2205e4916821524b/src/CSSTransition.js#L208-L215)
- * between before adding the `example-enter-active`. This is an important trick
- * because it allows us to transition between `example-enter` and
- * `example-enter-active` even though they were added immediately one after
- * another. Most notably, this is what makes it possible for us to animate
- * _appearance_.
- *
- * ```css
- * .my-node-enter {
- *   opacity: 0;
- * }
- * .my-node-enter-active {
- *   opacity: 1;
- *   transition: opacity 200ms;
- * }
- * .my-node-exit {
- *   opacity: 1;
- * }
- * .my-node-exit-active {
- *   opacity: 0;
- *   transition: opacity 200ms;
- * }
- * ```
- *
- * `*-active` classes represent which styles you want to animate **to**, so it's
- * important to add `transition` declaration only to them, otherwise transitions
- * might not behave as intended! This might not be obvious when the transitions
- * are symmetrical, i.e. when `*-enter-active` is the same as `*-exit`, like in
- * the example above (minus `transition`), but it becomes apparent in more
- * complex transitions.
- *
- * **Note**: If you're using the
- * [`appear`](http://reactcommunity.org/react-transition-group/transition#Transition-prop-appear)
- * prop, make sure to define styles for `.appear-*` classes as well.
- */
-
-var CSSTransition = /*#__PURE__*/function (_React$Component) {
-  _inheritsLoose(CSSTransition, _React$Component);
-  function CSSTransition() {
-    var _this;
-    for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
-      args[_key] = arguments[_key];
-    }
-    _this = _React$Component.call.apply(_React$Component, [this].concat(args)) || this;
-    _this.appliedClasses = {
-      appear: {},
-      enter: {},
-      exit: {}
-    };
-    _this.onEnter = function (maybeNode, maybeAppearing) {
-      var _this$resolveArgument = _this.resolveArguments(maybeNode, maybeAppearing),
-        node = _this$resolveArgument[0],
-        appearing = _this$resolveArgument[1];
-      _this.removeClasses(node, 'exit');
-      _this.addClass(node, appearing ? 'appear' : 'enter', 'base');
-      if (_this.props.onEnter) {
-        _this.props.onEnter(maybeNode, maybeAppearing);
-      }
-    };
-    _this.onEntering = function (maybeNode, maybeAppearing) {
-      var _this$resolveArgument2 = _this.resolveArguments(maybeNode, maybeAppearing),
-        node = _this$resolveArgument2[0],
-        appearing = _this$resolveArgument2[1];
-      var type = appearing ? 'appear' : 'enter';
-      _this.addClass(node, type, 'active');
-      if (_this.props.onEntering) {
-        _this.props.onEntering(maybeNode, maybeAppearing);
-      }
-    };
-    _this.onEntered = function (maybeNode, maybeAppearing) {
-      var _this$resolveArgument3 = _this.resolveArguments(maybeNode, maybeAppearing),
-        node = _this$resolveArgument3[0],
-        appearing = _this$resolveArgument3[1];
-      var type = appearing ? 'appear' : 'enter';
-      _this.removeClasses(node, type);
-      _this.addClass(node, type, 'done');
-      if (_this.props.onEntered) {
-        _this.props.onEntered(maybeNode, maybeAppearing);
-      }
-    };
-    _this.onExit = function (maybeNode) {
-      var _this$resolveArgument4 = _this.resolveArguments(maybeNode),
-        node = _this$resolveArgument4[0];
-      _this.removeClasses(node, 'appear');
-      _this.removeClasses(node, 'enter');
-      _this.addClass(node, 'exit', 'base');
-      if (_this.props.onExit) {
-        _this.props.onExit(maybeNode);
-      }
-    };
-    _this.onExiting = function (maybeNode) {
-      var _this$resolveArgument5 = _this.resolveArguments(maybeNode),
-        node = _this$resolveArgument5[0];
-      _this.addClass(node, 'exit', 'active');
-      if (_this.props.onExiting) {
-        _this.props.onExiting(maybeNode);
-      }
-    };
-    _this.onExited = function (maybeNode) {
-      var _this$resolveArgument6 = _this.resolveArguments(maybeNode),
-        node = _this$resolveArgument6[0];
-      _this.removeClasses(node, 'exit');
-      _this.addClass(node, 'exit', 'done');
-      if (_this.props.onExited) {
-        _this.props.onExited(maybeNode);
-      }
-    };
-    _this.resolveArguments = function (maybeNode, maybeAppearing) {
-      return _this.props.nodeRef ? [_this.props.nodeRef.current, maybeNode] // here `maybeNode` is actually `appearing`
-      : [maybeNode, maybeAppearing];
-    };
-    _this.getClassNames = function (type) {
-      var classNames = _this.props.classNames;
-      var isStringClassNames = typeof classNames === 'string';
-      var prefix = isStringClassNames && classNames ? classNames + "-" : '';
-      var baseClassName = isStringClassNames ? "" + prefix + type : classNames[type];
-      var activeClassName = isStringClassNames ? baseClassName + "-active" : classNames[type + "Active"];
-      var doneClassName = isStringClassNames ? baseClassName + "-done" : classNames[type + "Done"];
-      return {
-        baseClassName: baseClassName,
-        activeClassName: activeClassName,
-        doneClassName: doneClassName
-      };
-    };
-    return _this;
-  }
-  var _proto = CSSTransition.prototype;
-  _proto.addClass = function addClass(node, type, phase) {
-    var className = this.getClassNames(type)[phase + "ClassName"];
-    var _this$getClassNames = this.getClassNames('enter'),
-      doneClassName = _this$getClassNames.doneClassName;
-    if (type === 'appear' && phase === 'done' && doneClassName) {
-      className += " " + doneClassName;
-    } // This is to force a repaint,
-    // which is necessary in order to transition styles when adding a class name.
-
-    if (phase === 'active') {
-      if (node) forceReflow(node);
-    }
-    if (className) {
-      this.appliedClasses[type][phase] = className;
-      _addClass(node, className);
-    }
-  };
-  _proto.removeClasses = function removeClasses(node, type) {
-    var _this$appliedClasses$ = this.appliedClasses[type],
-      baseClassName = _this$appliedClasses$.base,
-      activeClassName = _this$appliedClasses$.active,
-      doneClassName = _this$appliedClasses$.done;
-    this.appliedClasses[type] = {};
-    if (baseClassName) {
-      removeClass(node, baseClassName);
-    }
-    if (activeClassName) {
-      removeClass(node, activeClassName);
-    }
-    if (doneClassName) {
-      removeClass(node, doneClassName);
-    }
-  };
-  _proto.render = function render() {
-    var _this$props = this.props;
-      _this$props.classNames;
-      var props = _objectWithoutPropertiesLoose$1(_this$props, ["classNames"]);
-    return /*#__PURE__*/React$1.createElement(Transition, _extends$1({}, props, {
-      onEnter: this.onEnter,
-      onEntered: this.onEntered,
-      onEntering: this.onEntering,
-      onExit: this.onExit,
-      onExiting: this.onExiting,
-      onExited: this.onExited
-    }));
-  };
-  return CSSTransition;
-}(React$1.Component);
-CSSTransition.defaultProps = {
-  classNames: ''
-};
-CSSTransition.propTypes = browser$1.env.NODE_ENV !== "production" ? _extends$1({}, Transition.propTypes, {
-  /**
-   * The animation classNames applied to the component as it appears, enters,
-   * exits or has finished the transition. A single name can be provided, which
-   * will be suffixed for each stage, e.g. `classNames="fade"` applies:
-   *
-   * - `fade-appear`, `fade-appear-active`, `fade-appear-done`
-   * - `fade-enter`, `fade-enter-active`, `fade-enter-done`
-   * - `fade-exit`, `fade-exit-active`, `fade-exit-done`
-   *
-   * A few details to note about how these classes are applied:
-   *
-   * 1. They are _joined_ with the ones that are already defined on the child
-   *    component, so if you want to add some base styles, you can use
-   *    `className` without worrying that it will be overridden.
-   *
-   * 2. If the transition component mounts with `in={false}`, no classes are
-   *    applied yet. You might be expecting `*-exit-done`, but if you think
-   *    about it, a component cannot finish exiting if it hasn't entered yet.
-   *
-   * 2. `fade-appear-done` and `fade-enter-done` will _both_ be applied. This
-   *    allows you to define different behavior for when appearing is done and
-   *    when regular entering is done, using selectors like
-   *    `.fade-enter-done:not(.fade-appear-done)`. For example, you could apply
-   *    an epic entrance animation when element first appears in the DOM using
-   *    [Animate.css](https://daneden.github.io/animate.css/). Otherwise you can
-   *    simply use `fade-enter-done` for defining both cases.
-   *
-   * Each individual classNames can also be specified independently like:
-   *
-   * ```js
-   * classNames={{
-   *  appear: 'my-appear',
-   *  appearActive: 'my-active-appear',
-   *  appearDone: 'my-done-appear',
-   *  enter: 'my-enter',
-   *  enterActive: 'my-active-enter',
-   *  enterDone: 'my-done-enter',
-   *  exit: 'my-exit',
-   *  exitActive: 'my-active-exit',
-   *  exitDone: 'my-done-exit',
-   * }}
-   * ```
-   *
-   * If you want to set these classes using CSS Modules:
-   *
-   * ```js
-   * import styles from './styles.css';
-   * ```
-   *
-   * you might want to use camelCase in your CSS file, that way could simply
-   * spread them instead of listing them one by one:
-   *
-   * ```js
-   * classNames={{ ...styles }}
-   * ```
-   *
-   * @type {string | {
-   *  appear?: string,
-   *  appearActive?: string,
-   *  appearDone?: string,
-   *  enter?: string,
-   *  enterActive?: string,
-   *  enterDone?: string,
-   *  exit?: string,
-   *  exitActive?: string,
-   *  exitDone?: string,
-   * }}
-   */
-  classNames: classNamesShape,
-  /**
-   * A `<Transition>` callback fired immediately after the 'enter' or 'appear' class is
-   * applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement, isAppearing: bool)
-   */
-  onEnter: PropTypes.func,
-  /**
-   * A `<Transition>` callback fired immediately after the 'enter-active' or
-   * 'appear-active' class is applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement, isAppearing: bool)
-   */
-  onEntering: PropTypes.func,
-  /**
-   * A `<Transition>` callback fired immediately after the 'enter' or
-   * 'appear' classes are **removed** and the `done` class is added to the DOM node.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed.
-   *
-   * @type Function(node: HtmlElement, isAppearing: bool)
-   */
-  onEntered: PropTypes.func,
-  /**
-   * A `<Transition>` callback fired immediately after the 'exit' class is
-   * applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed
-   *
-   * @type Function(node: HtmlElement)
-   */
-  onExit: PropTypes.func,
-  /**
-   * A `<Transition>` callback fired immediately after the 'exit-active' is applied.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed
-   *
-   * @type Function(node: HtmlElement)
-   */
-  onExiting: PropTypes.func,
-  /**
-   * A `<Transition>` callback fired immediately after the 'exit' classes
-   * are **removed** and the `exit-done` class is added to the DOM node.
-   *
-   * **Note**: when `nodeRef` prop is passed, `node` is not passed
-   *
-   * @type Function(node: HtmlElement)
-   */
-  onExited: PropTypes.func
-}) : {};
-
-function _assertThisInitialized$1(e) {
-  if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-  return e;
-}
-
-/**
- * Given `this.props.children`, return an object mapping key to child.
- *
- * @param {*} children `this.props.children`
- * @return {object} Mapping of key to child
- */
-
-function getChildMapping(children, mapFn) {
-  var mapper = function mapper(child) {
-    return mapFn && /*#__PURE__*/reactExports.isValidElement(child) ? mapFn(child) : child;
-  };
-  var result = Object.create(null);
-  if (children) reactExports.Children.map(children, function (c) {
-    return c;
-  }).forEach(function (child) {
-    // run the map function here instead so that the key is the computed one
-    result[child.key] = mapper(child);
-  });
-  return result;
-}
-/**
- * When you're adding or removing children some may be added or removed in the
- * same render pass. We want to show *both* since we want to simultaneously
- * animate elements in and out. This function takes a previous set of keys
- * and a new set of keys and merges them with its best guess of the correct
- * ordering. In the future we may expose some of the utilities in
- * ReactMultiChild to make this easy, but for now React itself does not
- * directly have this concept of the union of prevChildren and nextChildren
- * so we implement it here.
- *
- * @param {object} prev prev children as returned from
- * `ReactTransitionChildMapping.getChildMapping()`.
- * @param {object} next next children as returned from
- * `ReactTransitionChildMapping.getChildMapping()`.
- * @return {object} a key set that contains all keys in `prev` and all keys
- * in `next` in a reasonable order.
- */
-
-function mergeChildMappings(prev, next) {
-  prev = prev || {};
-  next = next || {};
-  function getValueForKey(key) {
-    return key in next ? next[key] : prev[key];
-  } // For each key of `next`, the list of keys to insert before that key in
-  // the combined list
-
-  var nextKeysPending = Object.create(null);
-  var pendingKeys = [];
-  for (var prevKey in prev) {
-    if (prevKey in next) {
-      if (pendingKeys.length) {
-        nextKeysPending[prevKey] = pendingKeys;
-        pendingKeys = [];
-      }
-    } else {
-      pendingKeys.push(prevKey);
-    }
-  }
-  var i;
-  var childMapping = {};
-  for (var nextKey in next) {
-    if (nextKeysPending[nextKey]) {
-      for (i = 0; i < nextKeysPending[nextKey].length; i++) {
-        var pendingNextKey = nextKeysPending[nextKey][i];
-        childMapping[nextKeysPending[nextKey][i]] = getValueForKey(pendingNextKey);
-      }
-    }
-    childMapping[nextKey] = getValueForKey(nextKey);
-  } // Finally, add the keys which didn't appear before any key in `next`
-
-  for (i = 0; i < pendingKeys.length; i++) {
-    childMapping[pendingKeys[i]] = getValueForKey(pendingKeys[i]);
-  }
-  return childMapping;
-}
-function getProp(child, prop, props) {
-  return props[prop] != null ? props[prop] : child.props[prop];
-}
-function getInitialChildMapping(props, onExited) {
-  return getChildMapping(props.children, function (child) {
-    return /*#__PURE__*/reactExports.cloneElement(child, {
-      onExited: onExited.bind(null, child),
-      in: true,
-      appear: getProp(child, 'appear', props),
-      enter: getProp(child, 'enter', props),
-      exit: getProp(child, 'exit', props)
-    });
-  });
-}
-function getNextChildMapping(nextProps, prevChildMapping, onExited) {
-  var nextChildMapping = getChildMapping(nextProps.children);
-  var children = mergeChildMappings(prevChildMapping, nextChildMapping);
-  Object.keys(children).forEach(function (key) {
-    var child = children[key];
-    if (! /*#__PURE__*/reactExports.isValidElement(child)) return;
-    var hasPrev = key in prevChildMapping;
-    var hasNext = key in nextChildMapping;
-    var prevChild = prevChildMapping[key];
-    var isLeaving = /*#__PURE__*/reactExports.isValidElement(prevChild) && !prevChild.props.in; // item is new (entering)
-
-    if (hasNext && (!hasPrev || isLeaving)) {
-      // console.log('entering', key)
-      children[key] = /*#__PURE__*/reactExports.cloneElement(child, {
-        onExited: onExited.bind(null, child),
-        in: true,
-        exit: getProp(child, 'exit', nextProps),
-        enter: getProp(child, 'enter', nextProps)
-      });
-    } else if (!hasNext && hasPrev && !isLeaving) {
-      // item is old (exiting)
-      // console.log('leaving', key)
-      children[key] = /*#__PURE__*/reactExports.cloneElement(child, {
-        in: false
-      });
-    } else if (hasNext && hasPrev && /*#__PURE__*/reactExports.isValidElement(prevChild)) {
-      // item hasn't changed transition states
-      // copy over the last transition props;
-      // console.log('unchanged', key)
-      children[key] = /*#__PURE__*/reactExports.cloneElement(child, {
-        onExited: onExited.bind(null, child),
-        in: prevChild.props.in,
-        exit: getProp(child, 'exit', nextProps),
-        enter: getProp(child, 'enter', nextProps)
-      });
-    }
-  });
-  return children;
-}
-
-var values = Object.values || function (obj) {
-  return Object.keys(obj).map(function (k) {
-    return obj[k];
-  });
-};
-var defaultProps = {
-  component: 'div',
-  childFactory: function childFactory(child) {
-    return child;
-  }
-};
-/**
- * The `<TransitionGroup>` component manages a set of transition components
- * (`<Transition>` and `<CSSTransition>`) in a list. Like with the transition
- * components, `<TransitionGroup>` is a state machine for managing the mounting
- * and unmounting of components over time.
- *
- * Consider the example below. As items are removed or added to the TodoList the
- * `in` prop is toggled automatically by the `<TransitionGroup>`.
- *
- * Note that `<TransitionGroup>`  does not define any animation behavior!
- * Exactly _how_ a list item animates is up to the individual transition
- * component. This means you can mix and match animations across different list
- * items.
- */
-
-var TransitionGroup = /*#__PURE__*/function (_React$Component) {
-  _inheritsLoose(TransitionGroup, _React$Component);
-  function TransitionGroup(props, context) {
-    var _this;
-    _this = _React$Component.call(this, props, context) || this;
-    var handleExited = _this.handleExited.bind(_assertThisInitialized$1(_this)); // Initial children should all be entering, dependent on appear
-
-    _this.state = {
-      contextValue: {
-        isMounting: true
-      },
-      handleExited: handleExited,
-      firstRender: true
-    };
-    return _this;
-  }
-  var _proto = TransitionGroup.prototype;
-  _proto.componentDidMount = function componentDidMount() {
-    this.mounted = true;
-    this.setState({
-      contextValue: {
-        isMounting: false
-      }
-    });
-  };
-  _proto.componentWillUnmount = function componentWillUnmount() {
-    this.mounted = false;
-  };
-  TransitionGroup.getDerivedStateFromProps = function getDerivedStateFromProps(nextProps, _ref) {
-    var prevChildMapping = _ref.children,
-      handleExited = _ref.handleExited,
-      firstRender = _ref.firstRender;
-    return {
-      children: firstRender ? getInitialChildMapping(nextProps, handleExited) : getNextChildMapping(nextProps, prevChildMapping, handleExited),
-      firstRender: false
-    };
-  } // node is `undefined` when user provided `nodeRef` prop
-;
-  _proto.handleExited = function handleExited(child, node) {
-    var currentChildMapping = getChildMapping(this.props.children);
-    if (child.key in currentChildMapping) return;
-    if (child.props.onExited) {
-      child.props.onExited(node);
-    }
-    if (this.mounted) {
-      this.setState(function (state) {
-        var children = _extends$1({}, state.children);
-        delete children[child.key];
-        return {
-          children: children
-        };
-      });
-    }
-  };
-  _proto.render = function render() {
-    var _this$props = this.props,
-      Component = _this$props.component,
-      childFactory = _this$props.childFactory,
-      props = _objectWithoutPropertiesLoose$1(_this$props, ["component", "childFactory"]);
-    var contextValue = this.state.contextValue;
-    var children = values(this.state.children).map(childFactory);
-    delete props.appear;
-    delete props.enter;
-    delete props.exit;
-    if (Component === null) {
-      return /*#__PURE__*/React$1.createElement(TransitionGroupContext.Provider, {
-        value: contextValue
-      }, children);
-    }
-    return /*#__PURE__*/React$1.createElement(TransitionGroupContext.Provider, {
-      value: contextValue
-    }, /*#__PURE__*/React$1.createElement(Component, props, children));
-  };
-  return TransitionGroup;
-}(React$1.Component);
-TransitionGroup.propTypes = browser$1.env.NODE_ENV !== "production" ? {
-  /**
-   * `<TransitionGroup>` renders a `<div>` by default. You can change this
-   * behavior by providing a `component` prop.
-   * If you use React v16+ and would like to avoid a wrapping `<div>` element
-   * you can pass in `component={null}`. This is useful if the wrapping div
-   * borks your css styles.
-   */
-  component: PropTypes.any,
-  /**
-   * A set of `<Transition>` components, that are toggled `in` and out as they
-   * leave. the `<TransitionGroup>` will inject specific transition props, so
-   * remember to spread them through if you are wrapping the `<Transition>` as
-   * with our `<Fade>` example.
-   *
-   * While this component is meant for multiple `Transition` or `CSSTransition`
-   * children, sometimes you may want to have a single transition child with
-   * content that you want to be transitioned out and in when you change it
-   * (e.g. routes, images etc.) In that case you can change the `key` prop of
-   * the transition child as you change its content, this will cause
-   * `TransitionGroup` to transition the child out and back in.
-   */
-  children: PropTypes.node,
-  /**
-   * A convenience prop that enables or disables appear animations
-   * for all children. Note that specifying this will override any defaults set
-   * on individual children Transitions.
-   */
-  appear: PropTypes.bool,
-  /**
-   * A convenience prop that enables or disables enter animations
-   * for all children. Note that specifying this will override any defaults set
-   * on individual children Transitions.
-   */
-  enter: PropTypes.bool,
-  /**
-   * A convenience prop that enables or disables exit animations
-   * for all children. Note that specifying this will override any defaults set
-   * on individual children Transitions.
-   */
-  exit: PropTypes.bool,
-  /**
-   * You may need to apply reactive updates to a child as it is exiting.
-   * This is generally done by using `cloneElement` however in the case of an exiting
-   * child the element has already been removed and not accessible to the consumer.
-   *
-   * If you do need to update a child as it leaves you can provide a `childFactory`
-   * to wrap every child, even the ones that are leaving.
-   *
-   * @type Function(child: ReactElement) -> ReactElement
-   */
-  childFactory: PropTypes.func
-} : {};
-TransitionGroup.defaultProps = defaultProps;
-
-/**
- * The `<ReplaceTransition>` component is a specialized `Transition` component
- * that animates between two children.
- *
- * ```jsx
- * <ReplaceTransition in>
- *   <Fade><div>I appear first</div></Fade>
- *   <Fade><div>I replace the above</div></Fade>
- * </ReplaceTransition>
- * ```
- */
-
-var ReplaceTransition = /*#__PURE__*/function (_React$Component) {
-  _inheritsLoose(ReplaceTransition, _React$Component);
-  function ReplaceTransition() {
-    var _this;
-    for (var _len = arguments.length, _args = new Array(_len), _key = 0; _key < _len; _key++) {
-      _args[_key] = arguments[_key];
-    }
-    _this = _React$Component.call.apply(_React$Component, [this].concat(_args)) || this;
-    _this.handleEnter = function () {
-      for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
-        args[_key2] = arguments[_key2];
-      }
-      return _this.handleLifecycle('onEnter', 0, args);
-    };
-    _this.handleEntering = function () {
-      for (var _len3 = arguments.length, args = new Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
-        args[_key3] = arguments[_key3];
-      }
-      return _this.handleLifecycle('onEntering', 0, args);
-    };
-    _this.handleEntered = function () {
-      for (var _len4 = arguments.length, args = new Array(_len4), _key4 = 0; _key4 < _len4; _key4++) {
-        args[_key4] = arguments[_key4];
-      }
-      return _this.handleLifecycle('onEntered', 0, args);
-    };
-    _this.handleExit = function () {
-      for (var _len5 = arguments.length, args = new Array(_len5), _key5 = 0; _key5 < _len5; _key5++) {
-        args[_key5] = arguments[_key5];
-      }
-      return _this.handleLifecycle('onExit', 1, args);
-    };
-    _this.handleExiting = function () {
-      for (var _len6 = arguments.length, args = new Array(_len6), _key6 = 0; _key6 < _len6; _key6++) {
-        args[_key6] = arguments[_key6];
-      }
-      return _this.handleLifecycle('onExiting', 1, args);
-    };
-    _this.handleExited = function () {
-      for (var _len7 = arguments.length, args = new Array(_len7), _key7 = 0; _key7 < _len7; _key7++) {
-        args[_key7] = arguments[_key7];
-      }
-      return _this.handleLifecycle('onExited', 1, args);
-    };
-    return _this;
-  }
-  var _proto = ReplaceTransition.prototype;
-  _proto.handleLifecycle = function handleLifecycle(handler, idx, originalArgs) {
-    var _child$props;
-    var children = this.props.children;
-    var child = React$1.Children.toArray(children)[idx];
-    if (child.props[handler]) (_child$props = child.props)[handler].apply(_child$props, originalArgs);
-    if (this.props[handler]) {
-      var maybeNode = child.props.nodeRef ? undefined : ReactDOM.findDOMNode(this);
-      this.props[handler](maybeNode);
-    }
-  };
-  _proto.render = function render() {
-    var _this$props = this.props,
-      children = _this$props.children,
-      inProp = _this$props.in,
-      props = _objectWithoutPropertiesLoose$1(_this$props, ["children", "in"]);
-    var _React$Children$toArr = React$1.Children.toArray(children),
-      first = _React$Children$toArr[0],
-      second = _React$Children$toArr[1];
-    delete props.onEnter;
-    delete props.onEntering;
-    delete props.onEntered;
-    delete props.onExit;
-    delete props.onExiting;
-    delete props.onExited;
-    return /*#__PURE__*/React$1.createElement(TransitionGroup, props, inProp ? /*#__PURE__*/React$1.cloneElement(first, {
-      key: 'first',
-      onEnter: this.handleEnter,
-      onEntering: this.handleEntering,
-      onEntered: this.handleEntered
-    }) : /*#__PURE__*/React$1.cloneElement(second, {
-      key: 'second',
-      onEnter: this.handleExit,
-      onEntering: this.handleExiting,
-      onEntered: this.handleExited
-    }));
-  };
-  return ReplaceTransition;
-}(React$1.Component);
-ReplaceTransition.propTypes = browser$1.env.NODE_ENV !== "production" ? {
-  in: PropTypes.bool.isRequired,
-  children: function children(props, propName) {
-    if (React$1.Children.count(props[propName]) !== 2) return new Error("\"" + propName + "\" must be exactly two transition components.");
-    return null;
-  }
-} : {};
-
-var _leaveRenders, _enterRenders;
-function areChildrenDifferent(oldChildren, newChildren) {
-  if (oldChildren === newChildren) return false;
-  if (/*#__PURE__*/React$1.isValidElement(oldChildren) && /*#__PURE__*/React$1.isValidElement(newChildren) && oldChildren.key != null && oldChildren.key === newChildren.key) {
-    return false;
-  }
-  return true;
-}
-/**
- * Enum of modes for SwitchTransition component
- * @enum { string }
- */
-
-var modes = {
-  out: 'out-in',
-  in: 'in-out'
-};
-var callHook = function callHook(element, name, cb) {
-  return function () {
-    var _element$props;
-    element.props[name] && (_element$props = element.props)[name].apply(_element$props, arguments);
-    cb();
-  };
-};
-var leaveRenders = (_leaveRenders = {}, _leaveRenders[modes.out] = function (_ref) {
-  var current = _ref.current,
-    changeState = _ref.changeState;
-  return /*#__PURE__*/React$1.cloneElement(current, {
-    in: false,
-    onExited: callHook(current, 'onExited', function () {
-      changeState(ENTERING, null);
-    })
-  });
-}, _leaveRenders[modes.in] = function (_ref2) {
-  var current = _ref2.current,
-    changeState = _ref2.changeState,
-    children = _ref2.children;
-  return [current, /*#__PURE__*/React$1.cloneElement(children, {
-    in: true,
-    onEntered: callHook(children, 'onEntered', function () {
-      changeState(ENTERING);
-    })
-  })];
-}, _leaveRenders);
-var enterRenders = (_enterRenders = {}, _enterRenders[modes.out] = function (_ref3) {
-  var children = _ref3.children,
-    changeState = _ref3.changeState;
-  return /*#__PURE__*/React$1.cloneElement(children, {
-    in: true,
-    onEntered: callHook(children, 'onEntered', function () {
-      changeState(ENTERED, /*#__PURE__*/React$1.cloneElement(children, {
-        in: true
-      }));
-    })
-  });
-}, _enterRenders[modes.in] = function (_ref4) {
-  var current = _ref4.current,
-    children = _ref4.children,
-    changeState = _ref4.changeState;
-  return [/*#__PURE__*/React$1.cloneElement(current, {
-    in: false,
-    onExited: callHook(current, 'onExited', function () {
-      changeState(ENTERED, /*#__PURE__*/React$1.cloneElement(children, {
-        in: true
-      }));
-    })
-  }), /*#__PURE__*/React$1.cloneElement(children, {
-    in: true
-  })];
-}, _enterRenders);
-/**
- * A transition component inspired by the [vue transition modes](https://vuejs.org/v2/guide/transitions.html#Transition-Modes).
- * You can use it when you want to control the render between state transitions.
- * Based on the selected mode and the child's key which is the `Transition` or `CSSTransition` component, the `SwitchTransition` makes a consistent transition between them.
- *
- * If the `out-in` mode is selected, the `SwitchTransition` waits until the old child leaves and then inserts a new child.
- * If the `in-out` mode is selected, the `SwitchTransition` inserts a new child first, waits for the new child to enter and then removes the old child.
- *
- * **Note**: If you want the animation to happen simultaneously
- * (that is, to have the old child removed and a new child inserted **at the same time**),
- * you should use
- * [`TransitionGroup`](https://reactcommunity.org/react-transition-group/transition-group)
- * instead.
- *
- * ```jsx
- * function App() {
- *  const [state, setState] = useState(false);
- *  return (
- *    <SwitchTransition>
- *      <CSSTransition
- *        key={state ? "Goodbye, world!" : "Hello, world!"}
- *        addEndListener={(node, done) => node.addEventListener("transitionend", done, false)}
- *        classNames='fade'
- *      >
- *        <button onClick={() => setState(state => !state)}>
- *          {state ? "Goodbye, world!" : "Hello, world!"}
- *        </button>
- *      </CSSTransition>
- *    </SwitchTransition>
- *  );
- * }
- * ```
- *
- * ```css
- * .fade-enter{
- *    opacity: 0;
- * }
- * .fade-exit{
- *    opacity: 1;
- * }
- * .fade-enter-active{
- *    opacity: 1;
- * }
- * .fade-exit-active{
- *    opacity: 0;
- * }
- * .fade-enter-active,
- * .fade-exit-active{
- *    transition: opacity 500ms;
- * }
- * ```
- */
-
-var SwitchTransition = /*#__PURE__*/function (_React$Component) {
-  _inheritsLoose(SwitchTransition, _React$Component);
-  function SwitchTransition() {
-    var _this;
-    for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
-      args[_key] = arguments[_key];
-    }
-    _this = _React$Component.call.apply(_React$Component, [this].concat(args)) || this;
-    _this.state = {
-      status: ENTERED,
-      current: null
-    };
-    _this.appeared = false;
-    _this.changeState = function (status, current) {
-      if (current === void 0) {
-        current = _this.state.current;
-      }
-      _this.setState({
-        status: status,
-        current: current
-      });
-    };
-    return _this;
-  }
-  var _proto = SwitchTransition.prototype;
-  _proto.componentDidMount = function componentDidMount() {
-    this.appeared = true;
-  };
-  SwitchTransition.getDerivedStateFromProps = function getDerivedStateFromProps(props, state) {
-    if (props.children == null) {
-      return {
-        current: null
-      };
-    }
-    if (state.status === ENTERING && props.mode === modes.in) {
-      return {
-        status: ENTERING
-      };
-    }
-    if (state.current && areChildrenDifferent(state.current, props.children)) {
-      return {
-        status: EXITING
-      };
-    }
-    return {
-      current: /*#__PURE__*/React$1.cloneElement(props.children, {
-        in: true
-      })
-    };
-  };
-  _proto.render = function render() {
-    var _this$props = this.props,
-      children = _this$props.children,
-      mode = _this$props.mode,
-      _this$state = this.state,
-      status = _this$state.status,
-      current = _this$state.current;
-    var data = {
-      children: children,
-      current: current,
-      changeState: this.changeState,
-      status: status
-    };
-    var component;
-    switch (status) {
-      case ENTERING:
-        component = enterRenders[mode](data);
-        break;
-      case EXITING:
-        component = leaveRenders[mode](data);
-        break;
-      case ENTERED:
-        component = current;
-    }
-    return /*#__PURE__*/React$1.createElement(TransitionGroupContext.Provider, {
-      value: {
-        isMounting: !this.appeared
-      }
-    }, component);
-  };
-  return SwitchTransition;
-}(React$1.Component);
-SwitchTransition.propTypes = browser$1.env.NODE_ENV !== "production" ? {
-  /**
-   * Transition modes.
-   * `out-in`: Current element transitions out first, then when complete, the new element transitions in.
-   * `in-out`: New element transitions in first, then when complete, the current element transitions out.
-   *
-   * @type {'out-in'|'in-out'}
-   */
-  mode: PropTypes.oneOf([modes.in, modes.out]),
-  /**
-   * Any `Transition` or `CSSTransition` component.
-   */
-  children: PropTypes.oneOfType([PropTypes.element.isRequired])
-} : {};
-SwitchTransition.defaultProps = {
-  mode: modes.out
-};
-
-const EMPTY = [];
-
-/**
- * A React.useEffect equivalent that runs once, when the component is mounted.
- */
-function useOnMount(fn) {
-  // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler -- no need to put `fn` in the dependency array
-  /* eslint-disable react-hooks/exhaustive-deps */
-  reactExports.useEffect(fn, EMPTY);
-  /* eslint-enable react-hooks/exhaustive-deps */
-}
-
-class Timeout {
-  static create() {
-    return new Timeout();
-  }
-  currentId = null;
-
-  /**
-   * Executes `fn` after `delay`, clearing any previously scheduled call.
-   */
-  start(delay, fn) {
-    this.clear();
-    this.currentId = setTimeout(() => {
-      this.currentId = null;
-      fn();
-    }, delay);
-  }
-  clear = () => {
-    if (this.currentId !== null) {
-      clearTimeout(this.currentId);
-      this.currentId = null;
-    }
-  };
-  disposeEffect = () => {
-    return this.clear;
-  };
-}
-function useTimeout() {
-  const timeout = useLazyRef(Timeout.create).current;
-  useOnMount(timeout.disposeEffect);
-  return timeout;
-}
-
-function Ripple(props) {
-  const {
-    className,
-    classes,
-    pulsate = false,
-    rippleX,
-    rippleY,
-    rippleSize,
-    in: inProp,
-    onExited,
-    timeout
-  } = props;
-  const [leaving, setLeaving] = reactExports.useState(false);
-  const rippleClassName = clsx(className, classes.ripple, classes.rippleVisible, pulsate && classes.ripplePulsate);
-  const rippleStyles = {
-    width: rippleSize,
-    height: rippleSize,
-    top: -(rippleSize / 2) + rippleY,
-    left: -(rippleSize / 2) + rippleX
-  };
-  const childClassName = clsx(classes.child, leaving && classes.childLeaving, pulsate && classes.childPulsate);
-  if (!inProp && !leaving) {
-    setLeaving(true);
-  }
-  reactExports.useEffect(() => {
-    if (!inProp && onExited != null) {
-      // react-transition-group#onExited
-      const timeoutId = setTimeout(onExited, timeout);
-      return () => {
-        clearTimeout(timeoutId);
-      };
-    }
-    return undefined;
-  }, [onExited, inProp, timeout]);
-  return /*#__PURE__*/jsxRuntimeExports.jsx("span", {
-    className: rippleClassName,
-    style: rippleStyles,
-    children: /*#__PURE__*/jsxRuntimeExports.jsx("span", {
-      className: childClassName
-    })
-  });
-}
-process.env.NODE_ENV !== "production" ? Ripple.propTypes /* remove-proptypes */ = {
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object.isRequired,
-  className: PropTypes.string,
-  /**
-   * @ignore - injected from TransitionGroup
-   */
-  in: PropTypes.bool,
-  /**
-   * @ignore - injected from TransitionGroup
-   */
-  onExited: PropTypes.func,
-  /**
-   * If `true`, the ripple pulsates, typically indicating the keyboard focus state of an element.
-   */
-  pulsate: PropTypes.bool,
-  /**
-   * Diameter of the ripple.
-   */
-  rippleSize: PropTypes.number,
-  /**
-   * Horizontal position of the ripple center.
-   */
-  rippleX: PropTypes.number,
-  /**
-   * Vertical position of the ripple center.
-   */
-  rippleY: PropTypes.number,
-  /**
-   * exit delay
-   */
-  timeout: PropTypes.number.isRequired
-} : void 0;
-
-const touchRippleClasses = generateUtilityClasses('MuiTouchRipple', ['root', 'ripple', 'rippleVisible', 'ripplePulsate', 'child', 'childLeaving', 'childPulsate']);
-var touchRippleClasses$1 = touchRippleClasses;
-
-const DURATION = 550;
-const DELAY_RIPPLE = 80;
-const enterKeyframe = keyframes`
-  0% {
-    transform: scale(0);
-    opacity: 0.1;
-  }
-
-  100% {
-    transform: scale(1);
-    opacity: 0.3;
-  }
-`;
-const exitKeyframe = keyframes`
-  0% {
-    opacity: 1;
-  }
-
-  100% {
-    opacity: 0;
-  }
-`;
-const pulsateKeyframe = keyframes`
-  0% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(0.92);
-  }
-
-  100% {
-    transform: scale(1);
-  }
-`;
-const TouchRippleRoot = styled$1('span', {
-  name: 'MuiTouchRipple',
-  slot: 'Root'
-})({
-  overflow: 'hidden',
-  pointerEvents: 'none',
-  position: 'absolute',
-  zIndex: 0,
-  top: 0,
-  right: 0,
-  bottom: 0,
-  left: 0,
-  borderRadius: 'inherit'
-});
-
-// This `styled()` function invokes keyframes. `styled-components` only supports keyframes
-// in string templates. Do not convert these styles in JS object as it will break.
-const TouchRippleRipple = styled$1(Ripple, {
-  name: 'MuiTouchRipple',
-  slot: 'Ripple'
-})`
-  opacity: 0;
-  position: absolute;
-
-  &.${touchRippleClasses$1.rippleVisible} {
-    opacity: 0.3;
-    transform: scale(1);
-    animation-name: ${enterKeyframe};
-    animation-duration: ${DURATION}ms;
-    animation-timing-function: ${({
-  theme
-}) => theme.transitions.easing.easeInOut};
-  }
-
-  &.${touchRippleClasses$1.ripplePulsate} {
-    animation-duration: ${({
-  theme
-}) => theme.transitions.duration.shorter}ms;
-  }
-
-  & .${touchRippleClasses$1.child} {
-    opacity: 1;
-    display: block;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    background-color: currentColor;
-  }
-
-  & .${touchRippleClasses$1.childLeaving} {
-    opacity: 0;
-    animation-name: ${exitKeyframe};
-    animation-duration: ${DURATION}ms;
-    animation-timing-function: ${({
-  theme
-}) => theme.transitions.easing.easeInOut};
-  }
-
-  & .${touchRippleClasses$1.childPulsate} {
-    position: absolute;
-    /* @noflip */
-    left: 0px;
-    top: 0;
-    animation-name: ${pulsateKeyframe};
-    animation-duration: 2500ms;
-    animation-timing-function: ${({
-  theme
-}) => theme.transitions.easing.easeInOut};
-    animation-iteration-count: infinite;
-    animation-delay: 200ms;
-  }
-`;
-
-/**
- * @ignore - internal component.
- *
- * TODO v5: Make private
- */
-const TouchRipple = /*#__PURE__*/reactExports.forwardRef(function TouchRipple(inProps, ref) {
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiTouchRipple'
-  });
-  const {
-    center: centerProp = false,
-    classes = {},
-    className,
-    ...other
-  } = props;
-  const [ripples, setRipples] = reactExports.useState([]);
-  const nextKey = reactExports.useRef(0);
-  const rippleCallback = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (rippleCallback.current) {
-      rippleCallback.current();
-      rippleCallback.current = null;
-    }
-  }, [ripples]);
-
-  // Used to filter out mouse emulated events on mobile.
-  const ignoringMouseDown = reactExports.useRef(false);
-  // We use a timer in order to only show the ripples for touch "click" like events.
-  // We don't want to display the ripple for touch scroll events.
-  const startTimer = useTimeout();
-
-  // This is the hook called once the previous timeout is ready.
-  const startTimerCommit = reactExports.useRef(null);
-  const container = reactExports.useRef(null);
-  const startCommit = reactExports.useCallback(params => {
-    const {
-      pulsate,
-      rippleX,
-      rippleY,
-      rippleSize,
-      cb
-    } = params;
-    setRipples(oldRipples => [...oldRipples, /*#__PURE__*/jsxRuntimeExports.jsx(TouchRippleRipple, {
-      classes: {
-        ripple: clsx(classes.ripple, touchRippleClasses$1.ripple),
-        rippleVisible: clsx(classes.rippleVisible, touchRippleClasses$1.rippleVisible),
-        ripplePulsate: clsx(classes.ripplePulsate, touchRippleClasses$1.ripplePulsate),
-        child: clsx(classes.child, touchRippleClasses$1.child),
-        childLeaving: clsx(classes.childLeaving, touchRippleClasses$1.childLeaving),
-        childPulsate: clsx(classes.childPulsate, touchRippleClasses$1.childPulsate)
-      },
-      timeout: DURATION,
-      pulsate: pulsate,
-      rippleX: rippleX,
-      rippleY: rippleY,
-      rippleSize: rippleSize
-    }, nextKey.current)]);
-    nextKey.current += 1;
-    rippleCallback.current = cb;
-  }, [classes]);
-  const start = reactExports.useCallback((event = {}, options = {}, cb = () => {}) => {
-    const {
-      pulsate = false,
-      center = centerProp || options.pulsate,
-      fakeElement = false // For test purposes
-    } = options;
-    if (event?.type === 'mousedown' && ignoringMouseDown.current) {
-      ignoringMouseDown.current = false;
-      return;
-    }
-    if (event?.type === 'touchstart') {
-      ignoringMouseDown.current = true;
-    }
-    const element = fakeElement ? null : container.current;
-    const rect = element ? element.getBoundingClientRect() : {
-      width: 0,
-      height: 0,
-      left: 0,
-      top: 0
-    };
-
-    // Get the size of the ripple
-    let rippleX;
-    let rippleY;
-    let rippleSize;
-    if (center || event === undefined || event.clientX === 0 && event.clientY === 0 || !event.clientX && !event.touches) {
-      rippleX = Math.round(rect.width / 2);
-      rippleY = Math.round(rect.height / 2);
-    } else {
-      const {
-        clientX,
-        clientY
-      } = event.touches && event.touches.length > 0 ? event.touches[0] : event;
-      rippleX = Math.round(clientX - rect.left);
-      rippleY = Math.round(clientY - rect.top);
-    }
-    if (center) {
-      rippleSize = Math.sqrt((2 * rect.width ** 2 + rect.height ** 2) / 3);
-
-      // For some reason the animation is broken on Mobile Chrome if the size is even.
-      if (rippleSize % 2 === 0) {
-        rippleSize += 1;
-      }
-    } else {
-      const sizeX = Math.max(Math.abs((element ? element.clientWidth : 0) - rippleX), rippleX) * 2 + 2;
-      const sizeY = Math.max(Math.abs((element ? element.clientHeight : 0) - rippleY), rippleY) * 2 + 2;
-      rippleSize = Math.sqrt(sizeX ** 2 + sizeY ** 2);
-    }
-
-    // Touch devices
-    if (event?.touches) {
-      // check that this isn't another touchstart due to multitouch
-      // otherwise we will only clear a single timer when unmounting while two
-      // are running
-      if (startTimerCommit.current === null) {
-        // Prepare the ripple effect.
-        startTimerCommit.current = () => {
-          startCommit({
-            pulsate,
-            rippleX,
-            rippleY,
-            rippleSize,
-            cb
-          });
-        };
-        // Delay the execution of the ripple effect.
-        // We have to make a tradeoff with this delay value.
-        startTimer.start(DELAY_RIPPLE, () => {
-          if (startTimerCommit.current) {
-            startTimerCommit.current();
-            startTimerCommit.current = null;
-          }
-        });
-      }
-    } else {
-      startCommit({
-        pulsate,
-        rippleX,
-        rippleY,
-        rippleSize,
-        cb
-      });
-    }
-  }, [centerProp, startCommit, startTimer]);
-  const pulsate = reactExports.useCallback(() => {
-    start({}, {
-      pulsate: true
-    });
-  }, [start]);
-  const stop = reactExports.useCallback((event, cb) => {
-    startTimer.clear();
-
-    // The touch interaction occurs too quickly.
-    // We still want to show ripple effect.
-    if (event?.type === 'touchend' && startTimerCommit.current) {
-      startTimerCommit.current();
-      startTimerCommit.current = null;
-      startTimer.start(0, () => {
-        stop(event, cb);
-      });
-      return;
-    }
-    startTimerCommit.current = null;
-    setRipples(oldRipples => {
-      if (oldRipples.length > 0) {
-        return oldRipples.slice(1);
-      }
-      return oldRipples;
-    });
-    rippleCallback.current = cb;
-  }, [startTimer]);
-  reactExports.useImperativeHandle(ref, () => ({
-    pulsate,
-    start,
-    stop
-  }), [pulsate, start, stop]);
-  return /*#__PURE__*/jsxRuntimeExports.jsx(TouchRippleRoot, {
-    className: clsx(touchRippleClasses$1.root, classes.root, className),
-    ref: container,
-    ...other,
-    children: /*#__PURE__*/jsxRuntimeExports.jsx(TransitionGroup, {
-      component: null,
-      exit: true,
-      children: ripples
-    })
-  });
-});
-process.env.NODE_ENV !== "production" ? TouchRipple.propTypes /* remove-proptypes */ = {
-  /**
-   * If `true`, the ripple starts at the center of the component
-   * rather than at the point of interaction.
-   */
-  center: PropTypes.bool,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string
-} : void 0;
-var TouchRipple$1 = TouchRipple;
-
-function getButtonBaseUtilityClass(slot) {
-  return generateUtilityClass('MuiButtonBase', slot);
-}
-const buttonBaseClasses = generateUtilityClasses('MuiButtonBase', ['root', 'disabled', 'focusVisible']);
-var buttonBaseClasses$1 = buttonBaseClasses;
-
-const useUtilityClasses$a = ownerState => {
-  const {
-    disabled,
-    focusVisible,
-    focusVisibleClassName,
-    suppressFocusVisible,
-    classes
-  } = ownerState;
-  const slots = {
-    root: ['root', disabled && 'disabled', focusVisible && !suppressFocusVisible && 'focusVisible']
-  };
-  const composedClasses = composeClasses(slots, getButtonBaseUtilityClass, classes);
-  if (focusVisible && !suppressFocusVisible && focusVisibleClassName) {
-    composedClasses.root += ` ${focusVisibleClassName}`;
-  }
-  return composedClasses;
-};
-const ButtonBaseRoot = styled$1('button', {
-  name: 'MuiButtonBase',
-  slot: 'Root'
-})({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  position: 'relative',
-  boxSizing: 'border-box',
-  WebkitTapHighlightColor: 'transparent',
-  backgroundColor: 'transparent',
-  // Reset default value
-  // We disable the focus ring for mouse, touch and keyboard users.
-  outline: 0,
-  border: 0,
-  margin: 0,
-  // Remove the margin in Safari
-  borderRadius: 0,
-  padding: 0,
-  // Remove the padding in Firefox
-  cursor: 'pointer',
-  userSelect: 'none',
-  verticalAlign: 'middle',
-  MozAppearance: 'none',
-  // Reset
-  WebkitAppearance: 'none',
-  // Reset
-  textDecoration: 'none',
-  // So we take precedent over the style of a native <a /> element.
-  color: 'inherit',
-  '&::-moz-focus-inner': {
-    borderStyle: 'none' // Remove Firefox dotted outline.
-  },
-  [`&.${buttonBaseClasses$1.disabled}`]: {
-    pointerEvents: 'none',
-    // Disable link interactions
-    cursor: 'default'
-  },
-  '@media print': {
-    colorAdjust: 'exact'
-  }
-});
-
-/**
- * `ButtonBase` contains as few styles as possible.
- * It aims to be a simple building block for creating a button.
- * It contains a load of style reset and some focus/ripple logic.
- */
-const ButtonBase = /*#__PURE__*/reactExports.forwardRef(function ButtonBase(inProps, ref) {
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiButtonBase'
-  });
-  const {
-    action,
-    centerRipple = false,
-    children,
-    className,
-    component = 'button',
-    disabled = false,
-    disableRipple = false,
-    disableTouchRipple = false,
-    focusRipple = false,
-    focusVisibleClassName,
-    /* eslint-disable react/prop-types */
-    // replaces internal handling in Chip, other components can opt-in individually to use this in the future
-    focusableWhenDisabled,
-    // escape hatch to suppress the focusVisible state and callback
-    // used by anchored <Menu>s to to suppress focus visible styling when opened with a pointer
-    suppressFocusVisible = false,
-    // private prop to allow native vs non-native button props to be resolved before mount
-    internalNativeButton: internalNativeButtonProp,
-    /* eslint-enable react/prop-types */
-    LinkComponent = 'a',
-    nativeButton: nativeButtonProp,
-    onBlur,
-    onClick: onClickProp,
-    onContextMenu,
-    onDragLeave,
-    onFocus,
-    onFocusVisible,
-    onKeyDown: onKeyDownProp,
-    onKeyUp: onKeyUpProp,
-    onMouseDown,
-    onMouseLeave,
-    onMouseUp,
-    onTouchEnd,
-    onTouchMove,
-    onTouchStart,
-    tabIndex = 0,
-    TouchRippleProps,
-    touchRippleRef,
-    type,
-    ...other
-  } = props;
-  const isLink = Boolean(other.href || other.to);
-  const hasFormAction = Boolean(other.formAction);
-  let ComponentProp = component;
-  if (ComponentProp === 'button' && isLink) {
-    ComponentProp = LinkComponent;
-  }
-  const internalNativeButton = typeof ComponentProp === 'string' ? ComponentProp === 'button' : internalNativeButtonProp ?? false;
-  const nativeButton = nativeButtonProp ?? internalNativeButton;
-  const ripple = useLazyRipple();
-  const handleRippleRef = useForkRef(ripple.ref, touchRippleRef);
-  const [focusVisible, setFocusVisible] = reactExports.useState(false);
-  if ((disabled || suppressFocusVisible) && focusVisible) {
-    setFocusVisible(false);
-  }
-  const handleBeforeKeyDown = useEventCallback(event => {
-    // Check if key is already down to avoid repeats being counted as multiple activations
-    if (focusRipple && !event.repeat && focusVisible && event.key === ' ') {
-      ripple.stop(event, () => {
-        ripple.start(event);
-      });
-    }
-  });
-  const handleBeforeKeyUp = useEventCallback(event => {
-    // calling preventDefault in keyUp on a <button> will not dispatch a click event if Space is pressed
-    // https://codesandbox.io/p/sandbox/button-keyup-preventdefault-dn7f0
-    if (focusRipple && event.key === ' ' && focusVisible && !event.defaultPrevented) {
-      ripple.stop(event, () => {
-        ripple.pulsate(event);
-      });
-    }
-  });
-  const {
-    getButtonProps,
-    rootRef: buttonRef
-  } = useButtonBase({
-    nativeButton,
-    nativeButtonProp,
-    internalNativeButton,
-    allowInferredHostMismatch: isLink || typeof ComponentProp === 'string',
-    disabled,
-    type,
-    hasFormAction,
-    tabIndex,
-    onBeforeKeyDown: handleBeforeKeyDown,
-    onBeforeKeyUp: handleBeforeKeyUp
-  });
-  const {
-    onClick,
-    onKeyDown,
-    onKeyUp,
-    ...buttonProps
-  } = getButtonProps({
-    onClick: onClickProp,
-    onKeyDown: onKeyDownProp,
-    onKeyUp: onKeyUpProp
-  });
-  reactExports.useImperativeHandle(action, () => ({
-    focusVisible: () => {
-      setFocusVisible(true);
-      buttonRef.current.focus();
-    }
-  }), [buttonRef]);
-  const enableTouchRipple = ripple.shouldMount && !disableRipple && !disabled;
-  reactExports.useEffect(() => {
-    if (focusVisible && focusRipple && !disableRipple) {
-      ripple.pulsate();
-    }
-  }, [disableRipple, focusRipple, focusVisible, ripple]);
-  const handleMouseDown = useRippleHandler(ripple, 'start', onMouseDown, disableTouchRipple);
-  const handleContextMenu = useRippleHandler(ripple, 'stop', onContextMenu, disableTouchRipple);
-  const handleDragLeave = useRippleHandler(ripple, 'stop', onDragLeave, disableTouchRipple);
-  const handleMouseUp = useRippleHandler(ripple, 'stop', onMouseUp, disableTouchRipple);
-  const handleMouseLeave = useRippleHandler(ripple, 'stop', event => {
-    if (focusVisible) {
-      event.preventDefault();
-    }
-    if (onMouseLeave) {
-      onMouseLeave(event);
-    }
-  }, disableTouchRipple);
-  const handleTouchStart = useRippleHandler(ripple, 'start', onTouchStart, disableTouchRipple);
-  const handleTouchEnd = useRippleHandler(ripple, 'stop', onTouchEnd, disableTouchRipple);
-  const handleTouchMove = useRippleHandler(ripple, 'stop', onTouchMove, disableTouchRipple);
-  const handleBlur = useRippleHandler(ripple, 'stop', event => {
-    if (!isFocusVisible(event.target)) {
-      setFocusVisible(false);
-    }
-    if (onBlur) {
-      onBlur(event);
-    }
-  }, false);
-  const handleFocus = useEventCallback(event => {
-    // Fix for https://github.com/facebook/react/issues/7769
-    if (!buttonRef.current) {
-      buttonRef.current = event.currentTarget;
-    }
-    if (!suppressFocusVisible && isFocusVisible(event.target)) {
-      setFocusVisible(true);
-      if (onFocusVisible) {
-        onFocusVisible(event);
-      }
-    }
-    if (onFocus) {
-      onFocus(event);
-    }
-  });
-  const linkProps = {};
-  if (isLink) {
-    linkProps.tabIndex = disabled ? -1 : tabIndex;
-    if (disabled) {
-      linkProps['aria-disabled'] = disabled;
-    }
-    linkProps.type = type;
-  }
-  const handleRef = useForkRef(ref, buttonRef);
-  const ownerState = {
-    ...props,
-    centerRipple,
-    component,
-    disabled,
-    disableRipple,
-    disableTouchRipple,
-    focusRipple,
-    suppressFocusVisible,
-    tabIndex,
-    focusVisible
-  };
-  const classes = useUtilityClasses$a(ownerState);
-  return /*#__PURE__*/jsxRuntimeExports.jsxs(ButtonBaseRoot, {
-    as: ComponentProp,
-    className: clsx(classes.root, className),
-    ownerState: ownerState,
-    onBlur: handleBlur,
-    onClick: onClick,
-    onContextMenu: handleContextMenu,
-    onFocus: handleFocus,
-    onKeyDown: onKeyDown,
-    onKeyUp: onKeyUp,
-    onMouseDown: handleMouseDown,
-    onMouseLeave: handleMouseLeave,
-    onMouseUp: handleMouseUp,
-    onDragLeave: handleDragLeave,
-    onTouchEnd: handleTouchEnd,
-    onTouchMove: handleTouchMove,
-    onTouchStart: handleTouchStart,
-    ref: handleRef,
-    ...(isLink ? linkProps : buttonProps),
-    ...other,
-    children: [children, enableTouchRipple ? /*#__PURE__*/jsxRuntimeExports.jsx(TouchRipple$1, {
-      ref: handleRippleRef,
-      center: centerRipple,
-      ...TouchRippleProps
-    }) : null]
-  });
-});
-function useRippleHandler(ripple, rippleAction, eventCallback, skipRippleAction = false) {
-  return useEventCallback(event => {
-    if (eventCallback) {
-      eventCallback(event);
-    }
-    if (!skipRippleAction) {
-      ripple[rippleAction](event);
-    }
-    return true;
-  });
-}
-process.env.NODE_ENV !== "production" ? ButtonBase.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * A ref for imperative actions.
-   * It currently only supports `focusVisible()` action.
-   */
-  action: refType$1,
-  /**
-   * If `true`, the ripples are centered.
-   * They won't start at the cursor interaction position.
-   * @default false
-   */
-  centerRipple: PropTypes.bool,
-  /**
-   * The content of the component.
-   */
-  children: PropTypes.node,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string,
-  /**
-   * The component used for the root node.
-   * Either a string to use a HTML element or a component.
-   */
-  component: elementTypeAcceptingRef$1,
-  /**
-   * If `true`, the component is disabled.
-   * @default false
-   */
-  disabled: PropTypes.bool,
-  /**
-   * If `true`, the ripple effect is disabled.
-   *
-   * ⚠️ Without a ripple there is no styling for :focus-visible by default. Be sure
-   * to highlight the element by applying separate styles with the `.Mui-focusVisible` class.
-   * @default false
-   */
-  disableRipple: PropTypes.bool,
-  /**
-   * If `true`, the touch ripple effect is disabled.
-   * @default false
-   */
-  disableTouchRipple: PropTypes.bool,
-  /**
-   * If `true`, the base button will have a keyboard focus ripple.
-   * @default false
-   */
-  focusRipple: PropTypes.bool,
-  /**
-   * This prop can help identify which element has keyboard focus.
-   * The class name will be applied when the element gains the focus through keyboard interaction.
-   * It's a polyfill for the [CSS :focus-visible selector](https://drafts.csswg.org/selectors-4/#the-focus-visible-pseudo).
-   * The rationale for using this feature [is explained here](https://github.com/WICG/focus-visible/blob/HEAD/explainer.md).
-   * A [polyfill can be used](https://github.com/WICG/focus-visible) to apply a `focus-visible` class to other components
-   * if needed.
-   */
-  focusVisibleClassName: PropTypes.string,
-  /**
-   * @ignore
-   */
-  formAction: PropTypes.oneOfType([PropTypes.func, PropTypes.string]),
-  /**
-   * @ignore
-   */
-  href: PropTypes /* @typescript-to-proptypes-ignore */.any,
-  /**
-   * The component used to render a link when the `href` prop is provided.
-   * @default 'a'
-   */
-  LinkComponent: PropTypes.elementType,
-  /**
-   * Whether the custom component is expected to render a native `<button>` element
-   * when passing a React component to the `component` or `slots` prop.
-   */
-  nativeButton: PropTypes.bool,
-  /**
-   * @ignore
-   */
-  onBlur: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onClick: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onContextMenu: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onDragLeave: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onFocus: PropTypes.func,
-  /**
-   * Callback fired when the component is focused with a keyboard.
-   * We trigger a `onFocus` callback too.
-   */
-  onFocusVisible: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onKeyDown: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onKeyUp: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onMouseDown: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onMouseLeave: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onMouseUp: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onTouchEnd: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onTouchMove: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onTouchStart: PropTypes.func,
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
-  /**
-   * @default 0
-   */
-  tabIndex: PropTypes.number,
-  /**
-   * Props applied to the `TouchRipple` element.
-   */
-  TouchRippleProps: PropTypes.object,
-  /**
-   * A ref that points to the `TouchRipple` element.
-   */
-  touchRippleRef: PropTypes.oneOfType([PropTypes.func, PropTypes.shape({
-    current: PropTypes.shape({
-      pulsate: PropTypes.func.isRequired,
-      start: PropTypes.func.isRequired,
-      stop: PropTypes.func.isRequired
-    })
-  })]),
-  /**
-   * The HTML [`type`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#type)
-   * attribute applied to `button` and `a` elements.
-   * Ignored when rendering non-native buttons.
-   * @default 'button'
-   */
-  type: PropTypes.string
-} : void 0;
-var ButtonBase$1 = ButtonBase;
-
-/**
- * Type guard to check if the object has a "main" property of type string.
- *
- * @param obj - the object to check
- * @returns boolean
- */
-function hasCorrectMainProperty(obj) {
-  return typeof obj.main === 'string';
-}
-/**
- * Checks if the object conforms to the SimplePaletteColorOptions type.
- * The minimum requirement is that the object has a "main" property of type string, this is always checked.
- * Optionally, you can pass additional properties to check.
- *
- * @param obj - The object to check
- * @param additionalPropertiesToCheck - Array containing "light", "dark", and/or "contrastText"
- * @returns boolean
- */
-function checkSimplePaletteColorValues(obj, additionalPropertiesToCheck = []) {
-  if (!hasCorrectMainProperty(obj)) {
-    return false;
-  }
-  for (const value of additionalPropertiesToCheck) {
-    if (!obj.hasOwnProperty(value) || typeof obj[value] !== 'string') {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Creates a filter function used to filter simple palette color options.
- * The minimum requirement is that the object has a "main" property of type string, this is always checked.
- * Optionally, you can pass additional properties to check.
- *
- * @param additionalPropertiesToCheck - Array containing "light", "dark", and/or "contrastText"
- * @returns ([, value]: [any, PaletteColorOptions]) => boolean
- */
-function createSimplePaletteValueFilter(additionalPropertiesToCheck = []) {
-  return ([, value]) => value && checkSimplePaletteColorValues(value, additionalPropertiesToCheck);
-}
-
 function getCircularProgressUtilityClass(slot) {
   return generateUtilityClass('MuiCircularProgress', slot);
 }
@@ -80502,7 +92525,7 @@ const rotateAnimation = typeof circularRotateKeyframe !== 'string' ? css$6`
 const dashAnimation = typeof circularDashKeyframe !== 'string' ? css$6`
         animation: ${circularDashKeyframe} 1.4s ease-in-out infinite;
       ` : null;
-const useUtilityClasses$9 = ownerState => {
+const useUtilityClasses$5 = ownerState => {
   const {
     classes,
     variant,
@@ -80651,7 +92674,7 @@ const CircularProgress = /*#__PURE__*/reactExports.forwardRef(function CircularP
     variant,
     enableTrackSlot
   };
-  const classes = useUtilityClasses$9(ownerState);
+  const classes = useUtilityClasses$5(ownerState);
   const circleStyle = {};
   const rootStyle = {};
   const rootProps = {};
@@ -80815,7 +92838,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 var ButtonGroupButtonContext$1 = ButtonGroupButtonContext;
 
-const useUtilityClasses$8 = ownerState => {
+const useUtilityClasses$4 = ownerState => {
   const {
     color,
     disableElevation,
@@ -81327,7 +93350,7 @@ const Button = /*#__PURE__*/reactExports.forwardRef(function Button(inProps, ref
     type,
     variant
   };
-  const classes = useUtilityClasses$8(ownerState);
+  const classes = useUtilityClasses$4(ownerState);
   const startIcon = (startIconProp || loading && loadingPosition === 'start') && /*#__PURE__*/jsxRuntimeExports.jsx(ButtonStartIcon, {
     className: classes.startIcon,
     ownerState: ownerState,
@@ -81499,2101 +93522,6 @@ process.env.NODE_ENV !== "production" ? Button.propTypes /* remove-proptypes */ 
 } : void 0;
 var Button$1 = Button;
 
-// A change of the browser zoom change the scrollbar size.
-// Credit https://github.com/twbs/bootstrap/blob/488fd8afc535ca3a6ad4dc581f5e89217b6a36ac/js/src/util/scrollbar.js#L14-L18
-function getScrollbarSize(win = window) {
-  // https://developer.mozilla.org/en-US/docs/Web/API/Window/innerWidth#usage_notes
-  const documentWidth = win.document.documentElement.clientWidth;
-  return win.innerWidth - documentWidth;
-}
-
-// Is a vertical scrollbar displayed?
-function isOverflowing(container) {
-  const doc = ownerDocument(container);
-  if (doc.body === container) {
-    return ownerWindow(container).innerWidth > doc.documentElement.clientWidth;
-  }
-  return container.scrollHeight > container.clientHeight;
-}
-function ariaHidden(element, hide) {
-  if (hide) {
-    element.setAttribute('aria-hidden', 'true');
-  } else {
-    element.removeAttribute('aria-hidden');
-  }
-}
-function getPaddingRight(element) {
-  return parseFloat(ownerWindow(element).getComputedStyle(element).paddingRight) || 0;
-}
-function isAriaHiddenForbiddenOnElement(element) {
-  // The forbidden HTML tags are the ones from ARIA specification that
-  // can be children of body and can't have aria-hidden attribute.
-  // cf. https://www.w3.org/TR/html-aria/#docconformance
-  const forbiddenTagNames = ['TEMPLATE', 'SCRIPT', 'STYLE', 'LINK', 'MAP', 'META', 'NOSCRIPT', 'PICTURE', 'COL', 'COLGROUP', 'PARAM', 'SLOT', 'SOURCE', 'TRACK'];
-  const isForbiddenTagName = forbiddenTagNames.includes(element.tagName);
-  const isInputHidden = element.tagName === 'INPUT' && element.getAttribute('type') === 'hidden';
-  return isForbiddenTagName || isInputHidden;
-}
-function ariaHiddenSiblings(container, mountElement, currentElement, elementsToExclude, hide) {
-  const blacklist = [mountElement, currentElement, ...elementsToExclude];
-  [].forEach.call(container.children, element => {
-    const isNotExcludedElement = !blacklist.includes(element);
-    const isNotForbiddenElement = !isAriaHiddenForbiddenOnElement(element);
-    if (isNotExcludedElement && isNotForbiddenElement) {
-      ariaHidden(element, hide);
-    }
-  });
-}
-function findIndexOf(items, callback) {
-  let idx = -1;
-  items.some((item, index) => {
-    if (callback(item)) {
-      idx = index;
-      return true;
-    }
-    return false;
-  });
-  return idx;
-}
-function handleContainer(containerInfo, props) {
-  const restoreStyle = [];
-  const container = containerInfo.container;
-  if (!props.disableScrollLock) {
-    if (isOverflowing(container)) {
-      // Compute the size before applying overflow hidden to avoid any scroll jumps.
-      const scrollbarSize = getScrollbarSize(ownerWindow(container));
-      restoreStyle.push({
-        value: container.style.paddingRight,
-        property: 'padding-right',
-        el: container
-      });
-      // Use computed style, here to get the real padding to add our scrollbar width.
-      container.style.paddingRight = `${getPaddingRight(container) + scrollbarSize}px`;
-
-      // .mui-fixed is a global helper.
-      const fixedElements = ownerDocument(container).querySelectorAll('.mui-fixed');
-      [].forEach.call(fixedElements, element => {
-        restoreStyle.push({
-          value: element.style.paddingRight,
-          property: 'padding-right',
-          el: element
-        });
-        element.style.paddingRight = `${getPaddingRight(element) + scrollbarSize}px`;
-      });
-    }
-    let scrollContainer;
-    if (container.parentNode instanceof DocumentFragment) {
-      scrollContainer = ownerDocument(container).body;
-    } else {
-      // Support html overflow-y: auto for scroll stability between pages
-      // https://css-tricks.com/snippets/css/force-vertical-scrollbar/
-      const parent = container.parentElement;
-      const containerWindow = ownerWindow(container);
-      scrollContainer = parent?.nodeName === 'HTML' && containerWindow.getComputedStyle(parent).overflowY === 'scroll' ? parent : container;
-    }
-
-    // Block the scroll even if no scrollbar is visible to account for mobile keyboard
-    // screensize shrink.
-    restoreStyle.push({
-      value: scrollContainer.style.overflow,
-      property: 'overflow',
-      el: scrollContainer
-    }, {
-      value: scrollContainer.style.overflowX,
-      property: 'overflow-x',
-      el: scrollContainer
-    }, {
-      value: scrollContainer.style.overflowY,
-      property: 'overflow-y',
-      el: scrollContainer
-    });
-    scrollContainer.style.overflow = 'hidden';
-  }
-  const restore = () => {
-    restoreStyle.forEach(({
-      value,
-      el,
-      property
-    }) => {
-      if (value) {
-        el.style.setProperty(property, value);
-      } else {
-        el.style.removeProperty(property);
-      }
-    });
-  };
-  return restore;
-}
-function getHiddenSiblings(container) {
-  const hiddenSiblings = [];
-  [].forEach.call(container.children, element => {
-    if (element.getAttribute('aria-hidden') === 'true') {
-      hiddenSiblings.push(element);
-    }
-  });
-  return hiddenSiblings;
-}
-/**
- * @ignore - do not document.
- *
- * Proper state management for containers and the modals in those containers.
- * Simplified, but inspired by react-overlay's ModalManager class.
- * Used by the Modal to ensure proper styling of containers.
- */
-class ModalManager {
-  constructor() {
-    this.modals = [];
-    this.containers = [];
-  }
-  add(modal, container) {
-    let modalIndex = this.modals.indexOf(modal);
-    if (modalIndex !== -1) {
-      return modalIndex;
-    }
-    modalIndex = this.modals.length;
-    this.modals.push(modal);
-
-    // If the modal we are adding is already in the DOM.
-    if (modal.modalRef) {
-      ariaHidden(modal.modalRef, false);
-    }
-    const hiddenSiblings = getHiddenSiblings(container);
-    ariaHiddenSiblings(container, modal.mount, modal.modalRef, hiddenSiblings, true);
-    const containerIndex = findIndexOf(this.containers, item => item.container === container);
-    if (containerIndex !== -1) {
-      this.containers[containerIndex].modals.push(modal);
-      return modalIndex;
-    }
-    this.containers.push({
-      modals: [modal],
-      container,
-      restore: null,
-      hiddenSiblings
-    });
-    return modalIndex;
-  }
-  mount(modal, props) {
-    const containerIndex = findIndexOf(this.containers, item => item.modals.includes(modal));
-    const containerInfo = this.containers[containerIndex];
-    if (!containerInfo.restore) {
-      containerInfo.restore = handleContainer(containerInfo, props);
-    }
-  }
-  remove(modal, ariaHiddenState = true) {
-    const modalIndex = this.modals.indexOf(modal);
-    if (modalIndex === -1) {
-      return modalIndex;
-    }
-    const containerIndex = findIndexOf(this.containers, item => item.modals.includes(modal));
-    const containerInfo = this.containers[containerIndex];
-    containerInfo.modals.splice(containerInfo.modals.indexOf(modal), 1);
-    this.modals.splice(modalIndex, 1);
-
-    // If that was the last modal in a container, clean up the container.
-    if (containerInfo.modals.length === 0) {
-      // The modal might be closed before it had the chance to be mounted in the DOM.
-      if (containerInfo.restore) {
-        containerInfo.restore();
-      }
-      if (modal.modalRef) {
-        // In case the modal wasn't in the DOM yet.
-        ariaHidden(modal.modalRef, ariaHiddenState);
-      }
-      ariaHiddenSiblings(containerInfo.container, modal.mount, modal.modalRef, containerInfo.hiddenSiblings, false);
-      this.containers.splice(containerIndex, 1);
-    } else {
-      // Otherwise make sure the next top modal is visible to a screen reader.
-      const nextTop = containerInfo.modals[containerInfo.modals.length - 1];
-      // as soon as a modal is adding its modalRef is undefined. it can't set
-      // aria-hidden because the dom element doesn't exist either
-      // when modal was unmounted before modalRef gets null
-      if (nextTop.modalRef) {
-        ariaHidden(nextTop.modalRef, false);
-      }
-    }
-    return modalIndex;
-  }
-  isTopModal(modal) {
-    return this.modals.length > 0 && this.modals[this.modals.length - 1] === modal;
-  }
-}
-
-function HTMLElementType(props, propName, componentName, location, propFullName) {
-  if (process.env.NODE_ENV === 'production') {
-    return null;
-  }
-  const propValue = props[propName];
-  const safePropName = propFullName || propName;
-  if (propValue == null) {
-    return null;
-  }
-  if (propValue && propValue.nodeType !== 1) {
-    return new Error(`Invalid ${location} \`${safePropName}\` supplied to \`${componentName}\`. ` + `Expected an HTMLElement.`);
-  }
-  return null;
-}
-
-function isClassComponent(elementType) {
-  // elementType.prototype?.isReactComponent
-  const {
-    prototype = {}
-  } = elementType;
-  return Boolean(prototype.isReactComponent);
-}
-function acceptingRef(props, propName, componentName, location, propFullName) {
-  const element = props[propName];
-  const safePropName = propFullName || propName;
-  if (element == null ||
-  // When server-side rendering React doesn't warn either.
-  // This is not an accurate check for SSR.
-  // This is only in place for Emotion compat.
-  // TODO: Revisit once https://github.com/facebook/react/issues/20047 is resolved.
-  typeof window === 'undefined') {
-    return null;
-  }
-  let warningHint;
-  const elementType = element.type;
-  /**
-   * Blacklisting instead of whitelisting
-   *
-   * Blacklisting will miss some components, such as React.Fragment. Those will at least
-   * trigger a warning in React.
-   * We can't whitelist because there is no safe way to detect React.forwardRef
-   * or class components. "Safe" means there's no public API.
-   *
-   */
-  if (typeof elementType === 'function' && !isClassComponent(elementType)) {
-    warningHint = 'Did you accidentally use a plain function component for an element instead?';
-  }
-  if (warningHint !== undefined) {
-    return new Error(`Invalid ${location} \`${safePropName}\` supplied to \`${componentName}\`. ` + `Expected an element that can hold a ref. ${warningHint} ` + 'For more information see https://mui.com/r/caveat-with-refs-guide');
-  }
-  return null;
-}
-const elementAcceptingRef = chainPropTypes(PropTypes.element, acceptingRef);
-elementAcceptingRef.isRequired = chainPropTypes(PropTypes.element.isRequired, acceptingRef);
-var elementAcceptingRef$1 = elementAcceptingRef;
-
-/**
- * Returns the ref of a React element handling differences between React 19 and older versions.
- * It will throw runtime error if the element is not a valid React element.
- *
- * @param element React.ReactElement
- * @returns React.Ref<any> | null
- */
-function getReactElementRef(element) {
-  // 'ref' is passed as prop in React 19, whereas 'ref' is directly attached to children in older versions
-  if (parseInt(reactExports.version, 10) >= 19) {
-    return element?.props?.ref || null;
-  }
-  // @ts-expect-error element.ref is not included in the ReactElement type
-  // https://github.com/DefinitelyTyped/DefinitelyTyped/discussions/70189
-  return element?.ref || null;
-}
-
-/**
- * Copied from @base-ui/utils
- *
- * Shadow DOM-aware containment check.
- *
- * Native `parent.contains(child)` returns `false` when the child is inside a
- * shadow root that is a descendant of the parent. This function handles that
- * case by traversing up through shadow root hosts.
- *
- * @param parent - The potential ancestor element.
- * @param child - The potential descendant element.
- * @returns Whether `parent` contains `child`, even across shadow root boundaries.
- */
-function contains(parent, child) {
-  if (!parent || !child) {
-    return false;
-  }
-
-  // First, attempt with the faster native method.
-  if (parent.contains(child)) {
-    return true;
-  }
-
-  // Then fall back to traversing out of shadow roots when needed.
-  const rootNode = child.getRootNode?.();
-  if (rootNode && rootNode instanceof ShadowRoot) {
-    let next = child;
-    while (next) {
-      if (parent === next) {
-        return true;
-      }
-      next = next.parentNode ?? next.host ?? null;
-    }
-  }
-  return false;
-}
-
-const FOCUSABLE_ATTRIBUTE = 'data-mui-focusable';
-
-/**
- * Returns the element marked as the initial focus target inside a focus trap.
- * The root element takes precedence over marked descendants so components can
- * opt into focusing their own root surface directly.
- */
-function getFocusTarget(rootElement) {
-  if (!rootElement) {
-    return null;
-  }
-  return rootElement.hasAttribute(FOCUSABLE_ATTRIBUTE) ? rootElement : rootElement.querySelector(`[${FOCUSABLE_ATTRIBUTE}]`);
-}
-
-// Inspired by https://github.com/focus-trap/tabbable
-const candidatesSelector = ['input', 'select', 'textarea', 'a[href]', 'button', '[tabindex]', 'audio[controls]', 'video[controls]', '[contenteditable]:not([contenteditable="false"])'].join(',');
-function getTabIndex(node) {
-  const tabindexAttr = parseInt(node.getAttribute('tabindex') || '', 10);
-  if (!Number.isNaN(tabindexAttr)) {
-    return tabindexAttr;
-  }
-
-  // Browsers do not return `tabIndex` correctly for contentEditable nodes;
-  // https://issues.chromium.org/issues/41283952
-  // so if they don't have a tabindex attribute specifically set, assume it's 0.
-  // in Chrome, <details/>, <audio controls/> and <video controls/> elements get a default
-  //  `tabIndex` of -1 when the 'tabindex' attribute isn't specified in the DOM,
-  //  yet they are still part of the regular tab order; in FF, they get a default
-  //  `tabIndex` of 0; since Chrome still puts those elements in the regular tab
-  //  order, consider their tab index to be 0.
-  if (node.contentEditable === 'true' || (node.nodeName === 'AUDIO' || node.nodeName === 'VIDEO' || node.nodeName === 'DETAILS') && node.getAttribute('tabindex') === null) {
-    return 0;
-  }
-  return node.tabIndex;
-}
-function isNonTabbableRadio(node) {
-  if (node.tagName !== 'INPUT' || node.type !== 'radio') {
-    return false;
-  }
-  if (!node.name) {
-    return false;
-  }
-  const getRadio = selector => node.ownerDocument.querySelector(`input[type="radio"]${selector}`);
-  let roving = getRadio(`[name="${node.name}"]:checked`);
-  if (!roving) {
-    roving = getRadio(`[name="${node.name}"]`);
-  }
-  return roving !== node;
-}
-function isNodeMatchingSelectorFocusable(node) {
-  if (node.disabled || node.tagName === 'INPUT' && node.type === 'hidden' || isNonTabbableRadio(node)) {
-    return false;
-  }
-  return true;
-}
-function defaultGetTabbable(root) {
-  const regularTabNodes = [];
-  const orderedTabNodes = [];
-  Array.from(root.querySelectorAll(candidatesSelector)).forEach((node, i) => {
-    const nodeTabIndex = getTabIndex(node);
-    if (nodeTabIndex === -1 || !isNodeMatchingSelectorFocusable(node)) {
-      return;
-    }
-    if (nodeTabIndex === 0) {
-      regularTabNodes.push(node);
-    } else {
-      orderedTabNodes.push({
-        documentOrder: i,
-        tabIndex: nodeTabIndex,
-        node: node
-      });
-    }
-  });
-  return orderedTabNodes.sort((a, b) => a.tabIndex === b.tabIndex ? a.documentOrder - b.documentOrder : a.tabIndex - b.tabIndex).map(a => a.node).concat(regularTabNodes);
-}
-function defaultIsEnabled() {
-  return true;
-}
-
-/**
- * @ignore - internal component.
- */
-function FocusTrap(props) {
-  const {
-    children,
-    disableAutoFocus = false,
-    disableEnforceFocus = false,
-    disableRestoreFocus = false,
-    getTabbable = defaultGetTabbable,
-    isEnabled = defaultIsEnabled,
-    open
-  } = props;
-  const ignoreNextEnforceFocus = reactExports.useRef(false);
-  const sentinelStart = reactExports.useRef(null);
-  const sentinelEnd = reactExports.useRef(null);
-  const nodeToRestore = reactExports.useRef(null);
-  const reactFocusEventTarget = reactExports.useRef(null);
-  // This variable is useful when disableAutoFocus is true.
-  // It waits for the active element to move into the component to activate.
-  const activated = reactExports.useRef(false);
-  const rootRef = reactExports.useRef(null);
-  const handleRef = useForkRef(getReactElementRef(children), rootRef);
-  const lastKeydown = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    // We might render an empty child.
-    if (!open || !rootRef.current) {
-      return;
-    }
-    activated.current = !disableAutoFocus;
-  }, [disableAutoFocus, open]);
-  reactExports.useEffect(() => {
-    // Reset on every mount — React 18 Strict Mode double-mounts leave this
-    // stuck at `true` after the cleanup of the previous mount set it.
-    ignoreNextEnforceFocus.current = false;
-
-    // We might render an empty child.
-    if (!open || !rootRef.current) {
-      return;
-    }
-    const doc = ownerDocument(rootRef.current);
-    const activeElement$1 = activeElement(doc);
-
-    // Prefer the explicitly marked focusable element. Fall back to the root
-    // element for generic FocusTrap usage.
-    const focusTarget = getFocusTarget(rootRef.current) ?? rootRef.current;
-    if (!contains(rootRef.current, activeElement$1)) {
-      if (!focusTarget.hasAttribute('tabIndex')) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error(['MUI: The modal content node does not accept focus.', 'For the benefit of assistive technologies, ' + 'the tabIndex of the node is being set to "-1".'].join('\n'));
-        }
-        focusTarget.setAttribute('tabIndex', '-1');
-      }
-      if (activated.current) {
-        focusTarget.focus();
-      }
-    }
-    return () => {
-      // restoreLastFocus()
-      if (!disableRestoreFocus && nodeToRestore.current) {
-        ignoreNextEnforceFocus.current = true;
-        nodeToRestore.current.focus();
-        nodeToRestore.current = null;
-      }
-    };
-    // Missing `disableRestoreFocus` which is fine.
-    // We don't support changing that prop on an open FocusTrap
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  reactExports.useEffect(() => {
-    // We might render an empty child.
-    if (!open || !rootRef.current) {
-      return;
-    }
-    const doc = ownerDocument(rootRef.current);
-    const loopFocus = nativeEvent => {
-      lastKeydown.current = nativeEvent;
-      if (disableEnforceFocus || !isEnabled() || nativeEvent.key !== 'Tab') {
-        return;
-      }
-      const activeElement$1 = activeElement(doc);
-
-      // Make sure the next tab starts from the right place.
-      // activeElement refers to the origin.
-      if (activeElement$1 === rootRef.current && nativeEvent.shiftKey) {
-        // We need to ignore the next contain as
-        // it will try to move the focus back to the rootRef element.
-        ignoreNextEnforceFocus.current = true;
-        if (sentinelEnd.current) {
-          sentinelEnd.current.focus();
-        }
-      }
-    };
-    const contain = () => {
-      const rootElement = rootRef.current;
-
-      // Cleanup functions are executed lazily in React 17.
-      // Contain can be called between the component being unmounted and its cleanup function being run.
-      if (rootElement === null) {
-        return;
-      }
-      const activeEl = activeElement(doc);
-      if (!doc.hasFocus() || !isEnabled() || ignoreNextEnforceFocus.current) {
-        ignoreNextEnforceFocus.current = false;
-        return;
-      }
-
-      // The focus is already inside
-      if (contains(rootElement, activeEl)) {
-        return;
-      }
-
-      // The disableEnforceFocus is set and the focus is outside of the focus trap (and sentinel nodes)
-      if (disableEnforceFocus && activeEl !== sentinelStart.current && activeEl !== sentinelEnd.current) {
-        return;
-      }
-
-      // if the focus event is not coming from inside the children's react tree, reset the refs
-      if (activeEl !== reactFocusEventTarget.current) {
-        reactFocusEventTarget.current = null;
-      } else if (reactFocusEventTarget.current !== null) {
-        return;
-      }
-      if (!activated.current) {
-        return;
-      }
-      let tabbable = [];
-      if (activeEl === sentinelStart.current || activeEl === sentinelEnd.current) {
-        tabbable = getTabbable(rootRef.current);
-      }
-
-      // one of the sentinel nodes was focused, so move the focus
-      // to the first/last tabbable element inside the focus trap
-      if (tabbable.length > 0) {
-        const isShiftTab = Boolean(lastKeydown.current?.shiftKey && lastKeydown.current?.key === 'Tab');
-        const focusNext = tabbable[0];
-        const focusPrevious = tabbable[tabbable.length - 1];
-        if (typeof focusNext !== 'string' && typeof focusPrevious !== 'string') {
-          if (isShiftTab) {
-            focusPrevious.focus();
-          } else {
-            focusNext.focus();
-          }
-        }
-        // no tabbable elements in the trap focus or the focus was outside of the focus trap
-      } else {
-        rootElement.focus();
-      }
-    };
-    doc.addEventListener('focusin', contain);
-    doc.addEventListener('keydown', loopFocus, true);
-
-    // With Edge, Safari and Firefox, no focus related events are fired when the focused area stops being a focused area.
-    // for example https://bugzilla.mozilla.org/show_bug.cgi?id=559561.
-    // Instead, we can look if the active element was restored on the BODY element.
-    //
-    // The whatwg spec defines how the browser should behave but does not explicitly mention any events:
-    // https://html.spec.whatwg.org/multipage/interaction.html#focus-fixup-rule.
-    const interval = setInterval(() => {
-      const activeEl = activeElement(doc);
-      if (activeEl && activeEl.tagName === 'BODY') {
-        contain();
-      }
-    }, 50);
-    return () => {
-      clearInterval(interval);
-      doc.removeEventListener('focusin', contain);
-      doc.removeEventListener('keydown', loopFocus, true);
-    };
-  }, [disableAutoFocus, disableEnforceFocus, disableRestoreFocus, isEnabled, open, getTabbable]);
-  const onFocus = event => {
-    if (nodeToRestore.current === null) {
-      nodeToRestore.current = event.relatedTarget;
-    }
-    activated.current = true;
-    reactFocusEventTarget.current = event.target;
-    const childrenPropsHandler = children.props.onFocus;
-    if (childrenPropsHandler) {
-      childrenPropsHandler(event);
-    }
-  };
-  const handleFocusSentinel = event => {
-    if (nodeToRestore.current === null) {
-      nodeToRestore.current = event.relatedTarget;
-    }
-    activated.current = true;
-  };
-  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
-    children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
-      tabIndex: open ? 0 : -1,
-      onFocus: handleFocusSentinel,
-      ref: sentinelStart,
-      "data-testid": "sentinelStart"
-    }), /*#__PURE__*/reactExports.cloneElement(children, {
-      ref: handleRef,
-      onFocus
-    }), /*#__PURE__*/jsxRuntimeExports.jsx("div", {
-      tabIndex: open ? 0 : -1,
-      onFocus: handleFocusSentinel,
-      ref: sentinelEnd,
-      "data-testid": "sentinelEnd"
-    })]
-  });
-}
-process.env.NODE_ENV !== "production" ? FocusTrap.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * A single child content element.
-   */
-  children: elementAcceptingRef$1,
-  /**
-   * If `true`, the focus trap will not automatically shift focus to itself when it opens, and
-   * replace it to the last focused element when it closes.
-   * This also works correctly with any focus trap children that have the `disableAutoFocus` prop.
-   *
-   * Generally this should never be set to `true` as it makes the focus trap less
-   * accessible to assistive technologies, like screen readers.
-   * @default false
-   */
-  disableAutoFocus: PropTypes.bool,
-  /**
-   * If `true`, the focus trap will not prevent focus from leaving the focus trap while open.
-   *
-   * Generally this should never be set to `true` as it makes the focus trap less
-   * accessible to assistive technologies, like screen readers.
-   * @default false
-   */
-  disableEnforceFocus: PropTypes.bool,
-  /**
-   * If `true`, the focus trap will not restore focus to previously focused element once
-   * focus trap is hidden or unmounted.
-   * @default false
-   */
-  disableRestoreFocus: PropTypes.bool,
-  /**
-   * Returns an array of ordered tabbable nodes (i.e. in tab order) within the root.
-   * For instance, you can provide the "tabbable" npm dependency.
-   * @param {HTMLElement} root
-   */
-  getTabbable: PropTypes.func,
-  /**
-   * This prop extends the `open` prop.
-   * It allows to toggle the open state without having to wait for a rerender when changing the `open` prop.
-   * This prop should be memoized.
-   * It can be used to support multiple focus trap mounted at the same time.
-   * @default function defaultIsEnabled(): boolean {
-   *   return true;
-   * }
-   */
-  isEnabled: PropTypes.func,
-  /**
-   * If `true`, focus is locked.
-   */
-  open: PropTypes.bool.isRequired
-} : void 0;
-if (process.env.NODE_ENV !== 'production') {
-  // eslint-disable-next-line
-  FocusTrap['propTypes' + ''] = exactProp(FocusTrap.propTypes);
-}
-
-function getContainer$1(container) {
-  return typeof container === 'function' ? container() : container;
-}
-
-/**
- * Portals provide a first-class way to render children into a DOM node
- * that exists outside the DOM hierarchy of the parent component.
- *
- * Demos:
- *
- * - [Portal](https://mui.com/material-ui/react-portal/)
- *
- * API:
- *
- * - [Portal API](https://mui.com/material-ui/api/portal/)
- */
-const Portal = /*#__PURE__*/reactExports.forwardRef(function Portal(props, forwardedRef) {
-  const {
-    children,
-    container,
-    disablePortal = false
-  } = props;
-  const [mountNode, setMountNode] = reactExports.useState(null);
-  const handleRef = useForkRef(/*#__PURE__*/reactExports.isValidElement(children) ? getReactElementRef(children) : null, forwardedRef);
-  useEnhancedEffect$1(() => {
-    if (!disablePortal) {
-      setMountNode(getContainer$1(container) || document.body);
-    }
-  }, [container, disablePortal]);
-  useEnhancedEffect$1(() => {
-    if (mountNode && !disablePortal) {
-      setRef(forwardedRef, mountNode);
-      return () => {
-        setRef(forwardedRef, null);
-      };
-    }
-    return undefined;
-  }, [forwardedRef, mountNode, disablePortal]);
-  if (disablePortal) {
-    if (/*#__PURE__*/reactExports.isValidElement(children)) {
-      const newProps = {
-        ref: handleRef
-      };
-      return /*#__PURE__*/reactExports.cloneElement(children, newProps);
-    }
-    return children;
-  }
-  return mountNode ? /*#__PURE__*/reactDomExports.createPortal(children, mountNode) : mountNode;
-});
-process.env.NODE_ENV !== "production" ? Portal.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * The children to render into the `container`.
-   */
-  children: PropTypes.node,
-  /**
-   * An HTML element or function that returns one.
-   * The `container` will have the portal children appended to it.
-   *
-   * You can also provide a callback, which is called in a React layout effect.
-   * This lets you set the container from a ref, and also makes server-side rendering possible.
-   *
-   * By default, it uses the body of the top-level document object,
-   * so it's simply `document.body` most of the time.
-   */
-  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
-  /**
-   * The `children` will be under the DOM hierarchy of the parent component.
-   * @default false
-   */
-  disablePortal: PropTypes.bool
-} : void 0;
-if (process.env.NODE_ENV !== 'production') {
-  // eslint-disable-next-line
-  Portal['propTypes' + ''] = exactProp(Portal.propTypes);
-}
-var Portal$1 = Portal;
-
-/**
- * Determines if a given element is a DOM element name (i.e. not a React component).
- */
-function isHostComponent(element) {
-  return typeof element === 'string';
-}
-
-/**
- * Type of the ownerState based on the type of an element it applies to.
- * This resolves to the provided OwnerState for React components and `undefined` for host components.
- * Falls back to `OwnerState | undefined` when the exact type can't be determined in development time.
- */
-
-/**
- * Appends the ownerState object to the props, merging with the existing one if necessary.
- *
- * @param elementType Type of the element that owns the `existingProps`. If the element is a DOM node or undefined, `ownerState` is not applied.
- * @param otherProps Props of the element.
- * @param ownerState
- */
-function appendOwnerState(elementType, otherProps, ownerState) {
-  if (elementType === undefined || isHostComponent(elementType)) {
-    return otherProps;
-  }
-  return {
-    ...otherProps,
-    ownerState: {
-      ...otherProps.ownerState,
-      ...ownerState
-    }
-  };
-}
-
-/**
- * If `componentProps` is a function, calls it with the provided `ownerState`.
- * Otherwise, just returns `componentProps`.
- */
-function resolveComponentProps(componentProps, ownerState, slotState) {
-  if (typeof componentProps === 'function') {
-    return componentProps(ownerState, slotState);
-  }
-  return componentProps;
-}
-
-/**
- * Extracts event handlers from a given object.
- * A prop is considered an event handler if it is a function and its name starts with `on`.
- *
- * @param object An object to extract event handlers from.
- */
-function extractEventHandlers(object) {
-  if (object === undefined) {
-    return {};
-  }
-  const result = {};
-  for (const prop of Object.keys(object)) {
-    if (isEventHandler(prop, object[prop])) {
-      result[prop] = object[prop];
-    }
-  }
-  return result;
-}
-
-/**
- * Removes event handlers from the given object.
- * A field is considered an event handler if it is a function with a name beginning with `on`.
- *
- * @param object Object to remove event handlers from.
- * @returns Object with event handlers removed.
- */
-function omitEventHandlers(object) {
-  if (object === undefined) {
-    return {};
-  }
-  const result = {};
-  Object.keys(object).filter(prop => !(prop.match(/^on[A-Z]/) && typeof object[prop] === 'function')).forEach(prop => {
-    result[prop] = object[prop];
-  });
-  return result;
-}
-
-/**
- * Merges the slot component internal props (usually coming from a hook)
- * with the externally provided ones.
- *
- * The merge order is (the latter overrides the former):
- * 1. The internal props (specified as a getter function to work with get*Props hook result)
- * 2. Additional props (specified internally on a Base UI component)
- * 3. External props specified on the owner component. These should only be used on a root slot.
- * 4. External props specified in the `slotProps.*` prop.
- * 5. The `className` prop - combined from all the above.
- * @param parameters
- * @returns
- */
-function mergeSlotProps(parameters) {
-  const {
-    getSlotProps,
-    additionalProps,
-    externalSlotProps,
-    externalForwardedProps,
-    className
-  } = parameters;
-  if (!getSlotProps) {
-    // The simpler case - getSlotProps is not defined, so no internal event handlers are defined,
-    // so we can simply merge all the props without having to worry about extracting event handlers.
-    const joinedClasses = clsx(additionalProps?.className, className, externalForwardedProps?.className, externalSlotProps?.className);
-    const mergedStyle = {
-      ...additionalProps?.style,
-      ...externalForwardedProps?.style,
-      ...externalSlotProps?.style
-    };
-    const props = {
-      ...additionalProps,
-      ...externalForwardedProps,
-      ...externalSlotProps
-    };
-    if (joinedClasses.length > 0) {
-      props.className = joinedClasses;
-    }
-    if (Object.keys(mergedStyle).length > 0) {
-      props.style = mergedStyle;
-    }
-    return {
-      props,
-      internalRef: undefined
-    };
-  }
-
-  // In this case, getSlotProps is responsible for calling the external event handlers.
-  // We don't need to include them in the merged props because of this.
-
-  const eventHandlers = extractEventHandlers({
-    ...externalForwardedProps,
-    ...externalSlotProps
-  });
-  const componentsPropsWithoutEventHandlers = omitEventHandlers(externalSlotProps);
-  const otherPropsWithoutEventHandlers = omitEventHandlers(externalForwardedProps);
-  const internalSlotProps = getSlotProps(eventHandlers);
-
-  // The order of classes is important here.
-  // Emotion (that we use in libraries consuming Base UI) depends on this order
-  // to properly override style. It requires the most important classes to be last
-  // (see https://github.com/mui/material-ui/pull/33205) for the related discussion.
-  const joinedClasses = clsx(internalSlotProps?.className, additionalProps?.className, className, externalForwardedProps?.className, externalSlotProps?.className);
-  const mergedStyle = {
-    ...internalSlotProps?.style,
-    ...additionalProps?.style,
-    ...externalForwardedProps?.style,
-    ...externalSlotProps?.style
-  };
-  const props = {
-    ...internalSlotProps,
-    ...additionalProps,
-    ...otherPropsWithoutEventHandlers,
-    ...componentsPropsWithoutEventHandlers
-  };
-  if (joinedClasses.length > 0) {
-    props.className = joinedClasses;
-  }
-  if (Object.keys(mergedStyle).length > 0) {
-    props.style = mergedStyle;
-  }
-  return {
-    props,
-    internalRef: internalSlotProps.ref
-  };
-}
-
-/**
- * An internal function to create a Material UI slot.
- *
- * This is an advanced version of Base UI `useSlotProps` because Material UI allows leaf component to be customized via `component` prop
- * while Base UI does not need to support leaf component customization.
- *
- * @param {string} name: name of the slot
- * @param {object} parameters
- * @returns {[Slot, slotProps]} The slot's React component and the slot's props
- *
- * Note: the returned slot's props
- * - will never contain `component` prop.
- * - might contain `as` prop.
- */
-function useSlot(
-/**
- * The slot's name. All Material UI components should have `root` slot.
- *
- * If the name is `root`, the logic behaves differently from other slots,
- * e.g. the `externalForwardedProps` are spread to `root` slot but not other slots.
- */
-name, parameters) {
-  const {
-    className,
-    elementType: initialElementType,
-    ownerState,
-    externalForwardedProps,
-    internalForwardedProps,
-    shouldForwardComponentProp = false,
-    ...useSlotPropsParams
-  } = parameters;
-  const {
-    component: rootComponent,
-    slots = {
-      [name]: undefined
-    },
-    slotProps = {
-      [name]: undefined
-    },
-    ...other
-  } = externalForwardedProps;
-  const elementType = slots[name] || initialElementType;
-
-  // `slotProps[name]` can be a callback that receives the component's ownerState.
-  // `resolvedComponentsProps` is always a plain object.
-  const resolvedComponentsProps = resolveComponentProps(slotProps[name], ownerState);
-  const {
-    props: {
-      component: slotComponent,
-      ...mergedProps
-    },
-    internalRef
-  } = mergeSlotProps({
-    className,
-    ...useSlotPropsParams,
-    externalForwardedProps: name === 'root' ? other : undefined,
-    externalSlotProps: resolvedComponentsProps
-  });
-  const ref = useForkRef(internalRef, resolvedComponentsProps?.ref, parameters.ref);
-  const LeafComponent = name === 'root' ? slotComponent || rootComponent : slotComponent;
-  const props = appendOwnerState(elementType, {
-    ...(name === 'root' && !rootComponent && !slots[name] && internalForwardedProps),
-    ...(name !== 'root' && !slots[name] && internalForwardedProps),
-    ...mergedProps,
-    ...(LeafComponent && !shouldForwardComponentProp && {
-      as: LeafComponent
-    }),
-    ...(LeafComponent && shouldForwardComponentProp && {
-      component: LeafComponent
-    }),
-    ref
-  }, ownerState);
-  return [elementType, props];
-}
-
-const reflow = node => node.scrollTop;
-function normalizedTransitionCallback(nodeRef, callback) {
-  return maybeIsAppearing => {
-    if (callback) {
-      const node = nodeRef.current;
-      // onEnterXxx and onExitXxx callbacks have a different arguments.length value.
-      if (maybeIsAppearing === undefined) {
-        callback(node);
-      } else {
-        callback(node, maybeIsAppearing);
-      }
-    }
-  };
-}
-/**
- * Computes the child style for a transition component, reusing existing
- * references when possible to preserve referential equality for React.memo.
- */
-function getTransitionChildStyle(state, inProp, baseStyles, hiddenStyles, styleProp, childStyle) {
-  const base = state === 'exited' && !inProp ? hiddenStyles : baseStyles[state] || baseStyles.exited;
-  return styleProp || childStyle ? {
-    ...base,
-    ...styleProp,
-    ...childStyle
-  } : base;
-}
-function getTransitionProps(props, options) {
-  const {
-    timeout,
-    easing,
-    style = {}
-  } = props;
-  return {
-    duration: style.transitionDuration ?? (typeof timeout === 'number' ? timeout : timeout[options.mode] || 0),
-    easing: style.transitionTimingFunction ?? (typeof easing === 'object' ? easing[options.mode] : easing),
-    delay: style.transitionDelay
-  };
-}
-
-const styles = {
-  entering: {
-    opacity: 1
-  },
-  entered: {
-    opacity: 1
-  },
-  exiting: {
-    opacity: 0
-  },
-  exited: {
-    opacity: 0
-  }
-};
-const hiddenStyles = {
-  opacity: 0,
-  visibility: 'hidden'
-};
-
-/**
- * The Fade transition is used by the [Modal](/material-ui/react-modal/) component.
- * It uses [react-transition-group](https://github.com/reactjs/react-transition-group) internally.
- */
-const Fade = /*#__PURE__*/reactExports.forwardRef(function Fade(props, ref) {
-  const theme = useTheme();
-  const defaultTimeout = {
-    enter: theme.transitions.duration.enteringScreen,
-    exit: theme.transitions.duration.leavingScreen
-  };
-  const {
-    addEndListener,
-    appear = true,
-    children,
-    easing,
-    in: inProp,
-    onEnter,
-    onEntered,
-    onEntering,
-    onExit,
-    onExited,
-    onExiting,
-    style,
-    timeout = defaultTimeout,
-    ...other
-  } = props;
-  const nodeRef = reactExports.useRef(null);
-  const handleRef = useForkRef(nodeRef, getReactElementRef(children), ref);
-  const handleEntering = normalizedTransitionCallback(nodeRef, onEntering);
-  const handleEnter = normalizedTransitionCallback(nodeRef, (node, isAppearing) => {
-    reflow(node); // So the animation always start from the start.
-
-    const transitionProps = getTransitionProps({
-      style,
-      timeout,
-      easing
-    }, {
-      mode: 'enter'
-    });
-    node.style.transition = theme.transitions.create('opacity', transitionProps);
-    if (onEnter) {
-      onEnter(node, isAppearing);
-    }
-  });
-  const handleEntered = normalizedTransitionCallback(nodeRef, onEntered);
-  const handleExiting = normalizedTransitionCallback(nodeRef, onExiting);
-  const handleExit = normalizedTransitionCallback(nodeRef, node => {
-    const transitionProps = getTransitionProps({
-      style,
-      timeout,
-      easing
-    }, {
-      mode: 'exit'
-    });
-    node.style.transition = theme.transitions.create('opacity', transitionProps);
-    if (onExit) {
-      onExit(node);
-    }
-  });
-  const handleExited = normalizedTransitionCallback(nodeRef, node => {
-    // Clear the transition CSS to release the compositor layer when the
-    // element is fully exited (prevents idle CPU usage on fixed elements
-    // like Backdrop). handleEnter re-sets it on the next open.
-    node.style.transition = '';
-    if (onExited) {
-      onExited(node);
-    }
-  });
-  const handleAddEndListener = next => {
-    if (addEndListener) {
-      // Old call signature before `react-transition-group` implemented `nodeRef`
-      addEndListener(nodeRef.current, next);
-    }
-  };
-  return /*#__PURE__*/jsxRuntimeExports.jsx(Transition, {
-    appear: appear,
-    in: inProp,
-    nodeRef: nodeRef,
-    onEnter: handleEnter,
-    onEntered: handleEntered,
-    onEntering: handleEntering,
-    onExit: handleExit,
-    onExited: handleExited,
-    onExiting: handleExiting,
-    addEndListener: handleAddEndListener,
-    timeout: timeout,
-    ...other,
-    children: (state, {
-      ownerState,
-      ...restChildProps
-    }) => {
-      const childStyle = getTransitionChildStyle(state, inProp, styles, hiddenStyles, style, children.props.style);
-      return /*#__PURE__*/reactExports.cloneElement(children, {
-        style: childStyle,
-        ref: handleRef,
-        ...restChildProps
-      });
-    }
-  });
-});
-process.env.NODE_ENV !== "production" ? Fade.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * Add a custom transition end trigger. Called with the transitioning DOM
-   * node and a done callback. Allows for more fine grained transition end
-   * logic. Note: Timeouts are still used as a fallback if provided.
-   */
-  addEndListener: PropTypes.func,
-  /**
-   * Perform the enter transition when it first mounts if `in` is also `true`.
-   * Set this to `false` to disable this behavior.
-   * @default true
-   */
-  appear: PropTypes.bool,
-  /**
-   * A single child content element.
-   */
-  children: elementAcceptingRef$1.isRequired,
-  /**
-   * The transition timing function.
-   * You may specify a single easing or a object containing enter and exit values.
-   */
-  easing: PropTypes.oneOfType([PropTypes.shape({
-    enter: PropTypes.string,
-    exit: PropTypes.string
-  }), PropTypes.string]),
-  /**
-   * If `true`, the component will transition in.
-   */
-  in: PropTypes.bool,
-  /**
-   * @ignore
-   */
-  onEnter: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onEntered: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onEntering: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onExit: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onExited: PropTypes.func,
-  /**
-   * @ignore
-   */
-  onExiting: PropTypes.func,
-  /**
-   * @ignore
-   */
-  style: PropTypes.object,
-  /**
-   * The duration for the transition, in milliseconds.
-   * You may specify a single timeout for all transitions, or individually with an object.
-   * @default {
-   *   enter: theme.transitions.duration.enteringScreen,
-   *   exit: theme.transitions.duration.leavingScreen,
-   * }
-   */
-  timeout: PropTypes.oneOfType([PropTypes.number, PropTypes.shape({
-    appear: PropTypes.number,
-    enter: PropTypes.number,
-    exit: PropTypes.number
-  })])
-} : void 0;
-var Fade$1 = Fade;
-
-function getBackdropUtilityClass(slot) {
-  return generateUtilityClass('MuiBackdrop', slot);
-}
-generateUtilityClasses('MuiBackdrop', ['root', 'invisible']);
-
-const useUtilityClasses$7 = ownerState => {
-  const {
-    classes,
-    invisible
-  } = ownerState;
-  const slots = {
-    root: ['root', invisible && 'invisible']
-  };
-  return composeClasses(slots, getBackdropUtilityClass, classes);
-};
-const BackdropRoot = styled$1('div', {
-  name: 'MuiBackdrop',
-  slot: 'Root',
-  overridesResolver: (props, styles) => {
-    const {
-      ownerState
-    } = props;
-    return [styles.root, ownerState.invisible && styles.invisible];
-  }
-})({
-  position: 'fixed',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  right: 0,
-  bottom: 0,
-  top: 0,
-  left: 0,
-  backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  WebkitTapHighlightColor: 'transparent',
-  variants: [{
-    props: {
-      invisible: true
-    },
-    style: {
-      backgroundColor: 'transparent'
-    }
-  }]
-});
-const Backdrop = /*#__PURE__*/reactExports.forwardRef(function Backdrop(inProps, ref) {
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiBackdrop'
-  });
-  const {
-    children,
-    className,
-    component = 'div',
-    invisible = false,
-    open,
-    slotProps = {},
-    slots = {},
-    transitionDuration,
-    ...other
-  } = props;
-  const ownerState = {
-    ...props,
-    component,
-    invisible
-  };
-  const classes = useUtilityClasses$7(ownerState);
-  const externalForwardedProps = {
-    component,
-    slots,
-    slotProps
-  };
-  const [RootSlot, rootProps] = useSlot('root', {
-    elementType: BackdropRoot,
-    externalForwardedProps,
-    className: clsx(classes.root, className),
-    ownerState
-  });
-  const [TransitionSlot, transitionProps] = useSlot('transition', {
-    elementType: Fade$1,
-    externalForwardedProps,
-    ownerState
-  });
-  return /*#__PURE__*/jsxRuntimeExports.jsx(TransitionSlot, {
-    in: open,
-    timeout: transitionDuration,
-    ...other,
-    ...transitionProps,
-    children: /*#__PURE__*/jsxRuntimeExports.jsx(RootSlot, {
-      ...rootProps,
-      ref: ref,
-      children: children
-    })
-  });
-});
-process.env.NODE_ENV !== "production" ? Backdrop.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * The content of the component.
-   */
-  children: PropTypes.node,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string,
-  /**
-   * The component used for the root node.
-   * Either a string to use a HTML element or a component.
-   */
-  component: PropTypes.elementType,
-  /**
-   * If `true`, the backdrop is invisible.
-   * It can be used when rendering a popover or a custom select component.
-   * @default false
-   */
-  invisible: PropTypes.bool,
-  /**
-   * If `true`, the component is shown.
-   */
-  open: PropTypes.bool.isRequired,
-  /**
-   * The props used for each slot inside.
-   * @default {}
-   */
-  slotProps: PropTypes.shape({
-    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
-    transition: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
-  }),
-  /**
-   * The components used for each slot inside.
-   * @default {}
-   */
-  slots: PropTypes.shape({
-    root: PropTypes.elementType,
-    transition: PropTypes.elementType
-  }),
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
-  /**
-   * The duration for the transition, in milliseconds.
-   * You may specify a single timeout for all transitions, or individually with an object.
-   */
-  transitionDuration: PropTypes.oneOfType([PropTypes.number, PropTypes.shape({
-    appear: PropTypes.number,
-    enter: PropTypes.number,
-    exit: PropTypes.number
-  })])
-} : void 0;
-var Backdrop$1 = Backdrop;
-
-function getContainer(container) {
-  return typeof container === 'function' ? container() : container;
-}
-function getHasTransition(children) {
-  return children ? children.props.hasOwnProperty('in') : false;
-}
-const noop = () => {};
-
-// A modal manager used to track and manage the state of open Modals.
-// Modals don't open on the server so this won't conflict with concurrent requests.
-const manager = new ModalManager();
-function useModal(parameters) {
-  const {
-    container,
-    disableScrollLock = false,
-    closeAfterTransition = false,
-    onTransitionEnter,
-    onTransitionExited,
-    children,
-    onClose,
-    open,
-    rootRef
-  } = parameters;
-
-  // @ts-ignore internal logic
-  const modal = reactExports.useRef({});
-  const mountNodeRef = reactExports.useRef(null);
-  const modalRef = reactExports.useRef(null);
-  const handleRef = useForkRef(modalRef, rootRef);
-  const [exited, setExited] = reactExports.useState(!open);
-  const hasTransition = getHasTransition(children);
-  let ariaHiddenProp = true;
-  if (parameters['aria-hidden'] === 'false' || parameters['aria-hidden'] === false) {
-    ariaHiddenProp = false;
-  }
-  const getDoc = () => ownerDocument(mountNodeRef.current);
-  const getModal = () => {
-    modal.current.modalRef = modalRef.current;
-    modal.current.mount = mountNodeRef.current;
-    return modal.current;
-  };
-  const handleMounted = () => {
-    manager.mount(getModal(), {
-      disableScrollLock
-    });
-
-    // Fix a bug on Chrome where the scroll isn't initially 0.
-    if (modalRef.current) {
-      modalRef.current.scrollTop = 0;
-    }
-  };
-  const handleOpen = useEventCallback(() => {
-    const resolvedContainer = getContainer(container) || getDoc().body;
-    manager.add(getModal(), resolvedContainer);
-
-    // The element was already mounted.
-    if (modalRef.current) {
-      handleMounted();
-    }
-  });
-  const isTopModal = () => manager.isTopModal(getModal());
-  const handlePortalRef = useEventCallback(node => {
-    mountNodeRef.current = node;
-    if (!node) {
-      return;
-    }
-    if (open && isTopModal()) {
-      handleMounted();
-    } else if (modalRef.current) {
-      ariaHidden(modalRef.current, ariaHiddenProp);
-    }
-  });
-  const handleClose = reactExports.useCallback(() => {
-    manager.remove(getModal(), ariaHiddenProp);
-  }, [ariaHiddenProp]);
-  reactExports.useEffect(() => {
-    return () => {
-      handleClose();
-    };
-  }, [handleClose]);
-  reactExports.useEffect(() => {
-    if (open) {
-      handleOpen();
-    } else if (!hasTransition || !closeAfterTransition) {
-      handleClose();
-    }
-  }, [open, handleClose, hasTransition, closeAfterTransition, handleOpen]);
-  const createHandleKeyDown = otherHandlers => event => {
-    otherHandlers.onKeyDown?.(event);
-
-    // The handler doesn't take event.defaultPrevented into account:
-    //
-    // event.preventDefault() is meant to stop default behaviors like
-    // clicking a checkbox to check it, hitting a button to submit a form,
-    // and hitting left arrow to move the cursor in a text input etc.
-    // Only special HTML elements have these default behaviors.
-    if (event.key !== 'Escape' || event.which === 229 ||
-    // Wait until IME is settled.
-    !isTopModal()) {
-      return;
-    }
-
-    // Swallow the event, in case someone is listening for the escape key on the body.
-    event.stopPropagation();
-    if (onClose) {
-      onClose(event, 'escapeKeyDown');
-    }
-  };
-  const createHandleBackdropClick = otherHandlers => event => {
-    otherHandlers.onClick?.(event);
-    if (event.target !== event.currentTarget) {
-      return;
-    }
-    if (onClose) {
-      onClose(event, 'backdropClick');
-    }
-  };
-  const getRootProps = (otherHandlers = {}) => {
-    const propsEventHandlers = extractEventHandlers(parameters);
-
-    // The custom event handlers shouldn't be spread on the root element
-    delete propsEventHandlers.onTransitionEnter;
-    delete propsEventHandlers.onTransitionExited;
-    const externalEventHandlers = {
-      ...propsEventHandlers,
-      ...otherHandlers
-    };
-    return {
-      /*
-       * Marking an element with the role presentation indicates to assistive technology
-       * that this element should be ignored; it exists to support the web application and
-       * is not meant for humans to interact with directly.
-       * https://github.com/evcohen/eslint-plugin-jsx-a11y/blob/master/docs/rules/no-static-element-interactions.md
-       */
-      role: 'presentation',
-      ...externalEventHandlers,
-      onKeyDown: createHandleKeyDown(externalEventHandlers),
-      ref: handleRef
-    };
-  };
-  const getBackdropProps = (otherHandlers = {}) => {
-    const externalEventHandlers = otherHandlers;
-    return {
-      'aria-hidden': true,
-      ...externalEventHandlers,
-      onClick: createHandleBackdropClick(externalEventHandlers),
-      open
-    };
-  };
-  const getTransitionProps = () => {
-    const handleEnter = () => {
-      setExited(false);
-      if (onTransitionEnter) {
-        onTransitionEnter();
-      }
-    };
-    const handleExited = () => {
-      setExited(true);
-      if (onTransitionExited) {
-        onTransitionExited();
-      }
-      if (closeAfterTransition) {
-        handleClose();
-      }
-    };
-    return {
-      onEnter: createChainedFunction(handleEnter, children?.props.onEnter ?? noop),
-      onExited: createChainedFunction(handleExited, children?.props.onExited ?? noop)
-    };
-  };
-  return {
-    getRootProps,
-    getBackdropProps,
-    getTransitionProps,
-    rootRef: handleRef,
-    portalRef: handlePortalRef,
-    isTopModal,
-    exited,
-    hasTransition
-  };
-}
-
-function getModalUtilityClass(slot) {
-  return generateUtilityClass('MuiModal', slot);
-}
-generateUtilityClasses('MuiModal', ['root', 'hidden', 'backdrop']);
-
-const useUtilityClasses$6 = ownerState => {
-  const {
-    open,
-    exited,
-    classes
-  } = ownerState;
-  const slots = {
-    root: ['root', !open && exited && 'hidden'],
-    backdrop: ['backdrop']
-  };
-  return composeClasses(slots, getModalUtilityClass, classes);
-};
-const ModalRoot = styled$1('div', {
-  name: 'MuiModal',
-  slot: 'Root',
-  overridesResolver: (props, styles) => {
-    const {
-      ownerState
-    } = props;
-    return [styles.root, !ownerState.open && ownerState.exited && styles.hidden];
-  }
-})(memoTheme$1(({
-  theme
-}) => ({
-  position: 'fixed',
-  zIndex: (theme.vars || theme).zIndex.modal,
-  right: 0,
-  bottom: 0,
-  top: 0,
-  left: 0,
-  variants: [{
-    props: ({
-      ownerState
-    }) => !ownerState.open && ownerState.exited,
-    style: {
-      visibility: 'hidden'
-    }
-  }]
-})));
-const ModalBackdrop = styled$1(Backdrop$1, {
-  name: 'MuiModal',
-  slot: 'Backdrop'
-})({
-  zIndex: -1
-});
-
-/**
- * Modal is a lower-level construct that is leveraged by the following components:
- *
- * - [Dialog](/material-ui/api/dialog/)
- * - [Drawer](/material-ui/api/drawer/)
- * - [Menu](/material-ui/api/menu/)
- * - [Popover](/material-ui/api/popover/)
- *
- * If you are creating a modal dialog, you probably want to use the [Dialog](/material-ui/api/dialog/) component
- * rather than directly using Modal.
- *
- * This component shares many concepts with [react-overlays](https://react-bootstrap.github.io/react-overlays/#modals).
- */
-const Modal = /*#__PURE__*/reactExports.forwardRef(function Modal(inProps, ref) {
-  const props = useDefaultProps({
-    name: 'MuiModal',
-    props: inProps
-  });
-  const {
-    classes: classesProp,
-    className,
-    closeAfterTransition = false,
-    children,
-    container,
-    component,
-    disableAutoFocus = false,
-    disableEnforceFocus = false,
-    disablePortal = false,
-    disableRestoreFocus = false,
-    disableScrollLock = false,
-    hideBackdrop = false,
-    keepMounted = false,
-    onClose,
-    onTransitionEnter,
-    onTransitionExited,
-    open,
-    slotProps = {},
-    slots = {},
-    // eslint-disable-next-line react/prop-types
-    theme,
-    ...other
-  } = props;
-  const propsWithDefaults = {
-    ...props,
-    closeAfterTransition,
-    disableAutoFocus,
-    disableEnforceFocus,
-    disablePortal,
-    disableRestoreFocus,
-    disableScrollLock,
-    hideBackdrop,
-    keepMounted
-  };
-  const {
-    getRootProps,
-    getBackdropProps,
-    getTransitionProps,
-    portalRef,
-    isTopModal,
-    exited,
-    hasTransition
-  } = useModal({
-    ...propsWithDefaults,
-    rootRef: ref
-  });
-  const ownerState = {
-    ...propsWithDefaults,
-    exited
-  };
-  const classes = useUtilityClasses$6(ownerState);
-  const childProps = {};
-  if (children.props.tabIndex === undefined) {
-    childProps.tabIndex = '-1';
-  }
-
-  // It's a Transition like component
-  if (hasTransition) {
-    const {
-      onEnter,
-      onExited
-    } = getTransitionProps();
-    childProps.onEnter = onEnter;
-    childProps.onExited = onExited;
-  }
-  const externalForwardedProps = {
-    slots,
-    slotProps
-  };
-  const [RootSlot, rootProps] = useSlot('root', {
-    ref,
-    elementType: ModalRoot,
-    externalForwardedProps: {
-      ...externalForwardedProps,
-      ...other,
-      component
-    },
-    getSlotProps: getRootProps,
-    ownerState,
-    className: clsx(className, classes?.root, !ownerState.open && ownerState.exited && classes?.hidden)
-  });
-  const [BackdropSlot, backdropProps] = useSlot('backdrop', {
-    elementType: ModalBackdrop,
-    externalForwardedProps,
-    shouldForwardComponentProp: true,
-    getSlotProps: otherHandlers => {
-      return getBackdropProps({
-        ...otherHandlers,
-        onClick: event => {
-          if (otherHandlers?.onClick) {
-            otherHandlers.onClick(event);
-          }
-        }
-      });
-    },
-    className: classes?.backdrop,
-    ownerState
-  });
-  if (!keepMounted && !open && (!hasTransition || exited)) {
-    return null;
-  }
-  return /*#__PURE__*/jsxRuntimeExports.jsx(Portal$1, {
-    ref: portalRef,
-    container: container,
-    disablePortal: disablePortal,
-    children: /*#__PURE__*/jsxRuntimeExports.jsxs(RootSlot, {
-      ...rootProps,
-      children: [!hideBackdrop ? /*#__PURE__*/jsxRuntimeExports.jsx(BackdropSlot, {
-        ...backdropProps
-      }) : null, /*#__PURE__*/jsxRuntimeExports.jsx(FocusTrap, {
-        disableEnforceFocus: disableEnforceFocus,
-        disableAutoFocus: disableAutoFocus,
-        disableRestoreFocus: disableRestoreFocus,
-        isEnabled: isTopModal,
-        open: open,
-        children: /*#__PURE__*/reactExports.cloneElement(children, childProps)
-      })]
-    })
-  });
-});
-process.env.NODE_ENV !== "production" ? Modal.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * A single child content element.
-   */
-  children: elementAcceptingRef$1.isRequired,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string,
-  /**
-   * When set to true the Modal waits until a nested Transition is completed before closing.
-   * @default false
-   */
-  closeAfterTransition: PropTypes.bool,
-  /**
-   * The component used for the root node.
-   * Either a string to use a HTML element or a component.
-   */
-  component: PropTypes.elementType,
-  /**
-   * An HTML element or function that returns one.
-   * The `container` will have the portal children appended to it.
-   *
-   * You can also provide a callback, which is called in a React layout effect.
-   * This lets you set the container from a ref, and also makes server-side rendering possible.
-   *
-   * By default, it uses the body of the top-level document object,
-   * so it's simply `document.body` most of the time.
-   */
-  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
-  /**
-   * If `true`, the modal will not automatically shift focus to itself when it opens, and
-   * replace it to the last focused element when it closes.
-   * This also works correctly with any modal children that have the `disableAutoFocus` prop.
-   *
-   * Generally this should never be set to `true` as it makes the modal less
-   * accessible to assistive technologies, like screen readers.
-   * @default false
-   */
-  disableAutoFocus: PropTypes.bool,
-  /**
-   * If `true`, the modal will not prevent focus from leaving the modal while open.
-   *
-   * Generally this should never be set to `true` as it makes the modal less
-   * accessible to assistive technologies, like screen readers.
-   * @default false
-   */
-  disableEnforceFocus: PropTypes.bool,
-  /**
-   * The `children` will be under the DOM hierarchy of the parent component.
-   * @default false
-   */
-  disablePortal: PropTypes.bool,
-  /**
-   * If `true`, the modal will not restore focus to previously focused element once
-   * modal is hidden or unmounted.
-   * @default false
-   */
-  disableRestoreFocus: PropTypes.bool,
-  /**
-   * Disable the scroll lock behavior.
-   * @default false
-   */
-  disableScrollLock: PropTypes.bool,
-  /**
-   * If `true`, the backdrop is not rendered.
-   * @default false
-   */
-  hideBackdrop: PropTypes.bool,
-  /**
-   * Always keep the children in the DOM.
-   * This prop can be useful in SEO situation or
-   * when you want to maximize the responsiveness of the Modal.
-   * @default false
-   */
-  keepMounted: PropTypes.bool,
-  /**
-   * Callback fired when the component requests to be closed.
-   * The `reason` parameter can optionally be used to control the response to `onClose`.
-   *
-   * @param {object} event The event source of the callback.
-   * @param {string} reason Can be: `"escapeKeyDown"`, `"backdropClick"`.
-   */
-  onClose: PropTypes.func,
-  /**
-   * A function called when a transition enters.
-   */
-  onTransitionEnter: PropTypes.func,
-  /**
-   * A function called when a transition has exited.
-   */
-  onTransitionExited: PropTypes.func,
-  /**
-   * If `true`, the component is shown.
-   */
-  open: PropTypes.bool.isRequired,
-  /**
-   * The props used for each slot inside the Modal.
-   * @default {}
-   */
-  slotProps: PropTypes.shape({
-    backdrop: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
-    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
-  }),
-  /**
-   * The components used for each slot inside the Modal.
-   * Either a string to use a HTML element or a component.
-   * @default {}
-   */
-  slots: PropTypes.shape({
-    backdrop: PropTypes.elementType,
-    root: PropTypes.elementType
-  }),
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object])
-} : void 0;
-var Modal$1 = Modal;
-
-function getTypeByValue(value) {
-  const valueType = typeof value;
-  switch (valueType) {
-    case 'number':
-      if (Number.isNaN(value)) {
-        return 'NaN';
-      }
-      if (!Number.isFinite(value)) {
-        return 'Infinity';
-      }
-      if (value !== Math.floor(value)) {
-        return 'float';
-      }
-      return 'number';
-    case 'object':
-      if (value === null) {
-        return 'null';
-      }
-      return value.constructor.name;
-    default:
-      return valueType;
-  }
-}
-function requiredInteger(props, propName, componentName, location) {
-  const propValue = props[propName];
-  if (propValue == null || !Number.isInteger(propValue)) {
-    const propType = getTypeByValue(propValue);
-    return new RangeError(`Invalid ${location} \`${propName}\` of type \`${propType}\` supplied to \`${componentName}\`, expected \`integer\`.`);
-  }
-  return null;
-}
-function validator(props, propName, componentName, location) {
-  const propValue = props[propName];
-  if (propValue === undefined) {
-    return null;
-  }
-  return requiredInteger(props, propName, componentName, location);
-}
-function validatorNoop() {
-  return null;
-}
-validator.isRequired = requiredInteger;
-validatorNoop.isRequired = validatorNoop;
-const integerPropType = process.env.NODE_ENV === 'production' ? validatorNoop : validator;
-var integerPropType$1 = integerPropType;
-
-function getPaperUtilityClass(slot) {
-  return generateUtilityClass('MuiPaper', slot);
-}
-generateUtilityClasses('MuiPaper', ['root', 'rounded', 'outlined', 'elevation', 'elevation0', 'elevation1', 'elevation2', 'elevation3', 'elevation4', 'elevation5', 'elevation6', 'elevation7', 'elevation8', 'elevation9', 'elevation10', 'elevation11', 'elevation12', 'elevation13', 'elevation14', 'elevation15', 'elevation16', 'elevation17', 'elevation18', 'elevation19', 'elevation20', 'elevation21', 'elevation22', 'elevation23', 'elevation24']);
-
-const useUtilityClasses$5 = ownerState => {
-  const {
-    square,
-    elevation,
-    variant,
-    classes
-  } = ownerState;
-  const slots = {
-    root: ['root', variant, !square && 'rounded', variant === 'elevation' && `elevation${elevation}`]
-  };
-  return composeClasses(slots, getPaperUtilityClass, classes);
-};
-const PaperRoot = styled$1('div', {
-  name: 'MuiPaper',
-  slot: 'Root',
-  overridesResolver: (props, styles) => {
-    const {
-      ownerState
-    } = props;
-    return [styles.root, styles[ownerState.variant], !ownerState.square && styles.rounded, ownerState.variant === 'elevation' && styles[`elevation${ownerState.elevation}`]];
-  }
-})(memoTheme$1(({
-  theme
-}) => ({
-  backgroundColor: (theme.vars || theme).palette.background.paper,
-  color: (theme.vars || theme).palette.text.primary,
-  transition: theme.transitions.create('box-shadow'),
-  variants: [{
-    props: ({
-      ownerState
-    }) => !ownerState.square,
-    style: {
-      borderRadius: theme.shape.borderRadius
-    }
-  }, {
-    props: {
-      variant: 'outlined'
-    },
-    style: {
-      border: `1px solid ${(theme.vars || theme).palette.divider}`
-    }
-  }, {
-    props: {
-      variant: 'elevation'
-    },
-    style: {
-      boxShadow: 'var(--Paper-shadow)',
-      backgroundImage: 'var(--Paper-overlay)'
-    }
-  }]
-})));
-const Paper = /*#__PURE__*/reactExports.forwardRef(function Paper(inProps, ref) {
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiPaper'
-  });
-  const theme = useTheme();
-  const {
-    className,
-    component = 'div',
-    elevation = 1,
-    square = false,
-    variant = 'elevation',
-    ...other
-  } = props;
-  const ownerState = {
-    ...props,
-    component,
-    elevation,
-    square,
-    variant
-  };
-  const classes = useUtilityClasses$5(ownerState);
-  if (process.env.NODE_ENV !== 'production') {
-    if (theme.shadows[elevation] === undefined) {
-      console.error([`MUI: The elevation provided <Paper elevation={${elevation}}> is not available in the theme.`, `Please make sure that \`theme.shadows[${elevation}]\` is defined.`].join('\n'));
-    }
-  }
-  return /*#__PURE__*/jsxRuntimeExports.jsx(PaperRoot, {
-    as: component,
-    ownerState: ownerState,
-    className: clsx(classes.root, className),
-    ref: ref,
-    ...other,
-    style: {
-      ...(variant === 'elevation' && {
-        '--Paper-shadow': (theme.vars || theme).shadows[elevation],
-        ...(theme.vars && {
-          '--Paper-overlay': theme.vars.overlays?.[elevation]
-        }),
-        ...(!theme.vars && theme.palette.mode === 'dark' && {
-          '--Paper-overlay': `linear-gradient(${alpha('#fff', getOverlayAlpha(elevation))}, ${alpha('#fff', getOverlayAlpha(elevation))})`
-        })
-      }),
-      ...other.style
-    }
-  });
-});
-process.env.NODE_ENV !== "production" ? Paper.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * The content of the component.
-   */
-  children: PropTypes.node,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string,
-  /**
-   * The component used for the root node.
-   * Either a string to use a HTML element or a component.
-   */
-  component: PropTypes.elementType,
-  /**
-   * Shadow depth, corresponds to `dp` in the spec.
-   * It accepts values between 0 and 24 inclusive.
-   * @default 1
-   */
-  elevation: chainPropTypes(integerPropType$1, props => {
-    const {
-      elevation,
-      variant
-    } = props;
-    if (elevation > 0 && variant === 'outlined') {
-      return new Error(`MUI: Combining \`elevation={${elevation}}\` with \`variant="${variant}"\` has no effect. Either use \`elevation={0}\` or use a different \`variant\`.`);
-    }
-    return null;
-  }),
-  /**
-   * If `true`, rounded corners are disabled.
-   * @default false
-   */
-  square: PropTypes.bool,
-  /**
-   * @ignore
-   */
-  style: PropTypes.object,
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
-  /**
-   * The variant to use.
-   * @default 'elevation'
-   */
-  variant: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['elevation', 'outlined']), PropTypes.string])
-} : void 0;
-var Paper$1 = Paper;
-
 function getDialogUtilityClass(slot) {
   return generateUtilityClass('MuiDialog', slot);
 }
@@ -83612,7 +93540,7 @@ const DialogBackdrop = styled$1(Backdrop$1, {
   // Improve scrollable dialog support.
   zIndex: -1
 });
-const useUtilityClasses$4 = ownerState => {
+const useUtilityClasses$3 = ownerState => {
   const {
     classes,
     scroll,
@@ -83828,7 +93756,7 @@ const Dialog = /*#__PURE__*/reactExports.forwardRef(function Dialog(inProps, ref
     maxWidth,
     scroll
   };
-  const classes = useUtilityClasses$4(ownerState);
+  const classes = useUtilityClasses$3(ownerState);
   const backdropClick = reactExports.useRef();
   const handleMouseDown = event => {
     // We don't want to close the dialog when clicking the dialog content.
@@ -84069,7 +93997,7 @@ function getDialogActionsUtilityClass(slot) {
 }
 generateUtilityClasses('MuiDialogActions', ['root', 'spacing']);
 
-const useUtilityClasses$3 = ownerState => {
+const useUtilityClasses$2 = ownerState => {
   const {
     classes,
     disableSpacing
@@ -84119,7 +94047,7 @@ const DialogActions = /*#__PURE__*/reactExports.forwardRef(function DialogAction
     ...props,
     disableSpacing
   };
-  const classes = useUtilityClasses$3(ownerState);
+  const classes = useUtilityClasses$2(ownerState);
   return /*#__PURE__*/jsxRuntimeExports.jsx(DialogActionsRoot, {
     className: clsx(classes.root, className),
     ownerState: ownerState,
@@ -84167,7 +94095,7 @@ function getDialogTitleUtilityClass(slot) {
 const dialogTitleClasses = generateUtilityClasses('MuiDialogTitle', ['root']);
 var dialogTitleClasses$1 = dialogTitleClasses;
 
-const useUtilityClasses$2 = ownerState => {
+const useUtilityClasses$1 = ownerState => {
   const {
     classes,
     dividers
@@ -84228,7 +94156,7 @@ const DialogContent = /*#__PURE__*/reactExports.forwardRef(function DialogConten
     ...props,
     dividers
   };
-  const classes = useUtilityClasses$2(ownerState);
+  const classes = useUtilityClasses$1(ownerState);
   return /*#__PURE__*/jsxRuntimeExports.jsx(DialogContentRoot, {
     className: clsx(classes.root, className),
     ownerState: ownerState,
@@ -84264,229 +94192,6 @@ process.env.NODE_ENV !== "production" ? DialogContent.propTypes /* remove-propty
   sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object])
 } : void 0;
 var DialogContent$1 = DialogContent;
-
-function getTypographyUtilityClass(slot) {
-  return generateUtilityClass('MuiTypography', slot);
-}
-generateUtilityClasses('MuiTypography', ['root', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'subtitle1', 'subtitle2', 'body1', 'body2', 'inherit', 'button', 'caption', 'overline', 'alignLeft', 'alignRight', 'alignCenter', 'alignJustify', 'noWrap', 'gutterBottom']);
-
-const useUtilityClasses$1 = ownerState => {
-  const {
-    align,
-    gutterBottom,
-    noWrap,
-    variant,
-    classes
-  } = ownerState;
-  const slots = {
-    root: ['root', variant, ownerState.align !== 'inherit' && `align${capitalize$3(align)}`, gutterBottom && 'gutterBottom', noWrap && 'noWrap']
-  };
-  return composeClasses(slots, getTypographyUtilityClass, classes);
-};
-const TypographyRoot = styled$1('span', {
-  name: 'MuiTypography',
-  slot: 'Root',
-  overridesResolver: (props, styles) => {
-    const {
-      ownerState
-    } = props;
-    return [styles.root, ownerState.variant && styles[ownerState.variant], ownerState.align !== 'inherit' && styles[`align${capitalize$3(ownerState.align)}`], ownerState.noWrap && styles.noWrap, ownerState.gutterBottom && styles.gutterBottom];
-  }
-})(memoTheme$1(({
-  theme
-}) => ({
-  margin: 0,
-  variants: [{
-    props: {
-      variant: 'inherit'
-    },
-    style: {
-      // Some elements, like <button> on Chrome have default font that doesn't inherit, reset this.
-      font: 'inherit',
-      lineHeight: 'inherit',
-      letterSpacing: 'inherit'
-    }
-  }, ...Object.entries(theme.typography).filter(([variant, value]) => variant !== 'inherit' && value && typeof value === 'object').map(([variant, value]) => ({
-    props: {
-      variant
-    },
-    style: value
-  })), ...Object.entries(theme.palette).filter(createSimplePaletteValueFilter()).map(([color]) => ({
-    props: {
-      color
-    },
-    style: {
-      color: (theme.vars || theme).palette[color].main
-    }
-  })), ...Object.entries(theme.palette?.text || {}).filter(([, value]) => typeof value === 'string').map(([color]) => ({
-    props: {
-      color: `text${capitalize$3(color)}`
-    },
-    style: {
-      color: (theme.vars || theme).palette.text[color]
-    }
-  })), {
-    props: ({
-      ownerState
-    }) => ownerState.align !== 'inherit',
-    style: {
-      textAlign: 'var(--Typography-textAlign)'
-    }
-  }, {
-    props: ({
-      ownerState
-    }) => ownerState.noWrap,
-    style: {
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap'
-    }
-  }, {
-    props: ({
-      ownerState
-    }) => ownerState.gutterBottom,
-    style: {
-      marginBottom: '0.35em'
-    }
-  }]
-})));
-const defaultVariantMapping = {
-  h1: 'h1',
-  h2: 'h2',
-  h3: 'h3',
-  h4: 'h4',
-  h5: 'h5',
-  h6: 'h6',
-  subtitle1: 'h6',
-  subtitle2: 'h6',
-  body1: 'p',
-  body2: 'p',
-  inherit: 'p'
-};
-const Typography = /*#__PURE__*/reactExports.forwardRef(function Typography(inProps, ref) {
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiTypography'
-  });
-  const {
-    color,
-    align = 'inherit',
-    className,
-    component,
-    gutterBottom = false,
-    noWrap = false,
-    variant = 'body1',
-    variantMapping = defaultVariantMapping,
-    ...other
-  } = props;
-  const ownerState = {
-    ...props,
-    align,
-    color,
-    className,
-    component,
-    gutterBottom,
-    noWrap,
-    variant,
-    variantMapping
-  };
-  const Component = component || variantMapping[variant] || defaultVariantMapping[variant] || 'span';
-  const classes = useUtilityClasses$1(ownerState);
-  return /*#__PURE__*/jsxRuntimeExports.jsx(TypographyRoot, {
-    as: Component,
-    ref: ref,
-    className: clsx(classes.root, className),
-    ...other,
-    ownerState: ownerState,
-    style: {
-      ...(align !== 'inherit' && {
-        '--Typography-textAlign': align
-      }),
-      ...other.style
-    }
-  });
-});
-process.env.NODE_ENV !== "production" ? Typography.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * Set the text-align on the component.
-   * @default 'inherit'
-   */
-  align: PropTypes.oneOf(['center', 'inherit', 'justify', 'left', 'right']),
-  /**
-   * The content of the component.
-   */
-  children: PropTypes.node,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string,
-  /**
-   * The color of the component.
-   * It supports both default and custom theme colors, which can be added as shown in the
-   * [palette customization guide](https://mui.com/material-ui/customization/palette/#custom-colors).
-   */
-  color: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['primary', 'secondary', 'success', 'error', 'info', 'warning', 'textPrimary', 'textSecondary', 'textDisabled']), PropTypes.string]),
-  /**
-   * The component used for the root node.
-   * Either a string to use a HTML element or a component.
-   */
-  component: PropTypes.elementType,
-  /**
-   * If `true`, the text will have a bottom margin.
-   * @default false
-   */
-  gutterBottom: PropTypes.bool,
-  /**
-   * If `true`, the text will not wrap, but instead will truncate with a text overflow ellipsis.
-   *
-   * Note that text overflow can only happen with block or inline-block level elements
-   * (the element needs to have a width in order to overflow).
-   * @default false
-   */
-  noWrap: PropTypes.bool,
-  /**
-   * @ignore
-   */
-  style: PropTypes.object,
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
-  /**
-   * Applies the theme typography styles.
-   * @default 'body1'
-   */
-  variant: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.oneOf(['body1', 'body2', 'button', 'caption', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'inherit', 'overline', 'subtitle1', 'subtitle2']), PropTypes.string]),
-  /**
-   * The component maps the variant prop to a range of different HTML element types.
-   * For instance, subtitle1 to `<h6>`.
-   * If you wish to change that mapping, you can provide your own.
-   * Alternatively, you can use the `component` prop.
-   * @default {
-   *   h1: 'h1',
-   *   h2: 'h2',
-   *   h3: 'h3',
-   *   h4: 'h4',
-   *   h5: 'h5',
-   *   h6: 'h6',
-   *   subtitle1: 'h6',
-   *   subtitle2: 'h6',
-   *   body1: 'p',
-   *   body2: 'p',
-   *   inherit: 'p',
-   * }
-   */
-  variantMapping: PropTypes /* @typescript-to-proptypes-ignore */.object
-} : void 0;
-var Typography$1 = Typography;
 
 const useUtilityClasses = ownerState => {
   const {
@@ -88699,39 +98404,45 @@ function renderLabel$2(label) {
 function ProgressionBuilder({
   initialArpeggiate = false,
   initialKey = 'C',
+  initialKeyMode = 'major',
   initialRomanNumeral = 'I',
   label = 'Chord degree',
   onProgressionChange,
   selectedKey,
+  selectedKeyMode,
   showKey = true
 }) {
   const fallbackId = reactExports.useId();
   const [progressionKey, setProgressionKey] = reactExports.useState(initialKey);
+  const [progressionKeyMode, setProgressionKeyMode] = reactExports.useState(initialKeyMode);
   const [romanNumeral, setRomanNumeral] = reactExports.useState(initialRomanNumeral);
   const [arpeggiate, setArpeggiate] = reactExports.useState(initialArpeggiate);
   const [inversionOverride, setInversionOverride] = reactExports.useState(null);
   const activeKey = selectedKey ?? progressionKey;
+  const activeKeyMode = selectedKeyMode ?? progressionKeyMode;
   const result = reactExports.useMemo(() => buildKeyboardProgressionPayload({
     key: activeKey,
+    keyMode: activeKeyMode,
     romanNumeral
-  }, getProgressionOptions(inversionOverride, arpeggiate)), [activeKey, romanNumeral, arpeggiate, inversionOverride]);
+  }, getProgressionOptions(inversionOverride, arpeggiate)), [activeKey, activeKeyMode, romanNumeral, arpeggiate, inversionOverride]);
   const hasMountedRef = reactExports.useRef(false);
   const helperId = `mn-progression-builder-helper-${fallbackId}`;
   const helperText = result.error || result.chord?.name || '';
   const inversionOptions = getChordInversionOptions(result.chord?.notes.length || 1);
   const selectedInversion = result.payload?.inversion || 0;
   reactExports.useEffect(() => {
-    if (selectedKey === undefined) {
+    if (selectedKey === undefined && selectedKeyMode === undefined) {
       return;
     }
     if (hasMountedRef.current) {
       onProgressionChange?.(buildKeyboardProgressionPayload({
-        key: selectedKey,
+        key: activeKey,
+        keyMode: activeKeyMode,
         romanNumeral
       }, getProgressionOptions(inversionOverride, arpeggiate)));
     }
     hasMountedRef.current = true;
-  }, [arpeggiate, inversionOverride, romanNumeral, selectedKey]);
+  }, [activeKey, activeKeyMode, arpeggiate, inversionOverride, romanNumeral, selectedKey, selectedKeyMode]);
   return /*#__PURE__*/React$1.createElement("div", {
     className: result.error ? 'mn-progression-builder invalid' : 'mn-progression-builder',
     onClick: stopEditorEvent$1,
@@ -88740,16 +98451,18 @@ function ProgressionBuilder({
     onPointerDown: stopEditorEvent$1
   }, /*#__PURE__*/React$1.createElement("div", {
     className: "mn-progression-builder-label"
-  }, renderLabel$1(label)), showKey ? /*#__PURE__*/React$1.createElement(KeyPicker, {
+  }, renderLabel$1(label)), showKey ? /*#__PURE__*/React$1.createElement(React$1.Fragment, null, /*#__PURE__*/React$1.createElement(KeyPicker, {
     className: "mn-progression-builder-field",
     onKeyChange: key => updateProgression({
       key
     }),
     value: activeKey
-  }) : null, /*#__PURE__*/React$1.createElement("label", {
+  }), renderKeyModeField(activeKeyMode, keyMode => updateProgression({
+    keyMode
+  }))) : null, /*#__PURE__*/React$1.createElement("label", {
     className: "mn-progression-builder-field"
   }, /*#__PURE__*/React$1.createElement("span", null, /*#__PURE__*/React$1.createElement(LocaleString, {
-    fallback: "Roman numeral",
+    fallback: "Roman numeral or number",
     phrase: "music.controls.roman_numeral"
   })), /*#__PURE__*/React$1.createElement("input", {
     "aria-describedby": helperText ? helperId : undefined,
@@ -88797,15 +98510,20 @@ function ProgressionBuilder({
   }));
   function updateProgression(nextValues) {
     const nextKey = nextValues.key ?? activeKey;
+    const nextKeyMode = nextValues.keyMode ?? activeKeyMode;
     const nextRomanNumeral = nextValues.romanNumeral ?? romanNumeral;
     const nextArpeggiate = nextValues.arpeggiate ?? arpeggiate;
     const nextInversionOverride = nextValues.inversion ?? inversionOverride;
     const nextResult = buildKeyboardProgressionPayload({
       key: nextKey,
+      keyMode: nextKeyMode,
       romanNumeral: nextRomanNumeral
     }, getProgressionOptions(nextInversionOverride, nextArpeggiate));
     if (selectedKey === undefined && nextValues.key !== undefined) {
       setProgressionKey(nextValues.key);
+    }
+    if (selectedKeyMode === undefined && nextValues.keyMode !== undefined) {
+      setProgressionKeyMode(nextValues.keyMode);
     }
     if (nextValues.romanNumeral !== undefined) {
       setRomanNumeral(nextValues.romanNumeral);
@@ -88818,6 +98536,28 @@ function ProgressionBuilder({
     }
     onProgressionChange?.(nextResult);
   }
+}
+function renderKeyModeField(value, onKeyModeChange, className = 'mn-progression-builder-field') {
+  return /*#__PURE__*/React$1.createElement("label", {
+    className: className
+  }, /*#__PURE__*/React$1.createElement("span", null, /*#__PURE__*/React$1.createElement(LocaleString, {
+    fallback: "Mode",
+    phrase: "music.controls.key_mode"
+  })), /*#__PURE__*/React$1.createElement("select", {
+    onChange: event => onKeyModeChange?.(event.target.value),
+    onInput: event => onKeyModeChange?.(event.target.value),
+    value: value === 'minor' ? 'minor' : 'major'
+  }, /*#__PURE__*/React$1.createElement("option", {
+    value: "major"
+  }, /*#__PURE__*/React$1.createElement(LocaleString, {
+    fallback: "Major",
+    phrase: "music.key_mode.major"
+  })), /*#__PURE__*/React$1.createElement("option", {
+    value: "minor"
+  }, /*#__PURE__*/React$1.createElement(LocaleString, {
+    fallback: "Minor",
+    phrase: "music.key_mode.minor"
+  }))));
 }
 function getProgressionOptions(inversionOverride, arpeggiate) {
   return {
@@ -89042,6 +98782,7 @@ function MusicEmbedView({
   const [currentPayload, setCurrentPayload] = reactExports.useState(payload);
   const [dialogOpen, setDialogOpen] = reactExports.useState(initialDialogOpen);
   const [displayKeyInput, setDisplayKeyInput] = reactExports.useState(payload.displayKey || getPayloadKey(payload) || 'C');
+  const [displayKeyMode, setDisplayKeyMode] = reactExports.useState(payload.displayKeyMode || 'major');
   const [editMode, setEditMode] = reactExports.useState('chord');
   const [playbackState, setPlaybackState] = reactExports.useState('idle');
   const playbackRef = reactExports.useRef({
@@ -89142,7 +98883,7 @@ function MusicEmbedView({
     },
     onKeyChange: updateDisplayKey,
     value: displayKeyInput
-  }), enharmonicDisplayKey ? /*#__PURE__*/React$1.createElement("label", {
+  }), editMode === 'chord' || editMode === 'progression' ? renderKeyModeField(displayKeyMode, updateDisplayKeyMode, 'music-display-key-mode-field') : null, enharmonicDisplayKey ? /*#__PURE__*/React$1.createElement("label", {
     className: "music-key-enharmonic-option music-display-options-field-checkbox"
   }, /*#__PURE__*/React$1.createElement("input", {
     checked: isUsingEnharmonicKey(currentPayload),
@@ -89177,12 +98918,14 @@ function MusicEmbedView({
   }) : null, editMode === 'progression' ? /*#__PURE__*/React$1.createElement(ProgressionBuilder, {
     initialArpeggiate: currentPayload.arpeggiate === true,
     initialKey: effectiveSelectedDisplayKey,
+    initialKeyMode: displayKeyMode,
     label: {
       fallback: 'Chord degree',
       phrase: 'music.edit_mode.chord_degree'
     },
     onProgressionChange: updateProgressionFromBuilder,
     selectedKey: effectiveSelectedDisplayKey,
+    selectedKeyMode: displayKeyMode,
     showKey: false
   }) : null, /*#__PURE__*/React$1.createElement(MusicPreview, {
     payload: currentPayload
@@ -89254,7 +98997,8 @@ function MusicEmbedView({
     }
     applyKeyboardPayload({
       ...result.payload,
-      displayKey: selectedDisplayKey
+      displayKey: selectedDisplayKey,
+      displayKeyMode
     });
   }
   function updateScaleFromBuilder(result) {
@@ -89272,7 +99016,8 @@ function MusicEmbedView({
     }
     applyKeyboardPayload({
       ...result.payload,
-      displayKey: selectedDisplayKey
+      displayKey: selectedDisplayKey,
+      displayKeyMode
     });
   }
   function updateDisplayMode(displayMode) {
@@ -89358,6 +99103,26 @@ function MusicEmbedView({
       notes: editMode === 'none' ? [] : currentPayload.notes
     });
   }
+  function updateDisplayKeyMode(keyMode) {
+    const nextKeyMode = keyMode === 'minor' ? 'minor' : 'major';
+    setDisplayKeyMode(nextKeyMode);
+    if (editMode === 'progression') {
+      const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
+      applyKeyboardPayload({
+        ...buildKeyboardProgressionPayload({
+          key,
+          keyMode: nextKeyMode,
+          romanNumeral: getInitialProgressionValue(currentPayload)
+        }).payload,
+        displayKey: selectedDisplayKey
+      });
+      return;
+    }
+    applyKeyboardPayload({
+      ...currentPayload,
+      displayKeyMode: nextKeyMode
+    });
+  }
   function updateEditMode(nextEditMode) {
     setEditMode(nextEditMode);
     if (nextEditMode === 'scale') {
@@ -89376,7 +99141,8 @@ function MusicEmbedView({
       const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
       applyKeyboardPayload({
         ...buildKeyboardProgressionPayload({
-          key
+          key,
+          keyMode: displayKeyMode
         }).payload,
         displayKey: selectedDisplayKey
       });
@@ -89411,6 +99177,9 @@ function MusicEmbedView({
     if (!payload.progressionId) {
       delete nextPayload.progressionId;
     }
+    if (!payload.progressionInput) {
+      delete nextPayload.progressionInput;
+    }
     if (!payload.sourceChordSymbol) {
       delete nextPayload.sourceChordSymbol;
     }
@@ -89429,8 +99198,14 @@ function MusicEmbedView({
     if (payload.keyboardShowNoteNames !== false) {
       delete nextPayload.keyboardShowNoteNames;
     }
+    if (nextPayload.displayKeyMode !== 'minor') {
+      delete nextPayload.displayKeyMode;
+    }
     if (nextPayload.useEnharmonicKey !== false) {
       delete nextPayload.useEnharmonicKey;
+    }
+    if (payload.scaleId) {
+      delete nextPayload.displayKeyMode;
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'displayKey') && !payload.displayKey) {
       delete nextPayload.displayKey;
@@ -89708,6 +99483,13 @@ function getInitialChordValue(payload) {
   }
   return 'Cdim7';
 }
+function getInitialProgressionValue(payload) {
+  if (payload.progressionInput) {
+    return payload.progressionInput;
+  }
+  const match = /^typed:[^:]+:(.+)$/.exec(String(payload.progressionId || ''));
+  return match?.[1] || 'I';
+}
 function getDisplayKeyLabel(key, editMode) {
   return editMode === 'none' ? `${key} key` : `${key} major`;
 }
@@ -89867,6 +99649,12 @@ function getPayloadKeySignature(payload) {
     };
   }
   if (payload.scaleId && /\bminor\b/i.test(payload.label || '')) {
+    return {
+      key,
+      table: MINOR_KEY_FIFTHS
+    };
+  }
+  if (!payload.scaleId && payload.displayKeyMode === 'minor') {
     return {
       key,
       table: MINOR_KEY_FIFTHS
@@ -90374,6 +100162,9 @@ function normalizeKeyboardPayload(value = {}) {
   if (nextValue.displayKey) {
     payload.displayKey = normalizeDisplayKey(nextValue.displayKey);
   }
+  if (nextValue.displayKeyMode === 'minor') {
+    payload.displayKeyMode = 'minor';
+  }
   if (nextValue.chordId) {
     payload.chordId = String(nextValue.chordId);
   }
@@ -90385,6 +100176,9 @@ function normalizeKeyboardPayload(value = {}) {
   }
   if (nextValue.progressionId) {
     payload.progressionId = String(nextValue.progressionId);
+  }
+  if (nextValue.progressionInput) {
+    payload.progressionInput = String(nextValue.progressionInput);
   }
   if (nextValue.sourceChordSymbol) {
     payload.sourceChordSymbol = String(nextValue.sourceChordSymbol);
@@ -91066,6 +100860,54 @@ describe('KeyboardEmbed', function () {
     expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].sourceChordSymbol).toBe('Dm');
     expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].label).toBe('C: ii');
     expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].notes).toEqual(['D4', 'F4', 'A4']);
+    closeOpenDialog();
+  });
+  it('uses minor key mode when a numeric progression degree is entered', function () {
+    const payload = {
+      id: 'keyboard-numeric-progression-spec',
+      label: 'C major',
+      notes: ['C4', 'E4', 'G4']
+    };
+    reactExports.act(() => {
+      quill.setContents([{
+        insert: {
+          [KEYBOARD_EMBED_BLOT]: payload
+        }
+      }, {
+        insert: '\n'
+      }]);
+    });
+    const editButton = container.querySelector('.music-keyboard-edit-button');
+    reactExports.act(() => {
+      editButton.dispatchEvent(new MouseEvent('click', {
+        bubbles: true
+      }));
+    });
+    const dialog = getLatestDialog();
+    const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+    reactExports.act(() => {
+      selectValue(modeSelect, 'progression');
+    });
+    const keyModeSelect = dialog.querySelector('.music-display-key-mode-field select');
+    const progressionInput = dialog.querySelector('.mn-progression-builder-field input');
+    reactExports.act(() => {
+      setInputValue(progressionInput, '2');
+      progressionInput.dispatchEvent(new Event('input', {
+        bubbles: true
+      }));
+    });
+    reactExports.act(() => {
+      selectValue(keyModeSelect, 'minor');
+    });
+    const contents = quill.getContents();
+    const keyboardOperation = contents.ops.find(operation => operation.insert?.[KEYBOARD_EMBED_BLOT]);
+    expect(dialog.querySelector('.mn-progression-builder-helper').textContent).toBe('D diminished');
+    expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].displayKeyMode).toBe('minor');
+    expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionId).toBe('typed:C:ii\u00b0');
+    expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionInput).toBe('2');
+    expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].sourceChordSymbol).toBe('Ddim');
+    expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].label).toBe('C: ii\u00b0');
+    expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].notes).toEqual(['D4', 'F4', 'Ab4']);
     closeOpenDialog();
   });
   it('allows the shared key field to be cleared while editing chord degrees', function () {

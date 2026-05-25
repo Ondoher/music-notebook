@@ -4,7 +4,7 @@
 
 Capture the parts of the architecture that are specific to `music-notebook` rather than the general `polylith` plus `REMVC` model.
 
-Use [Foundation Architecture](/c:/dev/music-notebook/agents/topics/architecture/foundation-architecture.md) for the reusable architectural framing and conventions.
+Use [Foundation Architecture](foundation-architecture.md) for the reusable architectural framing and conventions.
 
 ## Early Product Shape
 

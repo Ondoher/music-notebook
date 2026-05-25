@@ -3,16 +3,38 @@ import { buildKeyboardChordPayload } from '../chords/chord-builder.js';
 import { KEY_OPTIONS, normalizeKey } from '../keys/key-options.js';
 
 const DEFAULT_ROMAN_NUMERAL = 'I';
+const DEFAULT_KEY_MODE = 'major';
+const MAJOR_NUMERIC_DEGREES = Object.freeze({
+	1: 'I',
+	2: 'ii',
+	3: 'iii',
+	4: 'IV',
+	5: 'V',
+	6: 'vi',
+	7: 'vii\u00b0',
+});
+const MINOR_NUMERIC_DEGREES = Object.freeze({
+	1: 'i',
+	2: 'ii\u00b0',
+	3: 'III',
+	4: 'iv',
+	5: 'v',
+	6: 'VI',
+	7: 'VII',
+});
 
 export const PROGRESSION_KEY_OPTIONS = KEY_OPTIONS;
 
 export function buildKeyboardProgressionPayload({
 	key = 'C',
+	keyMode = DEFAULT_KEY_MODE,
 	romanNumeral = DEFAULT_ROMAN_NUMERAL,
 } = {}, options = {}) {
 	const normalizedKey = normalizeKey(key, 'C');
+	const normalizedKeyMode = normalizeKeyMode(keyMode);
 	const input = String(romanNumeral || '').trim();
-	const roman = RomanNumeral.get(input);
+	const effectiveRomanNumeral = getEffectiveRomanNumeral(input, normalizedKeyMode);
+	const roman = RomanNumeral.get(effectiveRomanNumeral);
 
 	if (!input || roman.empty) {
 		return {
@@ -51,16 +73,41 @@ export function buildKeyboardProgressionPayload({
 		chord,
 		chordSymbol,
 		error: '',
+		effectiveRomanNumeral,
 		input,
 		isValid: true,
+		keyMode: normalizedKeyMode,
 		payload: {
 			...chordResult.payload,
+			displayKeyMode: normalizedKeyMode,
 			label: `${normalizedKey}: ${roman.name}`,
+			progressionInput: input,
 			progressionId: `typed:${normalizedKey}:${roman.name}`,
 			sourceChordSymbol: chordSymbol,
 		},
 		roman,
 	};
+}
+
+function getEffectiveRomanNumeral(input, keyMode) {
+	const numericDegree = getNumericDegree(input);
+
+	if (!numericDegree) {
+		return input;
+	}
+
+	return keyMode === 'minor'
+		? MINOR_NUMERIC_DEGREES[numericDegree]
+		: MAJOR_NUMERIC_DEGREES[numericDegree];
+}
+
+function getNumericDegree(input) {
+	const match = /^([1-7])$/.exec(String(input || '').trim());
+	return match ? Number(match[1]) : null;
+}
+
+function normalizeKeyMode(keyMode) {
+	return keyMode === 'minor' ? 'minor' : DEFAULT_KEY_MODE;
 }
 
 function getChordSymbol(key, roman) {

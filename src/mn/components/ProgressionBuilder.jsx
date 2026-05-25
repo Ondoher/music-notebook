@@ -10,24 +10,28 @@ import {
 export default function ProgressionBuilder({
 	initialArpeggiate = false,
 	initialKey = 'C',
+	initialKeyMode = 'major',
 	initialRomanNumeral = 'I',
 	label = 'Chord degree',
 	onProgressionChange,
 	selectedKey,
+	selectedKeyMode,
 	showKey = true,
 }) {
 	const fallbackId = useId();
 	const [progressionKey, setProgressionKey] = useState(initialKey);
+	const [progressionKeyMode, setProgressionKeyMode] = useState(initialKeyMode);
 	const [romanNumeral, setRomanNumeral] = useState(initialRomanNumeral);
 	const [arpeggiate, setArpeggiate] = useState(initialArpeggiate);
 	const [inversionOverride, setInversionOverride] = useState(null);
 	const activeKey = selectedKey ?? progressionKey;
+	const activeKeyMode = selectedKeyMode ?? progressionKeyMode;
 	const result = useMemo(
 		() => buildKeyboardProgressionPayload(
-			{ key: activeKey, romanNumeral },
+			{ key: activeKey, keyMode: activeKeyMode, romanNumeral },
 			getProgressionOptions(inversionOverride, arpeggiate),
 		),
-		[activeKey, romanNumeral, arpeggiate, inversionOverride],
+		[activeKey, activeKeyMode, romanNumeral, arpeggiate, inversionOverride],
 	);
 	const hasMountedRef = useRef(false);
 	const helperId = `mn-progression-builder-helper-${fallbackId}`;
@@ -36,19 +40,19 @@ export default function ProgressionBuilder({
 	const selectedInversion = result.payload?.inversion || 0;
 
 	useEffect(() => {
-		if (selectedKey === undefined) {
+		if (selectedKey === undefined && selectedKeyMode === undefined) {
 			return;
 		}
 
 		if (hasMountedRef.current) {
 			onProgressionChange?.(buildKeyboardProgressionPayload(
-				{ key: selectedKey, romanNumeral },
+				{ key: activeKey, keyMode: activeKeyMode, romanNumeral },
 				getProgressionOptions(inversionOverride, arpeggiate),
 			));
 		}
 
 		hasMountedRef.current = true;
-	}, [arpeggiate, inversionOverride, romanNumeral, selectedKey]);
+	}, [activeKey, activeKeyMode, arpeggiate, inversionOverride, romanNumeral, selectedKey, selectedKeyMode]);
 
 	return (
 		<div
@@ -60,14 +64,17 @@ export default function ProgressionBuilder({
 		>
 			<div className="mn-progression-builder-label">{renderLabel(label)}</div>
 			{showKey ? (
-				<KeyPicker
-					className="mn-progression-builder-field"
-					onKeyChange={(key) => updateProgression({ key })}
-					value={activeKey}
-				/>
+				<>
+					<KeyPicker
+						className="mn-progression-builder-field"
+						onKeyChange={(key) => updateProgression({ key })}
+						value={activeKey}
+					/>
+					{renderKeyModeField(activeKeyMode, (keyMode) => updateProgression({ keyMode }))}
+				</>
 			) : null}
 			<label className="mn-progression-builder-field">
-				<span><LocaleString fallback="Roman numeral" phrase="music.controls.roman_numeral" /></span>
+				<span><LocaleString fallback="Roman numeral or number" phrase="music.controls.roman_numeral" /></span>
 				<input
 					aria-describedby={helperText ? helperId : undefined}
 					aria-invalid={Boolean(result.error)}
@@ -109,16 +116,22 @@ export default function ProgressionBuilder({
 
 	function updateProgression(nextValues) {
 		const nextKey = nextValues.key ?? activeKey;
+		const nextKeyMode = nextValues.keyMode ?? activeKeyMode;
 		const nextRomanNumeral = nextValues.romanNumeral ?? romanNumeral;
 		const nextArpeggiate = nextValues.arpeggiate ?? arpeggiate;
 		const nextInversionOverride = nextValues.inversion ?? inversionOverride;
 		const nextResult = buildKeyboardProgressionPayload({
 			key: nextKey,
+			keyMode: nextKeyMode,
 			romanNumeral: nextRomanNumeral,
 		}, getProgressionOptions(nextInversionOverride, nextArpeggiate));
 
 		if (selectedKey === undefined && nextValues.key !== undefined) {
 			setProgressionKey(nextValues.key);
+		}
+
+		if (selectedKeyMode === undefined && nextValues.keyMode !== undefined) {
+			setProgressionKeyMode(nextValues.keyMode);
 		}
 
 		if (nextValues.romanNumeral !== undefined) {
@@ -135,6 +148,26 @@ export default function ProgressionBuilder({
 
 		onProgressionChange?.(nextResult);
 	}
+}
+
+export function renderKeyModeField(value, onKeyModeChange, className = 'mn-progression-builder-field') {
+	return (
+		<label className={className}>
+			<span><LocaleString fallback="Mode" phrase="music.controls.key_mode" /></span>
+			<select
+				onChange={(event) => onKeyModeChange?.(event.target.value)}
+				onInput={(event) => onKeyModeChange?.(event.target.value)}
+				value={value === 'minor' ? 'minor' : 'major'}
+			>
+				<option value="major">
+					<LocaleString fallback="Major" phrase="music.key_mode.major" />
+				</option>
+				<option value="minor">
+					<LocaleString fallback="Minor" phrase="music.key_mode.minor" />
+				</option>
+			</select>
+		</label>
+	);
 }
 
 function getProgressionOptions(inversionOverride, arpeggiate) {

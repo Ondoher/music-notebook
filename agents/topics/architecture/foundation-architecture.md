@@ -15,7 +15,7 @@ This note is intentionally early-stage. It should be read as:
 
 App-specific planning and product-facing architecture notes now live in:
 
-- [Music Notebook App Architecture](/c:/dev/music-notebook/agents/topics/architecture/app-architecture.md)
+- [Music Notebook App Architecture](app-architecture.md)
 
 Current platform assumption:
 
@@ -148,7 +148,7 @@ The following conventions seem worth borrowing from the reference repos unless t
 
 This document captures the general architectural model.
 
-Use [Music Notebook App Architecture](/c:/dev/music-notebook/agents/topics/architecture/app-architecture.md) for:
+Use [Music Notebook App Architecture](app-architecture.md) for:
 
 - editor-first product shape
 - `Quill` and embedded music objects

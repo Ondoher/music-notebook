@@ -6,8 +6,8 @@ Capture accessibility expectations and checks for `music-notebook`, especially w
 
 This note should be used alongside:
 
-- [Localization And Accessibility](/c:/dev/music-notebook/agents/topics/architecture/localization-accessibility.md)
-- [Quill Integration](/c:/dev/music-notebook/agents/topics/architecture/quill-integration.md)
+- [Localization And Accessibility](localization-accessibility.md)
+- [Quill Integration](quill-integration.md)
 
 ## Contrast Targets
 

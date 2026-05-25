@@ -398,6 +398,59 @@ describe('KeyboardEmbed', function() {
 		closeOpenDialog();
 	});
 
+	it('uses minor key mode when a numeric progression degree is entered', function() {
+		const payload = {
+			id: 'keyboard-numeric-progression-spec',
+			label: 'C major',
+			notes: ['C4', 'E4', 'G4'],
+		};
+
+		act(() => {
+			quill.setContents([
+				{ insert: { [KEYBOARD_EMBED_BLOT]: payload } },
+				{ insert: '\n' },
+			]);
+		});
+
+		const editButton = container.querySelector('.music-keyboard-edit-button');
+
+		act(() => {
+			editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		});
+
+		const dialog = getLatestDialog();
+		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+
+		act(() => {
+			selectValue(modeSelect, 'progression');
+		});
+
+		const keyModeSelect = dialog.querySelector('.music-display-key-mode-field select');
+		const progressionInput = dialog.querySelector('.mn-progression-builder-field input');
+
+		act(() => {
+			setInputValue(progressionInput, '2');
+			progressionInput.dispatchEvent(new Event('input', { bubbles: true }));
+		});
+
+		act(() => {
+			selectValue(keyModeSelect, 'minor');
+		});
+
+		const contents = quill.getContents();
+		const keyboardOperation = contents.ops.find((operation) => operation.insert?.[KEYBOARD_EMBED_BLOT]);
+
+		expect(dialog.querySelector('.mn-progression-builder-helper').textContent).toBe('D diminished');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].displayKeyMode).toBe('minor');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionId).toBe('typed:C:ii\u00b0');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionInput).toBe('2');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].sourceChordSymbol).toBe('Ddim');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].label).toBe('C: ii\u00b0');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].notes).toEqual(['D4', 'F4', 'Ab4']);
+
+		closeOpenDialog();
+	});
+
 	it('allows the shared key field to be cleared while editing chord degrees', function() {
 		const payload = {
 			id: 'keyboard-clear-key-spec',

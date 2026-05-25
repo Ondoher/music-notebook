@@ -1,6 +1,7 @@
 import './common/_tests/TranslatorSpec.js';
 import './components/_tests/HelperTextSpec.js';
 import './components/_tests/LocaleStringSpec.js';
+import './components/_tests/BaseFormControlsSpec.js';
 import './shared/chords/_tests/ChordBuilderSpec.js';
 import './shared/progressions/_tests/ProgressionBuilderSpec.js';
 import './shared/scales/_tests/ScaleBuilderSpec.js';

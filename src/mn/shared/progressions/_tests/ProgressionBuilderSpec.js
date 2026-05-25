@@ -20,6 +20,30 @@ describe('ProgressionBuilder', function() {
 		expect(result.payload.notes).toEqual(['D4', 'F4', 'A4']);
 	});
 
+	it('uses numeric input with major key defaults', function() {
+		const result = buildKeyboardProgressionPayload({ key: 'C', keyMode: 'major', romanNumeral: '2' });
+
+		expect(result.isValid).toBeTrue();
+		expect(result.effectiveRomanNumeral).toBe('ii');
+		expect(result.chordSymbol).toBe('Dm');
+		expect(result.payload.displayKeyMode).toBe('major');
+		expect(result.payload.label).toBe('C: ii');
+		expect(result.payload.progressionInput).toBe('2');
+		expect(result.payload.notes).toEqual(['D4', 'F4', 'A4']);
+	});
+
+	it('uses numeric input with minor key defaults', function() {
+		const result = buildKeyboardProgressionPayload({ key: 'C', keyMode: 'minor', romanNumeral: '2' });
+
+		expect(result.isValid).toBeTrue();
+		expect(result.effectiveRomanNumeral).toBe('ii\u00b0');
+		expect(result.chordSymbol).toBe('Ddim');
+		expect(result.payload.displayKeyMode).toBe('minor');
+		expect(result.payload.label).toBe('C: ii\u00b0');
+		expect(result.payload.progressionInput).toBe('2');
+		expect(result.payload.notes).toEqual(['D4', 'F4', 'Ab4']);
+	});
+
 	it('accepts typed key names beyond the dropdown defaults', function() {
 		const result = buildKeyboardProgressionPayload({ key: 'Gb', romanNumeral: 'ii' });
 

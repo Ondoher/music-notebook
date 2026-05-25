@@ -36,7 +36,7 @@ Current preferred pattern:
 - a feature may depend on common application capabilities, but the rest of the app should not need to know that the feature exists
 - removing a feature should not negatively affect the rest of the application beyond removing that feature's own functionality
 - components that are only meaningful inside one feature can live under that feature
-- components that are already useful across features, or are likely to become cross-feature building blocks, should be created in or moved into [src/mn/components](/c:/dev/music-notebook/src/mn/components)
+- components that are already useful across features, or are likely to become cross-feature building blocks, should be created in or moved into [src/mn/components](../../../src/mn/components)
 - shared support files for those components should move with them rather than leaving important behavior buried inside one feature
 - dependencies should not be formed directly across features as a normal practice
 - the exception is when a cross-feature dependency is explicitly intended and documented, such as one feature deliberately building on another

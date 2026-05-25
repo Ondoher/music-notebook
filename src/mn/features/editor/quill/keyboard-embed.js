@@ -97,6 +97,10 @@ export function normalizeKeyboardPayload(value = {}) {
 		payload.displayKey = normalizeDisplayKey(nextValue.displayKey);
 	}
 
+	if (nextValue.displayKeyMode === 'minor') {
+		payload.displayKeyMode = 'minor';
+	}
+
 	if (nextValue.chordId) {
 		payload.chordId = String(nextValue.chordId);
 	}
@@ -111,6 +115,10 @@ export function normalizeKeyboardPayload(value = {}) {
 
 	if (nextValue.progressionId) {
 		payload.progressionId = String(nextValue.progressionId);
+	}
+
+	if (nextValue.progressionInput) {
+		payload.progressionInput = String(nextValue.progressionInput);
 	}
 
 	if (nextValue.sourceChordSymbol) {

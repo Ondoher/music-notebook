@@ -7,8 +7,8 @@ The notes here should now be read as outcome records and decision context, not a
 
 ## Current Documents
 
-- [Initial POC](/c:/dev/music-notebook/agents/topics/poc/initial-poc.md)
+- [Initial POC](initial-poc.md)
 
 ## Reading Order
 
-1. Start with [Initial POC](/c:/dev/music-notebook/agents/topics/poc/initial-poc.md) for the first spike goals, outcome summary, and follow-up planning seams.
+1. Start with [Initial POC](initial-poc.md) for the first spike goals, outcome summary, and follow-up planning seams.

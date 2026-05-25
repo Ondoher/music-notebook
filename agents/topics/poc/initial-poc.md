@@ -16,9 +16,9 @@ Use it to keep track of:
 
 Read this together with:
 
-- [Music Notebook App Architecture](/c:/dev/music-notebook/agents/topics/architecture/app-architecture.md)
-- [Foundation Architecture](/c:/dev/music-notebook/agents/topics/architecture/foundation-architecture.md)
-- [Testing Strategy](/c:/dev/music-notebook/agents/topics/testing/testing-strategy.md)
+- [Music Notebook App Architecture](../architecture/app-architecture.md)
+- [Foundation Architecture](../architecture/foundation-architecture.md)
+- [Testing Strategy](../testing/testing-strategy.md)
 
 ## Outcome Summary
 
@@ -120,6 +120,19 @@ The POC implementation moved beyond placeholder rendering:
 The current code is intentionally still POC-shaped.
 In particular, the main music embed renderer contains too many responsibilities in one function component.
 That should be treated as implementation debt to resolve during the application-planning and hardening phase, not as a reason to discount the POC result.
+
+## Post-POC Editing Update
+
+The POC is still considered complete, but the current edit dialog should be updated or used as the proving ground for one additional editing behavior:
+
+- key selection for chord/progression editing may include major or minor
+- scale editing is excluded from this major/minor key-mode behavior
+- chord progression editing should use the default chord quality implied by the selected key mode
+- numeric progression input may be supported as an alternative to Roman numerals
+- numeric progression input can avoid relying on Roman numeral capitalization to encode major/minor quality
+- numeric input may be recognized directly from the field value
+
+This should be treated as a targeted follow-up to the proven POC editing model, not as a reason to reopen the original POC success criteria.
 
 ## Explicitly Out Of Scope
 

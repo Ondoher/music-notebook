@@ -15,9 +15,9 @@ This note is about:
 
 This note should be read together with:
 
-- [Foundation Architecture](/c:/dev/music-notebook/agents/topics/architecture/foundation-architecture.md)
-- [Music Notebook App Architecture](/c:/dev/music-notebook/agents/topics/architecture/app-architecture.md)
-- [Build System](/c:/dev/music-notebook/agents/topics/architecture/build-system.md)
+- [Foundation Architecture](../architecture/foundation-architecture.md)
+- [Music Notebook App Architecture](../architecture/app-architecture.md)
+- [Build System](../architecture/build-system.md)
 
 Current platform assumption:
 
@@ -186,7 +186,7 @@ The frontend/browser test lane ties very tightly into Polylith.
 
 This is the most important thing to understand about the UI test setup.
 
-Use [Build System](/c:/dev/music-notebook/agents/topics/architecture/build-system.md) as the canonical architecture note for the underlying Polylith build model.
+Use [Build System](../architecture/build-system.md) as the canonical architecture note for the underlying Polylith build model.
 This section focuses on what that build model means specifically for testing.
 
 The most useful `modmod` browser-test pattern is:
@@ -406,12 +406,12 @@ Before adding a new test, ask:
 
 Useful reference material from `modmod`:
 
-- [package.json](c:/dev/modmod/package.json:1)
-- [spec/README.md](c:/dev/modmod/spec/README.md:1)
-- [src/testing/README.md](c:/dev/modmod/src/testing/README.md:1)
-- [src/testing/TestHarness.js](c:/dev/modmod/src/testing/TestHarness.js:1)
-- [karma.conf.cjs](c:/dev/modmod/karma.conf.cjs:1)
-- [src/spec.js](c:/dev/modmod/src/spec.js:1)
-- [builds/modmod.js](c:/dev/modmod/builds/modmod.js:1)
-- [agents/topics/architecture/feature-mechanics.md](c:/dev/modmod/agents/topics/architecture/feature-mechanics.md:156)
-- [agents/topics/architecture/build-and-assets.md](c:/dev/modmod/agents/topics/architecture/build-and-assets.md:148)
+- [package.json](../../../../modmod/package.json:1)
+- [spec/README.md](../../../../modmod/spec/README.md:1)
+- [src/testing/README.md](../../../../modmod/src/testing/README.md:1)
+- [src/testing/TestHarness.js](../../../../modmod/src/testing/TestHarness.js:1)
+- [karma.conf.cjs](../../../../modmod/karma.conf.cjs:1)
+- [src/spec.js](../../../../modmod/src/spec.js:1)
+- [builds/modmod.js](../../../../modmod/builds/modmod.js:1)
+- [agents/topics/architecture/feature-mechanics.md](../../../../modmod/agents/topics/architecture/feature-mechanics.md:156)
+- [agents/topics/architecture/build-and-assets.md](../../../../modmod/agents/topics/architecture/build-and-assets.md:148)

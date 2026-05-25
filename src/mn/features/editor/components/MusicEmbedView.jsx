@@ -10,7 +10,7 @@ import { MidiNumbers, Piano } from 'react-piano';
 import 'react-piano/dist/styles.css';
 import ChordBuilder from '../../../components/ChordBuilder.jsx';
 import KeyPicker from '../../../components/KeyPicker.jsx';
-import ProgressionBuilder from '../../../components/ProgressionBuilder.jsx';
+import ProgressionBuilder, { renderKeyModeField } from '../../../components/ProgressionBuilder.jsx';
 import ScaleBuilder from '../../../components/ScaleBuilder.jsx';
 import LocaleString from '../../../components/LocaleString.jsx';
 import { buildKeyboardChordPayload } from '../../../shared/chords/chord-builder.js';
@@ -101,6 +101,7 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 	const [currentPayload, setCurrentPayload] = useState(payload);
 	const [dialogOpen, setDialogOpen] = useState(initialDialogOpen);
 	const [displayKeyInput, setDisplayKeyInput] = useState(payload.displayKey || getPayloadKey(payload) || 'C');
+	const [displayKeyMode, setDisplayKeyMode] = useState(payload.displayKeyMode || 'major');
 	const [editMode, setEditMode] = useState('chord');
 	const [playbackState, setPlaybackState] = useState('idle');
 	const playbackRef = useRef({
@@ -193,6 +194,13 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 								onKeyChange={updateDisplayKey}
 								value={displayKeyInput}
 							/>
+							{editMode === 'chord' || editMode === 'progression' ? (
+								renderKeyModeField(
+									displayKeyMode,
+									updateDisplayKeyMode,
+									'music-display-key-mode-field',
+								)
+							) : null}
 							{enharmonicDisplayKey ? (
 								<label className="music-key-enharmonic-option music-display-options-field-checkbox">
 									<input
@@ -234,9 +242,11 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 							<ProgressionBuilder
 								initialArpeggiate={currentPayload.arpeggiate === true}
 								initialKey={effectiveSelectedDisplayKey}
+								initialKeyMode={displayKeyMode}
 								label={{ fallback: 'Chord degree', phrase: 'music.edit_mode.chord_degree' }}
 								onProgressionChange={updateProgressionFromBuilder}
 								selectedKey={effectiveSelectedDisplayKey}
+								selectedKeyMode={displayKeyMode}
 								showKey={false}
 							/>
 						) : null}
@@ -330,6 +340,7 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 		applyKeyboardPayload({
 			...result.payload,
 			displayKey: selectedDisplayKey,
+			displayKeyMode,
 		});
 	}
 
@@ -352,6 +363,7 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 		applyKeyboardPayload({
 			...result.payload,
 			displayKey: selectedDisplayKey,
+			displayKeyMode,
 		});
 	}
 
@@ -463,6 +475,31 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 		});
 	}
 
+	function updateDisplayKeyMode(keyMode) {
+		const nextKeyMode = keyMode === 'minor' ? 'minor' : 'major';
+
+		setDisplayKeyMode(nextKeyMode);
+
+		if (editMode === 'progression') {
+			const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
+
+			applyKeyboardPayload({
+				...buildKeyboardProgressionPayload({
+					key,
+					keyMode: nextKeyMode,
+					romanNumeral: getInitialProgressionValue(currentPayload),
+				}).payload,
+				displayKey: selectedDisplayKey,
+			});
+			return;
+		}
+
+		applyKeyboardPayload({
+			...currentPayload,
+			displayKeyMode: nextKeyMode,
+		});
+	}
+
 	function updateEditMode(nextEditMode) {
 		setEditMode(nextEditMode);
 
@@ -483,7 +520,7 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 			const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
 
 			applyKeyboardPayload({
-				...buildKeyboardProgressionPayload({ key }).payload,
+				...buildKeyboardProgressionPayload({ key, keyMode: displayKeyMode }).payload,
 				displayKey: selectedDisplayKey,
 			});
 		}
@@ -525,6 +562,10 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 			delete nextPayload.progressionId;
 		}
 
+		if (!payload.progressionInput) {
+			delete nextPayload.progressionInput;
+		}
+
 		if (!payload.sourceChordSymbol) {
 			delete nextPayload.sourceChordSymbol;
 		}
@@ -549,8 +590,16 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 			delete nextPayload.keyboardShowNoteNames;
 		}
 
+		if (nextPayload.displayKeyMode !== 'minor') {
+			delete nextPayload.displayKeyMode;
+		}
+
 		if (nextPayload.useEnharmonicKey !== false) {
 			delete nextPayload.useEnharmonicKey;
+		}
+
+		if (payload.scaleId) {
+			delete nextPayload.displayKeyMode;
 		}
 
 		if (Object.prototype.hasOwnProperty.call(payload, 'displayKey') && !payload.displayKey) {
@@ -872,6 +921,15 @@ function getInitialChordValue(payload) {
 	return 'Cdim7';
 }
 
+function getInitialProgressionValue(payload) {
+	if (payload.progressionInput) {
+		return payload.progressionInput;
+	}
+
+	const match = /^typed:[^:]+:(.+)$/.exec(String(payload.progressionId || ''));
+	return match?.[1] || 'I';
+}
+
 function getInitialScaleKey(payload) {
 	const root = payload.rootNote || payload.notes?.[0] || 'C4';
 	const match = /^([A-Ga-g](?:#|b)?)/.exec(String(root));
@@ -1111,6 +1169,10 @@ function getPayloadKeySignature(payload) {
 	}
 
 	if (payload.scaleId && /\bminor\b/i.test(payload.label || '')) {
+		return { key, table: MINOR_KEY_FIFTHS };
+	}
+
+	if (!payload.scaleId && payload.displayKeyMode === 'minor') {
 		return { key, table: MINOR_KEY_FIFTHS };
 	}
 
