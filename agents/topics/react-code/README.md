@@ -25,6 +25,10 @@ For the architectural boundary between REMVC views and React presentation, use
 React is the presentation technology in this repo. It is not the whole REMVC
 view layer.
 
+The post-POC hook-to-class cleanup is complete.
+Use [React Cleanup](react-cleanup.md) as the completed checkpoint record, not as an active migration backlog.
+New MVP React work should start from the class-component baseline described here.
+
 In the preferred flow:
 
 - controllers determine user-facing flow, behavior, and direction
@@ -59,6 +63,29 @@ Current preferred pattern:
 
 The practical goal is that JSX describes what boxes exist, while CSS describes
 how those boxes behave visually.
+
+## General React Standards
+
+MUI `Dialog` should not be used directly inside another component's render
+method.
+Every dialog should have a dedicated dialog component that owns the dialog
+markup, title, content, actions, helper text, and accessibility wiring.
+
+Parent components should render the dedicated dialog component and pass it
+state, callbacks, and presentation data through props.
+This keeps large feature components from accumulating modal subtrees and makes
+dialog behavior easier to test and reuse.
+
+Grouped form controls should be built from shared components when practical.
+Use the local `Base*`/shared component layer for text fields, selects,
+checkboxes, radio groups, and helper text so labels, descriptions,
+localization, validation, and accessibility behavior stay consistent.
+
+Multi-field controls such as key, chord, and scale inputs should own their
+field grouping explicitly.
+They should put helper text on the group when the message describes the
+combined value, and their fields should default to a compact horizontal layout
+when there is enough room.
 
 ## CSS And Layout
 

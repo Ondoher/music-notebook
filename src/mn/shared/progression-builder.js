@@ -1,6 +1,6 @@
 import { Chord, Note, RomanNumeral } from 'tonal';
-import { buildKeyboardChordPayload } from '../chords/chord-builder.js';
-import { KEY_OPTIONS, normalizeKey } from '../keys/key-options.js';
+import { buildKeyboardChordPayload } from './chord-builder.js';
+import { KEY_OPTIONS, normalizeKey } from './key-options.js';
 
 const DEFAULT_ROMAN_NUMERAL = 'I';
 const DEFAULT_KEY_MODE = 'major';
@@ -33,7 +33,8 @@ export function buildKeyboardProgressionPayload({
 	const normalizedKey = normalizeKey(key, 'C');
 	const normalizedKeyMode = normalizeKeyMode(keyMode);
 	const input = String(romanNumeral || '').trim();
-	const effectiveRomanNumeral = getEffectiveRomanNumeral(input, normalizedKeyMode);
+	const normalizedInput = normalizeRomanNumeralAliases(input);
+	const effectiveRomanNumeral = getEffectiveRomanNumeral(normalizedInput, normalizedKeyMode);
 	const roman = RomanNumeral.get(effectiveRomanNumeral);
 
 	if (!input || roman.empty) {
@@ -87,6 +88,13 @@ export function buildKeyboardProgressionPayload({
 		},
 		roman,
 	};
+}
+
+export function normalizeRomanNumeralAliases(romanNumeral) {
+	return String(romanNumeral || '')
+		.replace(/(\/o|o\/)/giu, '\u00f8')
+		.replace(/^(\s*[ivIV]+)\s*(?:dim|diminished)(\d*)\s*$/iu, '$1\u00b0$2')
+		.replace(/^(\s*[ivIV]+)\s*(?:aug|augmented)(\d*)\s*$/iu, '$1+$2');
 }
 
 function getEffectiveRomanNumeral(input, keyMode) {

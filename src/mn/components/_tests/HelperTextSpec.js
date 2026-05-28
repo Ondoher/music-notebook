@@ -29,14 +29,30 @@ describe('HelperText', function() {
 		harness = createTestHarness();
 
 		const result = harness.render(HelperText, {
-			error: true,
 			helperText: 'Chord not recognized',
 			localize: false,
+			status: 'error',
 		});
 		const helper = result.container.querySelector('[role="alert"]');
 
 		expect(helper).toBeTruthy();
 		expect(helper.getAttribute('aria-live')).toBe('assertive');
+	});
+
+	it('marks warning helper text as polite without an alert role', function() {
+		harness = createTestHarness();
+
+		const result = harness.render(HelperText, {
+			helperText: 'Chord not recognized yet',
+			localize: false,
+			status: 'warning',
+		});
+		const helper = result.container.querySelector('.mn-helper-text-warning');
+
+		expect(helper).toBeTruthy();
+		expect(helper.getAttribute('aria-live')).toBe('polite');
+		expect(helper.getAttribute('role')).toBe(null);
+		expect(helper.classList.contains('Mui-error')).toBe(false);
 	});
 
 	it('localizes phrase-based helper text', function() {

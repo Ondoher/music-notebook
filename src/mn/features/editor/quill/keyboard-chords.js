@@ -6,7 +6,7 @@ export const KEYBOARD_CHORD_PRESETS = Object.freeze([
 	}),
 	Object.freeze({
 		chordId: 'c-major',
-		label: 'C major',
+		label: 'C',
 		notes: Object.freeze(['C4', 'E4', 'G4']),
 	}),
 	Object.freeze({

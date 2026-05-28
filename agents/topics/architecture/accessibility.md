@@ -80,7 +80,7 @@ Each state should be distinguishable without relying on hue alone.
 
 ## Current Recommendation
 
-For the embedded keyboard POC, keep the semantic classes and improve the visual treatment:
+For the embedded keyboard, keep the semantic classes and improve the visual treatment:
 
 - `.music-keyboard-key-highlighted`
 - `.music-keyboard-key-root`
@@ -118,7 +118,7 @@ Follow-up testing should include at least NVDA with Chrome or Firefox, plus Voic
 
 ## Current Embed Control Status
 
-The POC currently renders floating controls over each music object:
+The current app renders floating controls over each music object:
 
 - an edit button that opens the dedicated music-object dialog
 - a play/stop button that auditions the generated music

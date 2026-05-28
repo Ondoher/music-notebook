@@ -1,7 +1,17 @@
 import React from 'react';
 import LocaleString from '../../../components/LocaleString.jsx';
 
+/**
+ * Renders the app shell around the active page supplied by the app-view service.
+ *
+ * @extends {React.Component<AppShellProps, AppShellState>}
+ */
 export default class AppShell extends React.Component {
+	/**
+	 * Initializes app shell state from props.
+	 *
+	 * @param {AppShellProps} props
+	 */
 	constructor(props) {
 		super(props);
 
@@ -12,6 +22,11 @@ export default class AppShell extends React.Component {
 		};
 	}
 
+	/**
+	 * Subscribes to app-view updates after mount.
+	 *
+	 * @returns {void}
+	 */
 	componentDidMount() {
 		if (!this.props.appView) {
 			return;
@@ -28,6 +43,11 @@ export default class AppShell extends React.Component {
 		this.syncFromView();
 	}
 
+	/**
+	 * Removes app-view subscriptions before unmount.
+	 *
+	 * @returns {void}
+	 */
 	componentWillUnmount() {
 		if (this.props.appView && this.pagesUpdatedListener) {
 			this.props.appView.unlisten('pages-updated', this.pagesUpdatedListener);
@@ -38,10 +58,22 @@ export default class AppShell extends React.Component {
 		}
 	}
 
+	/**
+	 * Updates the shell page list from the app-view service.
+	 *
+	 * @param {AppShellPage[]} pages
+	 * @returns {void}
+	 */
 	onPagesUpdated(pages) {
 		this.setState({ pages });
 	}
 
+	/**
+	 * Stores the active mounted page from the app-view event.
+	 *
+	 * @param {PageMountedEvent} event
+	 * @returns {void}
+	 */
 	onPageMounted({ component, page }) {
 		this.setState({
 			activePageId: page.id,
@@ -49,6 +81,11 @@ export default class AppShell extends React.Component {
 		});
 	}
 
+	/**
+	 * Synchronizes shell state from the app-view snapshot.
+	 *
+	 * @returns {void}
+	 */
 	syncFromView() {
 		const shellState = this.props.appView?.getShellState?.();
 
@@ -63,6 +100,11 @@ export default class AppShell extends React.Component {
 		});
 	}
 
+	/**
+	 * Renders the active page or the empty editor state.
+	 *
+	 * @returns {React.ReactElement}
+	 */
 	renderPageRegion() {
 		if (this.state.pageComponent) {
 			return React.cloneElement(this.state.pageComponent, {
@@ -78,6 +120,11 @@ export default class AppShell extends React.Component {
 		);
 	}
 
+	/**
+	 * Renders the app shell layout.
+	 *
+	 * @returns {React.ReactElement}
+	 */
 	render() {
 		return (
 			<div className="mn-shell">

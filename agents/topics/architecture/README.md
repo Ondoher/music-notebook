@@ -14,6 +14,7 @@ This folder contains working architecture notes for `music-notebook`.
 - [UI Component Layer](ui-component-layer.md)
 - [Localization And Accessibility](localization-accessibility.md)
 - [Accessibility](accessibility.md)
+- [Screen Scanning UX](screen-scanning-ux.md)
 
 ## Reading Order
 
@@ -26,13 +27,15 @@ This folder contains working architecture notes for `music-notebook`.
 7. Use [UI Component Layer](ui-component-layer.md) for the MUI plus CSS styling direction.
 8. Use [Localization And Accessibility](localization-accessibility.md) for first-class localization and accessibility expectations.
 9. Use [Accessibility](accessibility.md) for contrast targets, keyboard embed accessibility checks, and visual-state guidance.
+10. Use [Screen Scanning UX](screen-scanning-ux.md) for research-backed scanability and visual-hierarchy principles.
 
 ## Current Status
 
-The architecture documentation is intentionally early and incomplete.
+The editor/embed POC is proven, the post-POC React cleanup is complete, and MVP implementation planning is the active phase.
 
 Right now the main job of these notes is to:
 
 - capture current direction
 - separate likely patterns from unresolved assumptions
-- make inconsistencies visible before implementation hardens around them
+- make inconsistencies visible before MVP implementation hardens around them
+- provide enough bootstrap context for a fresh agent to continue planning or implementation without rediscovering completed cleanup work

@@ -137,7 +137,7 @@ Preferred pattern for UI test ownership:
 - the app root test entry should stay structural rather than become a dumping ground
 
 This keeps test ownership visible and reduces the chance that one central file becomes unmaintainable.
-For the current `mn` POC, the rule is simpler: concrete browser specs must be explicitly imported from `src/mn/test.js` or from a file it imports.
+For the current `mn` app, the immediate rule is simpler: concrete browser specs must be explicitly imported from `src/mn/test.js` or from a file it imports.
 
 ## Service And Registry Testing
 
@@ -362,9 +362,9 @@ If we start small, these are likely the highest-value first candidates:
 - selection/editing behavior for one embedded object
 - export boundary contracts, even if export is initially mocked
 
-## Current POC Coverage
+## Current Verified Coverage
 
-The `mn` UI test lane already covers a useful slice of the first editor/embed POC.
+The `mn` UI test lane already covers a useful slice of the editor/embed implementation and shared component cleanup.
 
 Current tested areas include:
 

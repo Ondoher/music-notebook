@@ -30,7 +30,7 @@ It does mean:
 
 ## Localization Direction
 
-For the POC, use a cleaned-up version of the `modmod` localization framework.
+Use a cleaned-up version of the `modmod` localization framework.
 
 Useful pieces to borrow:
 
@@ -42,7 +42,7 @@ Useful pieces to borrow:
 
 Skip translated markdown for now because that path depends on server-side support.
 
-The POC localization layer should support:
+The localization layer should support:
 
 - phrase keys
 - replacement values
@@ -55,6 +55,38 @@ Current preferred behavior:
 - avoid hardcoded user-visible strings in reusable components
 - use full-sentence phrase keys rather than assembling grammar from fragments
 - keep initial locale data small and expand it as UI surfaces become real
+
+## Music Term Localization
+
+Chord symbols and explanatory chord names should be treated differently.
+
+Compact music symbols are canonical notation and are usually not localized:
+
+- `Cdim7`
+- `Dm`
+- `F#`
+- `Bb`
+- `ii°`
+- `C: V7`
+
+These symbolic labels may still need spelling preferences, such as sharp/flat or eventual locale-specific note naming, but they should not be translated as normal prose.
+Keyboard-friendly aliases for those symbols are parser ergonomics, not translation.
+For example, `dim` or `diminished` may resolve as diminished, `aug` or `augmented` may resolve as augmented, and `m7b5`, `ø7`, or possibly MuseScore-compatible `0` may resolve as half-diminished.
+Those aliases should be documented in app help and accepted consistently where chord-name and Roman-numeral input overlap.
+The input field should preserve what the user typed while the parser normalizes internally for validation, payload labels, and accessible helper text.
+
+Friendly explanatory names are user-facing language and should be localized by the app:
+
+- chord quality names such as major, minor, diminished, augmented, dominant seventh, and half-diminished seventh
+- accidental words when shown as prose, such as sharp, flat, natural, double sharp, and double flat
+- longer helper text or accessible descriptions for chords, scales, and progressions
+
+Third-party music theory libraries may provide English names, such as Tonal's `chord.name`.
+Those strings are useful as fallbacks or diagnostic text, but they should not be treated as final localized UI copy.
+When MVP components need user-facing helper text, prefer returning structured musical data and composing a localized phrase through the app localization layer.
+
+Future locale work may need a note-name policy for solfege systems, German `H`/`B` usage, and other pedagogy-specific naming conventions.
+Until that is decided, keep compact symbols stable and localize only explanatory prose.
 
 ## Accessibility Direction
 
@@ -79,6 +111,24 @@ But MUI does not solve accessibility for:
 - focus transitions between document objects and editing dialogs
 
 Those areas need explicit attention.
+
+All meaningful accessibility decisions should be documented with references to applicable standards and any useful implementation references.
+Use WCAG as the default reference point for user-facing accessibility requirements, and add WAI-ARIA Authoring Practices references when designing custom widgets such as toolbars, tabs, dialogs, or composite music controls.
+
+## Focusable Control State Direction
+
+Buttons, icon buttons, and hover-help targets should remain reachable through the keyboard focus order.
+
+Current app rule:
+
+- buttons and icon buttons stay in the tab list even when visually disabled or unavailable
+- controls with hover text also stay in the tab list so the same help can be discovered without a mouse
+- display state and interaction availability are handled in component code
+- disabled or unavailable controls expose that state accessibly instead of relying only on native disabled behavior
+- unavailable controls block activation while still allowing focus so the state and helper text can be announced
+
+This avoids creating controls that are visible to mouse users but skipped by keyboard and screen-reader users.
+It also lets the app explain why an action is unavailable instead of making the action disappear from the interaction model.
 
 ## Component Selection Guidance
 
@@ -110,7 +160,7 @@ Useful candidates may include:
 
 Some of the accessibility support in `modmod` may be messier than this app ultimately wants.
 
-That is acceptable for POC borrowing. Treat those components as a working base:
+That is acceptable for early borrowing. Treat those components as a working base:
 
 - preserve useful behavior and test coverage
 - simplify awkward implementation details when bringing them over
@@ -142,7 +192,7 @@ For example:
 
 ## Testing Guidance
 
-As the POC grows, add tests for:
+As MVP implementation grows, add tests for:
 
 - phrase lookup and replacements
 - plural behavior
@@ -155,9 +205,9 @@ As the POC grows, add tests for:
 The first goal is not exhaustive coverage.
 The first goal is to keep the architecture honest while the editor/embed model is still forming.
 
-## Current POC Status
+## Current Localization And Accessibility Status
 
-The POC now has a working localization layer adapted from `modmod`:
+The app now has a working localization layer adapted from `modmod`:
 
 - phrase data lives under `src/mn/phrases`
 - translator behavior covers phrase lookup, replacements, plural categories, and missing keys
@@ -167,12 +217,14 @@ The POC now has a working localization layer adapted from `modmod`:
 
 The current music-object editor and document controls are localized through this layer.
 Browser coverage includes translator behavior, `LocaleString`, `HelperText`, and localized music-object controls such as playback and resize.
+The shared form-control layer now uses local `MUI`-based controls for localized labels, descriptions, helper text, warning text, and validation errors where the cleanup has touched forms.
+Grouped music inputs such as key, chord, and scale editors should put helper text on the group when the message describes the combined value rather than one field.
 
 Still unresolved:
 
 - richer localized descriptions for musical content, especially staffs and chord/scale examples
 - manual screen-reader passes through the Quill document surface and floating object controls
-- focus behavior review for the object dialog once the POC component is split into production-shaped components
+- focus behavior review for the object dialog and future inline chord editor during MVP hardening
 
 ## Practical Rule
 

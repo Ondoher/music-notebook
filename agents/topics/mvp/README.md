@@ -6,6 +6,33 @@ Use this topic to define the first usable `music-notebook` product after the edi
 
 The MVP should turn the proven POC mechanics into a coherent small application without pretending that every future architecture question is settled.
 
+## Current Status
+
+The editor/embed POC is proven and the post-POC React cleanup is complete.
+
+MVP implementation planning is now the active phase.
+The first planning priority is to define the durable notebook document model and the MVP implementation sequence around it.
+
+Near-term planning should cover:
+
+- notebook document model and serialization
+- Quill Delta consolidation with structured inline chord objects and larger music-object payloads
+- document-level settings such as page layout and chord display style
+- persistence and auth service seams
+- PDF export boundary and viable export strategy
+- inline chord object insertion/editing behavior
+- chord parser/normalizer implementation strategy, including whether to use `chord-symbol`
+- account-gated save/export flow for anonymous users
+
+For context bootstrap, assume:
+
+- the POC mechanics are proven but not the durable document model
+- React cleanup is done and new substantial React components should be class components
+- shared music editing controls now live in `src/mn/components`
+- shared music theory helpers now live flat under `src/mn/shared`
+- playback is behind the `player` feature service
+- chord parsing decisions are tracked in [Chord Name Parsing](chord-name-parsing.md)
+
 ## Current MVP Thesis
 
 The MVP is an editor-first music notebook where a user can:
@@ -79,6 +106,7 @@ Music objects support explanation, illustration, and study rather than full comp
 - table support in notebook content
 - `MusicXML` as the native music specification for music payloads
 - `tonal` as the preferred music theory library
+- inline chord objects created from typed ASCII chord text
 - keyboard embed insertion
 - staff embed insertion
 - table insertion
@@ -89,6 +117,8 @@ Music objects support explanation, illustration, and study rather than full comp
 - music embeds default to half the effective page width
 - music embed captions appear under the embed
 - music embeds can convert between keyboard and staff modes through the edit dialog
+- inline chord objects render as formatted chord symbols inside the text flow
+- inline chord objects can be edited through a simple floating editor field
 - document save/load path behind a persistence service
 - manual document save
 - save status indicator
@@ -97,6 +127,7 @@ Music objects support explanation, illustration, and study rather than full comp
 - document rename
 - document serialization that wraps editor content plus music-object payloads
 - document save consolidates Quill Deltas into a unified notebook state
+- document-level chord display style, with local inline/object overrides only when needed
 - `MongoDB` as the first concrete persistence target
 - simple username/password account creation
 - password flow that avoids sending plain-text passwords to the server
@@ -125,6 +156,7 @@ Music objects support explanation, illustration, and study rather than full comp
 - reasonable keyboard-only access to object controls
 - localized labels for controls and status text
 - all edit-dialog fields use `MUI` controls, with localized labels and accessible names/descriptions
+- grouped music edit fields should use shared `MUI`-based components where practical so localization, helper text, and accessibility behavior remain consistent
 - help content that supports first-use learning without turning the app into a tutorial
 - shared tests for document serialization
 - UI tests for the highest-risk editor/embed workflows
@@ -251,16 +283,49 @@ MVP embed alignment is limited to text wrap or new line only.
 Embed content remains limited to a single chord or scale unless later investigation expands it.
 The current POC embed edit options should be treated as the minimum MVP editing functionality.
 
+## Inline Chord Objects
+
+Inline chord objects are distinct from larger keyboard/staff music embeds.
+
+The user should be able to type an ASCII chord symbol in the editor and have the app replace it with a properly formatted inline chord object.
+
+The inline chord object should:
+
+- stay in the text flow
+- render as a compact formatted chord symbol
+- inherit the document-level chord display style by default
+- allow a local display-style override only when a specific chord needs different presentation
+- preserve the source chord text or enough normalized data to reopen editing
+- use the same chord parser/normalizer as the music-object dialog
+- support direct chord names first, with Roman and numeric input considered if the shared parser makes that practical
+- expose a simple floating editor field when selected or activated
+- avoid opening the full music-object edit dialog for ordinary inline chord edits
+- round-trip through the notebook document model as structured data, not only styled text
+
+The floating editor field should be intentionally small.
+It is for correcting or replacing the inline chord symbol, not for configuring keyboard/staff display, playback, or embed sizing.
+
 Editing update:
 
 - key selection for chord/progression editing includes major and minor modes
 - scale editing is excluded from this major/minor key-mode behavior
-- chord progression editing uses the default chord quality implied by the selected key mode
-- numeric progression input is supported as an alternative to Roman numerals
-- numeric progression input avoids relying on Roman numeral capitalization to encode major/minor quality
+- chord editing is moving toward one unified input that auto-detects direct chord names, Roman numeral degrees, and numeric degrees
+- the older separate chord-name and chord-degree edit modes may be removed once the unified input is proven in the dialog
+- numeric chord input uses the default chord quality implied by the selected key mode
+- numeric chord input is supported as an alternative to Roman numerals
+- numeric chord input avoids relying on Roman numeral capitalization to encode major/minor quality
 - numeric input is recognized directly from the field value
 - switching between major and minor modes immediately rebuilds the current numeric chord degree and updates the keyboard or staff preview
 - example: in `C`, numeric degree `2` resolves to `D-F-A` in major mode and `D-F-Ab` in minor mode
+- Roman numeral capitalization remains explicit quality notation: lowercase `ii` means a minor second-degree chord, uppercase `II` means a major second-degree chord
+- in a minor key, numeric `2` should resolve to the diatonic diminished second-degree chord, but Roman `ii` should remain a minor chord unless the user explicitly enters diminished notation
+- Roman numeral and direct chord-name input should support the same quality aliases where their syntax overlaps
+- accepted diminished aliases should include `dim` and `diminished`, normalized for display to `°`
+- accepted augmented aliases should include `aug` and `augmented`, normalized for display to `+`
+- accepted half-diminished aliases should include `m7b5`, `ø7`, and possibly MuseScore-compatible `0`
+- chord text input should preserve spaces while typing, including trailing spaces, while parser resolution may trim for interpretation
+- chord text input should not rewrite the user's visible text while typing
+- examples: `iidim`, `ii diminished`, and `Cdim` should resolve as diminished; `iaug` and `Caug` should resolve as augmented; `viim7b5`, `viiø7`, and possibly `vii07` should resolve as half-diminished
 
 ## Notebook Section Tabs
 
@@ -380,7 +445,7 @@ Preferred direction:
 ## POC Pieces To Rework
 
 - large music embed React implementation
-- native edit-dialog form controls; MVP edit fields should move to `MUI` controls
+- any remaining native edit-dialog form controls; MVP edit fields should use shared `MUI`-based controls
 - `modmod` `PasswordInput` should be adapted when account creation and login UI are implemented
 - POC-shaped payload as the only durable document structure
 - any shell layout that exists only to support the spike
@@ -503,6 +568,8 @@ Anything in this section remains an open question until it is explicitly answere
 - Does MVP need any embed content beyond a single chord or scale?
 - What exact payload shape should preserve key major/minor mode and original numeric progression input in the durable notebook document model?
 - Should numeric progression input support only single degrees `1` through `7`, or later accept richer degree syntax?
+- When should the separate chord-degree edit mode be removed from the dialog after unified chord input is fully proven?
+- Which additional typed music-symbol aliases should the parser support beyond diminished, augmented, and half-diminished?
 - Can MIDI input improve music embed creation or editing without turning MVP into a composition tool?
 - What browser and device support constraints apply to MIDI input?
 
@@ -597,6 +664,8 @@ Anything in this section remains an open question until it is explicitly answere
 - color support
 - columns
 - MIDI input
+- exercise objects
+- guided score capture from MIDI input
 - handwriting input
 
 ## Stretch Goals
@@ -606,7 +675,47 @@ Anything in this section remains an open question until it is explicitly answere
 - fuller music composition workflows after the notebook/document experience is stable
 - handwriting input for tablet users if a suitable library is found
 - MIDI input for music embeds if investigation shows it fits the document workflow
+- exercise objects for short note/chord practice sequences
+- guided MIDI-to-score insertion after the notebook MVP is stable
 - richer offline-first PWA behavior after the core save/load model is stable
+
+### Exercise Objects
+
+Exercise objects are a post-MVP stretch goal.
+They would let a user define short practice or teaching sequences made from notes, chords, scales, and octave ranges.
+
+Possible exercise settings:
+
+- note and chord sequence patterns
+- scale sweep direction and range
+- octave sweep direction and range
+- key and mode
+- time signature
+- tempo
+- beat style, such as straight, swing, or waltz
+- repeat count or loop behavior
+
+This should stay distinct from full composition workflows.
+The goal is structured practice material that can be rendered, played, and reused inside a notebook document.
+
+### Guided MIDI Score Capture
+
+Guided MIDI score capture is not an MVP feature and may be further out than the first post-MVP work.
+The idea is to let a user capture raw MIDI note events and then guide the app toward a first approximation of a score.
+
+The app could ask for interpretation settings such as:
+
+- key
+- time signature
+- tempo or quantization grid
+- clef or staff assignment
+- pickup measure behavior
+- whether the capture is melody, chords, or a simple two-hand keyboard pattern
+
+The durable model should preserve both the raw MIDI capture and the user's interpretation choices so the generated score can be revisited.
+The generated representation should target `MusicXML`, with enough editing controls to correct rhythm, spelling, ties, voices, measures, and notation details.
+
+This remains document-supporting functionality, not a pivot into full composition software.
 
 ## Done Means
 
@@ -617,7 +726,10 @@ The important thing is that its core document loop is real.
 
 ## Related Topics
 
+- [Base Dialog Design](base-dialog.md)
+- [Chord Name Parsing](chord-name-parsing.md)
 - [Music Notebook App Architecture](../architecture/app-architecture.md)
 - [Quill Integration](../architecture/quill-integration.md)
 - [Testing Strategy](../testing/testing-strategy.md)
 - [Initial POC](../poc/initial-poc.md)
+- [React Cleanup](../react-code/react-cleanup.md)

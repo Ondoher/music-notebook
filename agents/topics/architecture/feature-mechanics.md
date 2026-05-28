@@ -85,8 +85,9 @@ Current working rules are:
 - class properties with complex types or non-obvious usage should have JSDoc comments when they are first introduced in the constructor
 - class properties with obvious usage do not need JSDoc comments
 - services should define a `.d.ts` file in the same folder as the service using the base filename of the service file
-- that file should export an interface mirroring the service's exported methods
-- when defining the exported service interface, derive the exported methods from the `this.implement(...)` call in the service constructor
+- that file should define ambient/global types and must not use `export`
+- service interface names should mirror the service purpose, for example `PlayerService`
+- when defining the service interface, derive the methods from the `this.implement(...)` call in the service constructor
 - lifecycle methods such as `start` and `ready` are called directly by Polylith and do not need to be documented in the service `.d.ts` interface
 - service interfaces should include JSDoc comments
 - when the service implementation already has JSDoc, copy that documentation into the service interface where it still applies

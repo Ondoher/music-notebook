@@ -1,420 +1,325 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import Button from '@mui/material/Button';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import { load } from '@polylith/loader';
-import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
-import { MidiNumbers, Piano } from 'react-piano';
-import 'react-piano/dist/styles.css';
-import ChordBuilder from '../../../components/ChordBuilder.jsx';
-import KeyPicker from '../../../components/KeyPicker.jsx';
-import ProgressionBuilder, { renderKeyModeField } from '../../../components/ProgressionBuilder.jsx';
-import ScaleBuilder from '../../../components/ScaleBuilder.jsx';
+import React, { Component } from 'react';
+import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
 import LocaleString from '../../../components/LocaleString.jsx';
-import { buildKeyboardChordPayload } from '../../../shared/chords/chord-builder.js';
-import { buildKeyboardProgressionPayload } from '../../../shared/progressions/progression-builder.js';
-import { buildKeyboardScalePayload } from '../../../shared/scales/scale-builder.js';
+import MusicDisplayOptions from '../../../components/MusicDisplayOptions.jsx';
+import MusicEmbedDialog from '../../../components/MusicEmbedDialog.jsx';
+import MusicPreview from '../../../components/MusicPreview.jsx';
+import { buildKeyboardChordPayload } from '../../../shared/chord-builder.js';
+import {
+	getEffectiveKeyName,
+	getEnharmonicKeyOption,
+	getPayloadKey,
+	isUsingEnharmonicKey,
+	normalizeKeyName,
+	normalizeStaffOctave,
+} from '../../../shared/music_helper.js';
+import { buildKeyboardProgressionPayload } from '../../../shared/progression-builder.js';
+import { buildKeyboardScalePayload } from '../../../shared/scale-builder.js';
 
-const DEFAULT_FIRST_NOTE = 'c4';
-const DEFAULT_LAST_NOTE = 'b4';
-const DEFAULT_WIDTH = 420;
-const EMBED_HORIZONTAL_CHROME = 0;
 const EMBED_MIN_WIDTH = 240;
 const EMBED_MIN_HEIGHT = 180;
 const EMBED_MAX_WIDTH = 900;
 const EMBED_MAX_HEIGHT = 640;
 const RESIZE_KEYBOARD_STEP = 8;
 const RESIZE_KEYBOARD_LARGE_STEP = 24;
-const ACCIDENTAL_SYMBOLS = Object.freeze({
-	sharp: '\u266f',
-	flat: '\u266d',
-	natural: '\u266e',
-	doubleSharp: '\ud834\udd2a',
-	doubleFlat: '\ud834\udd2b',
-});
-const PITCH_OFFSETS = Object.freeze({
-	C: 0,
-	D: 2,
-	E: 4,
-	F: 5,
-	G: 7,
-	A: 9,
-	B: 11,
-});
-const NATURAL_PITCH_CLASSES = Object.freeze([0, 2, 4, 5, 7, 9, 11]);
-const MAJOR_KEY_FIFTHS = Object.freeze({
-	C: 0,
-	G: 1,
-	D: 2,
-	A: 3,
-	E: 4,
-	B: 5,
-	'F#': 6,
-	'C#': 7,
-	F: -1,
-	Bb: -2,
-	Eb: -3,
-	Ab: -4,
-	Db: -5,
-	Gb: -6,
-	Cb: -7,
-});
-const MINOR_KEY_FIFTHS = Object.freeze({
-	A: 0,
-	E: 1,
-	B: 2,
-	'F#': 3,
-	'C#': 4,
-	'G#': 5,
-	'D#': 6,
-	'A#': 7,
-	D: -1,
-	G: -2,
-	C: -3,
-	F: -4,
-	Bb: -5,
-	Eb: -6,
-	Ab: -7,
-});
-const MODE_PARENT_MAJOR_OFFSETS = Object.freeze({
-	ionian: 0,
-	dorian: -2,
-	phrygian: -4,
-	lydian: -5,
-	mixolydian: -7,
-	aeolian: -9,
-	locrian: -11,
-});
-const MODE_PARENT_NOTE_INDEX = Object.freeze({
-	ionian: 0,
-	dorian: 6,
-	phrygian: 5,
-	lydian: 4,
-	mixolydian: 3,
-	aeolian: 2,
-	locrian: 1,
-});
 
-export default function MusicEmbedView({ initialDialogOpen = false, payload, onPayloadChange }) {
-	const [currentPayload, setCurrentPayload] = useState(payload);
-	const [dialogOpen, setDialogOpen] = useState(initialDialogOpen);
-	const [displayKeyInput, setDisplayKeyInput] = useState(payload.displayKey || getPayloadKey(payload) || 'C');
-	const [displayKeyMode, setDisplayKeyMode] = useState(payload.displayKeyMode || 'major');
-	const [editMode, setEditMode] = useState('chord');
-	const [playbackState, setPlaybackState] = useState('idle');
-	const playbackRef = useRef({
-		container: null,
-		player: null,
-		timer: null,
-		token: 0,
-	});
-	const selectedDisplayKey = normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C';
-	const enharmonicDisplayKey = getEnharmonicKeyOption(selectedDisplayKey);
-	const effectiveSelectedDisplayKey = getEffectiveKeyName(selectedDisplayKey, currentPayload);
+/**
+ * Renders a playable and editable music embed for keyboard or staff notation.
+ *
+ * @extends {Component<MusicEmbedViewProps, MusicEmbedViewState>}
+ */
+export default class MusicEmbedView extends Component {
+	static contextType = MusicNotebookContext;
 
-	useEffect(() => () => {
-		stopPlayback();
-	}, []);
+	/**
+	 * Creates the local embed view state.
+	 *
+	 * @param {MusicEmbedViewProps} props - Initial component props.
+	 */
+	constructor(props) {
+		super(props);
 
-	return (
-		<div className="music-keyboard-embed-content">
-			<div className="music-embed-toolbar" aria-label="Music object actions">
-				<button
-					className="music-keyboard-play-button"
-					disabled={playbackState === 'loading'}
-					onClick={handlePlaybackButtonClick}
-					type="button"
-				>
-					{playbackState === 'playing' ? (
-						<LocaleString fallback="Stop" phrase="music.controls.stop" />
-					) : (
-						<LocaleString fallback="Play" phrase="music.controls.play" />
-					)}
-				</button>
-				<button
-					className="music-keyboard-edit-button"
-					onClick={(event) => {
-						event.stopPropagation();
-						setDialogOpen(true);
-					}}
-					type="button"
-				>
-					<LocaleString fallback="Edit" phrase="music.controls.edit" />
-				</button>
-			</div>
-			<MusicPreview payload={currentPayload} />
-			<button
-				className="music-embed-resize-handle"
-				onClick={(event) => event.stopPropagation()}
-				onKeyDown={handleResizeKeyDown}
-				onPointerDown={handleResizePointerDown}
-				type="button"
-			>
-				<span className="music-embed-resize-label">
-					<LocaleString fallback="Resize music object" phrase="music.controls.resize_object" />
-				</span>
-			</button>
-			<Dialog
-				className="music-keyboard-dialog"
-				fullWidth
-				maxWidth="sm"
-				onClose={() => setDialogOpen(false)}
-				open={dialogOpen}
-			>
-				<DialogTitle>{currentPayload.label}</DialogTitle>
-				<DialogContent>
-					<div className="music-keyboard-editor-dialog">
-						<label className="music-keyboard-edit-mode">
-							<span><LocaleString fallback="Edit mode" phrase="music.controls.edit_mode" /></span>
-							<select
-								onChange={(event) => updateEditMode(event.target.value)}
-								onInput={(event) => updateEditMode(event.target.value)}
-								value={editMode}
-							>
-								<option value="none">
-									<LocaleString fallback="None" phrase="music.edit_mode.none" />
-								</option>
-								<option value="chord">
-									<LocaleString fallback="Chord" phrase="music.edit_mode.chord" />
-								</option>
-								<option value="scale">
-									<LocaleString fallback="Scale" phrase="music.edit_mode.scale" />
-								</option>
-								<option value="progression">
-									<LocaleString fallback="Chord degree" phrase="music.edit_mode.chord_degree" />
-								</option>
-							</select>
-						</label>
-						<div className={enharmonicDisplayKey ? 'music-key-control-row' : 'music-key-control-row music-key-control-row-single'}>
-							<KeyPicker
-								className="music-display-key-field"
-								label={{ fallback: 'Key', phrase: 'music.controls.key' }}
-								onKeyChange={updateDisplayKey}
-								value={displayKeyInput}
-							/>
-							{editMode === 'chord' || editMode === 'progression' ? (
-								renderKeyModeField(
-									displayKeyMode,
-									updateDisplayKeyMode,
-									'music-display-key-mode-field',
-								)
-							) : null}
-							{enharmonicDisplayKey ? (
-								<label className="music-key-enharmonic-option music-display-options-field-checkbox">
-									<input
-										checked={isUsingEnharmonicKey(currentPayload)}
-										onChange={(event) => updateUseEnharmonicKey(event.target.checked)}
-										type="checkbox"
-									/>
-									<span>
-										<LocaleString
-											fallback={`Use ${enharmonicDisplayKey}`}
-											phrase={{
-												phrase: 'music.controls.use_enharmonic_key',
-												replacements: { key: enharmonicDisplayKey },
-											}}
-										/>
-									</span>
-								</label>
-							) : null}
-						</div>
-						{editMode === 'chord' ? (
-							<ChordBuilder
-								initialArpeggiate={currentPayload.arpeggiate === true}
-								initialInversion={currentPayload.inversion || 0}
-								initialValue={getInitialChordValue(currentPayload)}
-								label={{ fallback: 'Chord', phrase: 'music.edit_mode.chord' }}
-								onChordChange={updateChordFromBuilder}
-							/>
-						) : null}
-						{editMode === 'scale' ? (
-							<ScaleBuilder
-								initialKey={effectiveSelectedDisplayKey}
-								label={{ fallback: 'Scale', phrase: 'music.edit_mode.scale' }}
-								onScaleChange={updateScaleFromBuilder}
-								selectedKey={effectiveSelectedDisplayKey}
-								showKey={false}
-							/>
-						) : null}
-						{editMode === 'progression' ? (
-							<ProgressionBuilder
-								initialArpeggiate={currentPayload.arpeggiate === true}
-								initialKey={effectiveSelectedDisplayKey}
-								initialKeyMode={displayKeyMode}
-								label={{ fallback: 'Chord degree', phrase: 'music.edit_mode.chord_degree' }}
-								onProgressionChange={updateProgressionFromBuilder}
-								selectedKey={effectiveSelectedDisplayKey}
-								selectedKeyMode={displayKeyMode}
-								showKey={false}
-							/>
-						) : null}
-						<MusicPreview payload={currentPayload} />
-						<DisplayOptions
-							payload={currentPayload}
-							onDisplayModeChange={updateDisplayMode}
-							onKeyboardShowNoteNamesChange={updateKeyboardShowNoteNames}
-							onStaffOctaveChange={updateStaffOctave}
-						/>
-					</div>
-				</DialogContent>
-				<DialogActions>
-					<Button onClick={() => setDialogOpen(false)}>
-						<LocaleString fallback="Done" phrase="music.controls.done" />
-					</Button>
-				</DialogActions>
-			</Dialog>
-		</div>
-	);
+		this.state = {
+			currentPayload: props.payload,
+			dialogOpen: props.initialDialogOpen === true,
+			displayKeyInput: props.payload.displayKey || getPayloadKey(props.payload) || 'C',
+			displayKeyMode: props.payload.displayKeyMode || 'major',
+			editMode: getInitialEditMode(props.initialEditMode),
+			playbackState: 'idle',
+		};
+		this.playback = {
+			timer: null,
+			token: 0,
+		};
+		this.playerService = null;
+	}
 
-	async function handlePlaybackButtonClick(event) {
+	/**
+	 * Stops playback when the embed view is removed.
+	 *
+	 * @returns {void}
+	 */
+	componentWillUnmount() {
+		this.stopPlayback();
+	}
+
+	/**
+	 * Gets the selected display key for the current payload.
+	 *
+	 * @returns {string}
+	 */
+	getSelectedDisplayKey() {
+		const { currentPayload, displayKeyInput } = this.state;
+
+		return normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C';
+	}
+
+	/**
+	 * Opens the music-object edit dialog.
+	 *
+	 * @param {React.MouseEvent<HTMLElement>} event - Triggering click event.
+	 * @returns {void}
+	 */
+	handleEditButtonClick = (event) => {
+		event.stopPropagation();
+		this.setState({ dialogOpen: true });
+	};
+
+	/**
+	 * Closes the music-object edit dialog.
+	 *
+	 * @returns {void}
+	 */
+	handleDialogClose = () => {
+		this.setState({ dialogOpen: false });
+	};
+
+	/**
+	 * Handles playback button activation.
+	 *
+	 * @param {React.MouseEvent<HTMLElement>} event - Triggering click event.
+	 * @returns {Promise<void>}
+	 */
+	handlePlaybackButtonClick = async (event) => {
 		event.stopPropagation();
 
-		if (playbackState === 'playing') {
-			stopPlayback();
-			setPlaybackState('idle');
+		if (this.state.playbackState === 'playing') {
+			this.stopPlayback();
+			this.setState({ playbackState: 'idle' });
 			return;
 		}
 
-		if (playbackState === 'loading') {
+		if (this.state.playbackState === 'loading') {
 			return;
 		}
 
-		setPlaybackState('loading');
-		stopPlayback();
+		this.setState({ playbackState: 'loading' });
+		this.stopPlayback();
 
-		const token = playbackRef.current.token + 1;
-		playbackRef.current.token = token;
+		const playerService = this.getPlayerService();
+
+		if (!playerService) {
+			console.warn('[MusicEmbedView] Player service is unavailable.');
+			this.setState({ playbackState: 'idle' });
+			return;
+		}
+
+		const token = this.playback.token + 1;
+		this.playback.token = token;
 
 		try {
-			const playback = await createMusicXmlPlayback(currentPayload);
+			const playback = await playerService.play(this.state.currentPayload);
 
-			if (playbackRef.current.token !== token) {
-				destroyMusicXmlPlayback(playback);
+			if (this.playback.token !== token) {
 				return;
 			}
 
-			playbackRef.current.container = playback.container;
-			playbackRef.current.player = playback.player;
-			playback.player.play();
-			setPlaybackState('playing');
+			this.setState({ playbackState: 'playing' });
 
-			playbackRef.current.timer = window.setTimeout(() => {
-				if (playbackRef.current.token === token) {
-					stopPlayback();
-					setPlaybackState('idle');
+			this.playback.timer = window.setTimeout(() => {
+				if (this.playback.token === token) {
+					this.stopPlayback();
+					this.setState({ playbackState: 'idle' });
 				}
-			}, Math.max(playback.player.duration || 0, 250) + 250);
+			}, Math.max(playback.duration || 0, 250) + 250);
 		} catch (error) {
 			console.warn('[MusicEmbedView] MusicXML playback failed.', error);
-			stopPlayback();
-			setPlaybackState('idle');
+			this.stopPlayback();
+			this.setState({ playbackState: 'idle' });
 		}
+	};
+
+	/**
+	 * Stops active playback and removes playback resources.
+	 *
+	 * @returns {void}
+	 */
+	stopPlayback() {
+		this.playback.token += 1;
+
+		if (this.playback.timer) {
+			window.clearTimeout(this.playback.timer);
+			this.playback.timer = null;
+		}
+
+		this.getPlayerService()?.stop?.();
 	}
 
-	function stopPlayback() {
-		playbackRef.current.token += 1;
-
-		if (playbackRef.current.timer) {
-			window.clearTimeout(playbackRef.current.timer);
-			playbackRef.current.timer = null;
+	/**
+	 * Gets the shared player service from the registry.
+	 *
+	 * @returns {PlayerService | null}
+	 */
+	getPlayerService() {
+		if (!this.playerService) {
+			this.playerService = this.context?.registry?.subscribe?.('player') || null;
 		}
 
-		if (playbackRef.current.player) {
-			destroyMusicXmlPlayback({
-				container: playbackRef.current.container,
-				player: playbackRef.current.player,
-			});
-			playbackRef.current.player = null;
-		}
-
-		playbackRef.current.container = null;
+		return this.playerService;
 	}
 
-	function updateChordFromBuilder(result) {
+	/**
+	 * Applies a valid chord builder result to the current embed.
+	 *
+	 * @param {MusicBuildResult} result
+	 * @returns {void}
+	 */
+	updateChordFromBuilder = (result) => {
 		if (!result.isValid || !result.payload) {
 			return;
 		}
 
-		applyKeyboardPayload({
+		this.applyKeyboardPayload({
 			...result.payload,
-			displayKey: selectedDisplayKey,
-			displayKeyMode,
+			displayKey: this.getSelectedDisplayKey(),
+			displayKeyMode: this.state.displayKeyMode,
 		});
-	}
+	};
 
-	function updateScaleFromBuilder(result) {
+	/**
+	 * Applies a valid scale builder result to the current embed.
+	 *
+	 * @param {MusicBuildResult} result
+	 * @returns {void}
+	 */
+	updateScaleFromBuilder = (result) => {
 		if (!result.isValid || !result.payload) {
 			return;
 		}
 
-		applyKeyboardPayload({
+		this.applyKeyboardPayload({
 			...result.payload,
-			displayKey: selectedDisplayKey,
+			displayKey: this.getSelectedDisplayKey(),
 		});
-	}
+	};
 
-	function updateProgressionFromBuilder(result) {
+	/**
+	 * Applies a valid progression builder result to the current embed.
+	 *
+	 * @param {MusicBuildResult} result
+	 * @returns {void}
+	 */
+	updateProgressionFromBuilder = (result) => {
 		if (!result.isValid || !result.payload) {
 			return;
 		}
 
-		applyKeyboardPayload({
+		this.applyKeyboardPayload({
 			...result.payload,
-			displayKey: selectedDisplayKey,
-			displayKeyMode,
+			displayKey: this.getSelectedDisplayKey(),
+			displayKeyMode: this.state.displayKeyMode,
 		});
-	}
+	};
 
-	function updateDisplayMode(displayMode) {
-		applyKeyboardPayload({
+	/**
+	 * Updates the embed display mode.
+	 *
+	 * @param {KeyboardDisplayMode} displayMode
+	 * @returns {void}
+	 */
+	updateDisplayMode = (displayMode) => {
+		const { currentPayload } = this.state;
+
+		this.applyKeyboardPayload({
 			...currentPayload,
 			displayMode,
 			staffOctave: currentPayload.staffOctave ?? 4,
 		});
-	}
+	};
 
-	function updateStaffOctave(staffOctave) {
-		applyKeyboardPayload({
-			...currentPayload,
+	/**
+	 * Updates the staff octave used by notation preview.
+	 *
+	 * @param {string | number} staffOctave
+	 * @returns {void}
+	 */
+	updateStaffOctave = (staffOctave) => {
+		this.applyKeyboardPayload({
+			...this.state.currentPayload,
 			staffOctave: normalizeStaffOctave(staffOctave),
 		});
-	}
+	};
 
-	function updateUseEnharmonicKey(useEnharmonicKey) {
+	/**
+	 * Toggles whether the enharmonic display key should be used.
+	 *
+	 * @param {boolean} useEnharmonicKey
+	 * @returns {void}
+	 */
+	updateUseEnharmonicKey = (useEnharmonicKey) => {
+		const { currentPayload, displayKeyInput, displayKeyMode, editMode } = this.state;
 		const key = normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C';
 		const effectiveKey = getEffectiveKeyName(key, {
 			...currentPayload,
 			useEnharmonicKey,
 		});
 
-		applyKeyboardPayload({
+		this.applyKeyboardPayload({
 			...currentPayload,
-			label: editMode === 'none' ? getDisplayKeyLabel(effectiveKey, editMode) : currentPayload.label,
+			label: editMode === 'none' ? getDisplayKeyLabel(effectiveKey, editMode, displayKeyMode) : currentPayload.label,
 			useEnharmonicKey,
 		});
-	}
+	};
 
-	function updateKeyboardShowNoteNames(keyboardShowNoteNames) {
-		applyKeyboardPayload({
-			...currentPayload,
+	/**
+	 * Toggles keyboard note-name labels.
+	 *
+	 * @param {boolean} keyboardShowNoteNames
+	 * @returns {void}
+	 */
+	updateKeyboardShowNoteNames = (keyboardShowNoteNames) => {
+		this.applyKeyboardPayload({
+			...this.state.currentPayload,
 			keyboardShowNoteNames,
 		});
-	}
+	};
 
-	function updateEmbedSize(width, height) {
-		applyKeyboardPayload({
-			...currentPayload,
+	/**
+	 * Updates the persisted embed dimensions.
+	 *
+	 * @param {number} width
+	 * @param {number} height
+	 * @returns {void}
+	 */
+	updateEmbedSize(width, height) {
+		this.applyKeyboardPayload({
+			...this.state.currentPayload,
 			width: clampEmbedWidth(width),
 			height: clampEmbedHeight(height),
 		});
 	}
 
-	function handleResizePointerDown(event) {
+	/**
+	 * Starts pointer-driven embed resizing.
+	 *
+	 * @param {React.PointerEvent<HTMLElement>} event
+	 * @returns {void}
+	 */
+	handleResizePointerDown = (event) => {
 		event.preventDefault();
 		event.stopPropagation();
 
+		const { currentPayload } = this.state;
 		const startX = event.clientX;
 		const startY = event.clientY;
 		const startWidth = currentPayload.width || 456;
@@ -426,24 +331,41 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 			// Synthetic pointer events in tests may not have a browser-tracked pointer.
 		}
 
-		function handlePointerMove(pointerEvent) {
+		/**
+		 * Applies pointer movement to the embed size.
+		 *
+		 * @param {PointerEvent} pointerEvent
+		 * @returns {void}
+		 */
+		const handlePointerMove = (pointerEvent) => {
 			pointerEvent.preventDefault();
-			updateEmbedSize(
+			this.updateEmbedSize(
 				startWidth + pointerEvent.clientX - startX,
 				startHeight + pointerEvent.clientY - startY,
 			);
-		}
+		};
 
-		function handlePointerUp() {
+		/**
+		 * Stops pointer-driven embed resizing.
+		 *
+		 * @returns {void}
+		 */
+		const handlePointerUp = () => {
 			document.removeEventListener('pointermove', handlePointerMove);
 			document.removeEventListener('pointerup', handlePointerUp);
-		}
+		};
 
 		document.addEventListener('pointermove', handlePointerMove);
 		document.addEventListener('pointerup', handlePointerUp);
-	}
+	};
 
-	function handleResizeKeyDown(event) {
+	/**
+	 * Applies keyboard-driven resizing from the resize handle.
+	 *
+	 * @param {React.KeyboardEvent<HTMLElement>} event
+	 * @returns {void}
+	 */
+	handleResizeKeyDown = (event) => {
 		const step = event.shiftKey ? RESIZE_KEYBOARD_LARGE_STEP : RESIZE_KEYBOARD_STEP;
 		const horizontalStep = event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0;
 		const verticalStep = event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0;
@@ -455,73 +377,109 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 		event.preventDefault();
 		event.stopPropagation();
 
-		updateEmbedSize(
-			(currentPayload.width || 456) + horizontalStep,
-			(currentPayload.height || 266) + verticalStep,
+		this.updateEmbedSize(
+			(this.state.currentPayload.width || 456) + horizontalStep,
+			(this.state.currentPayload.height || 266) + verticalStep,
 		);
-	}
+	};
 
-	function updateDisplayKey(displayKey) {
-		setDisplayKeyInput(displayKey);
+	/**
+	 * Updates the display key and rebuilds chord payloads when possible.
+	 *
+	 * @param {string} displayKey
+	 * @returns {void}
+	 */
+	updateDisplayKey = (displayKey) => {
+		const { currentPayload, displayKeyMode, editMode } = this.state;
 
 		const key = normalizeKeyName(displayKey);
 		const effectiveKey = getEffectiveKeyName(key, currentPayload);
 
-		applyKeyboardPayload({
+		this.setState({ displayKeyInput: displayKey });
+		this.applyKeyboardPayload({
 			...currentPayload,
 			displayKey: key,
-			label: key ? getDisplayKeyLabel(effectiveKey, editMode) : currentPayload.label,
+			label: key ? getDisplayKeyLabel(effectiveKey, editMode, displayKeyMode) : currentPayload.label,
 			notes: editMode === 'none' ? [] : currentPayload.notes,
 		});
-	}
+	};
 
-	function updateDisplayKeyMode(keyMode) {
+	/**
+	 * Updates the display key mode and rebuilds numeric progression payloads.
+	 *
+	 * @param {KeyMode} keyMode
+	 * @returns {void}
+	 */
+	updateDisplayKeyMode = (keyMode) => {
+		const { currentPayload, displayKeyInput, editMode } = this.state;
 		const nextKeyMode = keyMode === 'minor' ? 'minor' : 'major';
 
-		setDisplayKeyMode(nextKeyMode);
+		this.setState({ displayKeyMode: nextKeyMode });
 
 		if (editMode === 'progression') {
 			const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
 
-			applyKeyboardPayload({
+			this.applyKeyboardPayload({
 				...buildKeyboardProgressionPayload({
 					key,
 					keyMode: nextKeyMode,
 					romanNumeral: getInitialProgressionValue(currentPayload),
 				}).payload,
-				displayKey: selectedDisplayKey,
+				displayKey: this.getSelectedDisplayKey(),
 			});
 			return;
 		}
 
-		applyKeyboardPayload({
+		if (editMode === 'none') {
+			const key = normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C';
+			const effectiveKey = getEffectiveKeyName(key, currentPayload);
+
+			this.applyKeyboardPayload({
+				...currentPayload,
+				displayKey: key,
+				displayKeyMode: nextKeyMode,
+				label: getDisplayKeyLabel(effectiveKey, 'none', nextKeyMode),
+				notes: [],
+			});
+			return;
+		}
+
+		this.applyKeyboardPayload({
 			...currentPayload,
 			displayKeyMode: nextKeyMode,
 		});
-	}
+	};
 
-	function updateEditMode(nextEditMode) {
-		setEditMode(nextEditMode);
+	/**
+	 * Switches the active edit mode and initializes mode-specific payload data.
+	 *
+	 * @param {MusicEmbedEditMode} nextEditMode
+	 * @returns {void}
+	 */
+	updateEditMode = (nextEditMode) => {
+		const { currentPayload, displayKeyInput, displayKeyMode } = this.state;
+
+		this.setState({ editMode: nextEditMode });
 
 		if (nextEditMode === 'scale') {
 			const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
 
-			applyKeyboardPayload({
+			this.applyKeyboardPayload({
 				...buildKeyboardScalePayload({ key }).payload,
-				displayKey: selectedDisplayKey,
+				displayKey: this.getSelectedDisplayKey(),
 			});
 		}
 
 		if (nextEditMode === 'chord') {
-			applyKeyboardPayload(buildKeyboardChordPayload(getInitialChordValue(currentPayload)).payload);
+			this.applyKeyboardPayload(buildKeyboardChordPayload(getInitialChordValue(currentPayload)).payload);
 		}
 
 		if (nextEditMode === 'progression') {
 			const key = getEffectiveKeyName(normalizeKeyName(displayKeyInput) || getPayloadKey(currentPayload) || 'C', currentPayload);
 
-			applyKeyboardPayload({
+			this.applyKeyboardPayload({
 				...buildKeyboardProgressionPayload({ key, keyMode: displayKeyMode }).payload,
-				displayKey: selectedDisplayKey,
+				displayKey: this.getSelectedDisplayKey(),
 			});
 		}
 
@@ -529,23 +487,29 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 			const key = normalizeKeyName(currentPayload.displayKey || getPayloadKey(currentPayload)) || 'C';
 			const effectiveKey = getEffectiveKeyName(key, currentPayload);
 
-			setDisplayKeyInput(key);
-			applyKeyboardPayload({
+			this.setState({ displayKeyInput: key });
+			this.applyKeyboardPayload({
 				...currentPayload,
 				displayKey: key,
-				label: getDisplayKeyLabel(effectiveKey, 'none'),
+				label: getDisplayKeyLabel(effectiveKey, 'none', displayKeyMode),
 				notes: [],
 			});
 		}
-	}
+	};
 
-	function applyKeyboardPayload(payload) {
+	/**
+	 * Merges and publishes an updated keyboard payload.
+	 *
+	 * @param {Partial<KeyboardPayload> | KeyboardPayload | null} payload
+	 * @returns {void}
+	 */
+	applyKeyboardPayload(payload) {
 		if (!payload) {
 			return;
 		}
 
 		const nextPayload = {
-			...currentPayload,
+			...this.state.currentPayload,
 			...payload,
 			notes: [...payload.notes],
 		};
@@ -606,11 +570,137 @@ export default function MusicEmbedView({ initialDialogOpen = false, payload, onP
 			delete nextPayload.displayKey;
 		}
 
-		setCurrentPayload(nextPayload);
-		onPayloadChange?.(nextPayload);
+		this.setState({ currentPayload: nextPayload });
+		this.props.onPayloadChange?.(nextPayload);
+	}
+
+	/**
+	 * Renders the music object toolbar.
+	 *
+	 * @returns {React.ReactElement}
+	 */
+	renderToolbar() {
+		const { playbackState } = this.state;
+
+		return (
+			<div className="music-embed-toolbar" aria-label="Music object actions">
+				<button
+					className="music-keyboard-play-button"
+					disabled={playbackState === 'loading'}
+					onClick={this.handlePlaybackButtonClick}
+					type="button"
+				>
+					{playbackState === 'playing' ? (
+						<LocaleString fallback="Stop" phrase="music.controls.stop" />
+					) : (
+						<LocaleString fallback="Play" phrase="music.controls.play" />
+					)}
+				</button>
+				<button
+					className="music-keyboard-edit-button"
+					onClick={this.handleEditButtonClick}
+					type="button"
+				>
+					<LocaleString fallback="Edit" phrase="music.controls.edit" />
+				</button>
+			</div>
+		);
+	}
+
+	/**
+	 * Renders the resize handle.
+	 *
+	 * @returns {React.ReactElement}
+	 */
+	renderResizeHandle() {
+		return (
+			<button
+				className="music-embed-resize-handle"
+				onClick={(event) => event.stopPropagation()}
+				onKeyDown={this.handleResizeKeyDown}
+				onPointerDown={this.handleResizePointerDown}
+				type="button"
+			>
+				<span className="music-embed-resize-label">
+					<LocaleString fallback="Resize music object" phrase="music.controls.resize_object" />
+				</span>
+			</button>
+		);
+	}
+
+	/**
+	 * Renders the music-object edit dialog.
+	 *
+	 * @returns {React.ReactElement}
+	 */
+	renderDialog() {
+		const {
+			currentPayload,
+			dialogOpen,
+			displayKeyInput,
+			displayKeyMode,
+			editMode,
+		} = this.state;
+		const selectedDisplayKey = this.getSelectedDisplayKey();
+		const enharmonicDisplayKey = getEnharmonicKeyOption(selectedDisplayKey);
+		const effectiveSelectedDisplayKey = getEffectiveKeyName(selectedDisplayKey, currentPayload);
+
+		return (
+			<MusicEmbedDialog
+				currentPayload={currentPayload}
+				displayKeyInput={displayKeyInput}
+				displayKeyMode={displayKeyMode}
+				editMode={editMode}
+				effectiveSelectedDisplayKey={effectiveSelectedDisplayKey}
+				enharmonicDisplayKey={enharmonicDisplayKey}
+				initialChordValue={getInitialChordValue(currentPayload)}
+				initialProgressionValue={getInitialProgressionValue(currentPayload)}
+				onChordChange={this.updateChordFromBuilder}
+				onClose={this.handleDialogClose}
+				onDisplayKeyChange={this.updateDisplayKey}
+				onDisplayKeyModeChange={this.updateDisplayKeyMode}
+				onEditModeChange={this.updateEditMode}
+				onProgressionChange={this.updateProgressionFromBuilder}
+				onScaleChange={this.updateScaleFromBuilder}
+				onUseEnharmonicKeyChange={this.updateUseEnharmonicKey}
+				open={dialogOpen}
+				useEnharmonicKey={isUsingEnharmonicKey(currentPayload)}
+			>
+				<MusicDisplayOptions
+					payload={currentPayload}
+					onDisplayModeChange={this.updateDisplayMode}
+					onKeyboardShowNoteNamesChange={this.updateKeyboardShowNoteNames}
+					onStaffOctaveChange={this.updateStaffOctave}
+				/>
+			</MusicEmbedDialog>
+		);
+	}
+
+	/**
+	 * Renders the playable and editable music embed.
+	 *
+	 * @returns {React.ReactElement}
+	 */
+	render() {
+		const { currentPayload } = this.state;
+
+		return (
+			<div className="music-keyboard-embed-content">
+				{this.renderToolbar()}
+				<MusicPreview payload={currentPayload} />
+				{this.renderResizeHandle()}
+				{this.renderDialog()}
+			</div>
+		);
 	}
 }
 
+/**
+ * Clamps a proposed embed width to supported bounds.
+ *
+ * @param {number} width
+ * @returns {number}
+ */
 function clampEmbedWidth(width) {
 	const numericWidth = Number(width);
 
@@ -621,6 +711,12 @@ function clampEmbedWidth(width) {
 	return Math.min(Math.max(Math.round(numericWidth), EMBED_MIN_WIDTH), EMBED_MAX_WIDTH);
 }
 
+/**
+ * Clamps a proposed embed height to supported bounds.
+ *
+ * @param {number} height
+ * @returns {number}
+ */
 function clampEmbedHeight(height) {
 	const numericHeight = Number(height);
 
@@ -631,284 +727,13 @@ function clampEmbedHeight(height) {
 	return Math.min(Math.max(Math.round(numericHeight), EMBED_MIN_HEIGHT), EMBED_MAX_HEIGHT);
 }
 
-function MusicPreview({ payload }) {
-	return payload.displayMode === 'staff'
-		? <StaffPreview payload={payload} />
-		: <KeyboardPreview payload={payload} />;
-}
 
-function DisplayOptions({
-	payload,
-	onDisplayModeChange,
-	onKeyboardShowNoteNamesChange,
-	onStaffOctaveChange,
-}) {
-	const displayMode = payload.displayMode || 'keyboard';
-
-	return (
-		<div className="music-display-options">
-			<label className="music-display-options-field">
-				<span><LocaleString fallback="Display" phrase="music.controls.display" /></span>
-				<select
-					onChange={(event) => onDisplayModeChange(event.target.value)}
-					onInput={(event) => onDisplayModeChange(event.target.value)}
-					value={displayMode}
-				>
-					<option value="keyboard">
-						<LocaleString fallback="Keyboard" phrase="music.display.keyboard" />
-					</option>
-					<option value="staff">
-						<LocaleString fallback="Staff" phrase="music.display.staff" />
-					</option>
-				</select>
-			</label>
-			{displayMode === 'staff' ? (
-				<label className="music-display-options-field">
-					<span><LocaleString fallback="Octave" phrase="music.controls.octave" /></span>
-					<input
-						max="8"
-						min="0"
-						onChange={(event) => onStaffOctaveChange(event.target.value)}
-						type="number"
-						value={payload.staffOctave ?? 4}
-					/>
-				</label>
-			) : null}
-			{displayMode === 'keyboard' ? (
-				<label className="music-display-options-field music-display-options-field-checkbox">
-					<input
-						checked={payload.keyboardShowNoteNames !== false}
-						onChange={(event) => onKeyboardShowNoteNamesChange(event.target.checked)}
-						type="checkbox"
-					/>
-					<span><LocaleString fallback="Show note names" phrase="music.controls.show_note_names" /></span>
-				</label>
-			) : null}
-		</div>
-	);
-}
-
-async function createMusicXmlPlayback(payload) {
-	const staffNotes = getStaffNotes(payload.highlightedNotes || payload.notes, payload.staffOctave ?? 4, payload);
-	const musicXml = buildMusicXml(payload, staffNotes);
-	const container = document.createElement('div');
-
-	container.className = 'music-xml-playback-host';
-	document.body.appendChild(container);
-
-	try {
-		const { createMusicXmlPlayer } = await load('musicxml-player');
-		const player = await createMusicXmlPlayer({
-			container,
-			followCursor: false,
-			horizontal: true,
-			musicXml,
-			renderer: createNoopMusicXmlRenderer(),
-			repeat: 0,
-		});
-
-		return { container, player };
-	} catch (error) {
-		container.remove();
-		throw error;
-	}
-}
-
-function destroyMusicXmlPlayback(playback) {
-	try {
-		playback?.player?.destroy?.();
-	} finally {
-		playback?.container?.remove?.();
-	}
-}
-
-function createNoopMusicXmlRenderer() {
-	return {
-		destroy() {},
-		initialize() {
-			return Promise.resolve();
-		},
-		moveTo() {},
-		onEvent() {},
-		onResize() {},
-		version: 'music-notebook-noop-renderer',
-	};
-}
-
-function StaffPreview({ payload }) {
-	const containerRef = useRef(null);
-	const staffNotes = useMemo(
-		() => getStaffNotes(payload.highlightedNotes || payload.notes, payload.staffOctave ?? 4, payload),
-		[payload.highlightedNotes, payload.notes, payload.staffOctave, payload],
-	);
-	const musicXml = useMemo(
-		() => buildMusicXml(payload, staffNotes),
-		[payload, staffNotes],
-	);
-
-	useEffect(() => {
-		const container = containerRef.current;
-		let cancelled = false;
-
-		if (!container) {
-			return undefined;
-		}
-
-		container.replaceChildren();
-
-		const osmd = new OpenSheetMusicDisplay(container, {
-			autoResize: false,
-			backend: 'svg',
-			drawPartNames: false,
-			drawTitle: false,
-			drawTimeSignatures: false,
-			renderSingleHorizontalStaffline: false,
-		});
-
-		osmd.load(musicXml).then(() => {
-			if (cancelled) {
-				return;
-			}
-
-			osmd.zoom = 1.35;
-			osmd.render();
-			fitOsmdSvgToContent(container);
-		}).catch(() => {
-			if (!cancelled) {
-				container.textContent = '';
-			}
-		});
-
-		return () => {
-			cancelled = true;
-			container.replaceChildren();
-		};
-	}, [musicXml]);
-
-	return (
-		<div className="music-staff-preview" aria-hidden="true">
-			<div ref={containerRef} className="music-staff-osmd" />
-		</div>
-	);
-}
-
-function fitOsmdSvgToContent(container) {
-	const svg = container.querySelector('svg');
-
-	if (!svg) {
-		return;
-	}
-
-	const bounds = Array.from(svg.querySelectorAll('path, line, polyline, polygon, circle, ellipse, text'))
-		.map((element) => getSvgElementBounds(element))
-		.filter(Boolean)
-		.reduce((combinedBounds, bounds) => combineSvgBounds(combinedBounds, bounds), null);
-
-	if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
-		return;
-	}
-
-	const padding = 10;
-	const viewBox = [
-		bounds.x - padding,
-		bounds.y - padding,
-		bounds.width + (padding * 2),
-		bounds.height + (padding * 2),
-	].join(' ');
-
-	svg.setAttribute('viewBox', viewBox);
-	svg.removeAttribute('width');
-	svg.removeAttribute('height');
-	svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
-}
-
-function getSvgElementBounds(element) {
-	try {
-		const bounds = element.getBBox();
-
-		if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || bounds.width <= 0 || bounds.height <= 0) {
-			return null;
-		}
-
-		return bounds;
-	} catch {
-		return null;
-	}
-}
-
-function combineSvgBounds(firstBounds, secondBounds) {
-	if (!firstBounds) {
-		return secondBounds;
-	}
-
-	const x = Math.min(firstBounds.x, secondBounds.x);
-	const y = Math.min(firstBounds.y, secondBounds.y);
-	const right = Math.max(firstBounds.x + firstBounds.width, secondBounds.x + secondBounds.width);
-	const bottom = Math.max(firstBounds.y + firstBounds.height, secondBounds.y + secondBounds.height);
-
-	return {
-		x,
-		y,
-		width: right - x,
-		height: bottom - y,
-	};
-}
-
-export function buildMusicXml(payload, staffNotes) {
-	const sequentialNotes = !isChordPayload(payload) || payload.arpeggiate === true;
-	const clef = getStaffClef(staffNotes);
-	const keyFifths = getPayloadKeyFifths(payload);
-	const notesXml = staffNotes.map((note, index) => buildMusicXmlNote(note, {
-		keyFifths,
-		isChordTone: !sequentialNotes && index > 0,
-		sequentialNotes,
-	})).join('\n');
-
-	return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
-<score-partwise version="3.1">
-  <part-list>
-    <score-part id="P1">
-      <part-name>Music object</part-name>
-    </score-part>
-  </part-list>
-  <part id="P1">
-    <measure number="1">
-      <attributes>
-        <divisions>1</divisions>
-        <key>
-          <fifths>${keyFifths}</fifths>
-        </key>
-        <clef>
-          <sign>${clef === 'bass' ? 'F' : 'G'}</sign>
-          <line>${clef === 'bass' ? '4' : '2'}</line>
-        </clef>
-      </attributes>
-      ${notesXml}
-    </measure>
-  </part>
-</score-partwise>`;
-}
-
-function buildMusicXmlNote(note, { isChordTone, keyFifths, sequentialNotes }) {
-	const noteType = sequentialNotes ? 'quarter' : 'whole';
-	const duration = sequentialNotes ? 1 : 4;
-	const alterXml = note.alter ? `\n        <alter>${note.alter}</alter>` : '';
-	const accidentalXml = note.accidentalName && note.alter !== getKeySignatureAlter(note.step, keyFifths)
-		? `\n      <accidental>${note.accidentalName}</accidental>`
-		: '';
-	const chordXml = isChordTone ? '\n      <chord/>' : '';
-
-	return `      <note>${chordXml}
-      <pitch>
-        <step>${note.step}</step>${alterXml}
-        <octave>${note.octave}</octave>
-      </pitch>
-      <duration>${duration}</duration>
-      <type>${noteType}</type>${accidentalXml}
-    </note>`;
-}
-
+/**
+ * Gets the initial chord value for the chord editor.
+ *
+ * @param {KeyboardPayload} payload
+ * @returns {string}
+ */
 function getInitialChordValue(payload) {
 	if (payload.sourceChordSymbol) {
 		return payload.sourceChordSymbol;
@@ -918,9 +743,15 @@ function getInitialChordValue(payload) {
 		return payload.label;
 	}
 
-	return 'Cdim7';
+	return 'C';
 }
 
+/**
+ * Gets the initial progression value for the progression editor.
+ *
+ * @param {KeyboardPayload} payload
+ * @returns {string}
+ */
 function getInitialProgressionValue(payload) {
 	if (payload.progressionInput) {
 		return payload.progressionInput;
@@ -930,794 +761,30 @@ function getInitialProgressionValue(payload) {
 	return match?.[1] || 'I';
 }
 
-function getInitialScaleKey(payload) {
-	const root = payload.rootNote || payload.notes?.[0] || 'C4';
-	const match = /^([A-Ga-g](?:#|b)?)/.exec(String(root));
-
-	if (!match) {
-		return 'C';
-	}
-
-	return `${match[1].charAt(0).toUpperCase()}${match[1].slice(1)}`;
+/**
+ * Gets the initial edit panel shown by the dialog.
+ *
+ * @param {MusicEmbedEditMode} editMode
+ * @returns {MusicEmbedEditMode}
+ */
+function getInitialEditMode(editMode) {
+	return editMode === 'none' || editMode === 'scale' || editMode === 'progression'
+		? editMode
+		: 'chord';
 }
 
-function getDisplayKeyLabel(key, editMode) {
-	return editMode === 'none' ? `${key} key` : `${key} major`;
-}
-
-function isChordPayload(payload) {
-	return (payload.notes?.length || 0) > 1
-		&& (
-			Boolean(payload.chordId || payload.progressionId || payload.sourceChordSymbol)
-			|| !payload.scaleId
-		);
-}
-
-function normalizeStaffOctave(staffOctave) {
-	const octave = Number(staffOctave);
-
-	if (!Number.isInteger(octave)) {
-		return 4;
+/**
+ * Builds the visible label for the current display key.
+ *
+ * @param {string} key
+ * @param {MusicEmbedEditMode} editMode
+ * @param {KeyMode} [keyMode='major']
+ * @returns {string}
+ */
+function getDisplayKeyLabel(key, editMode, keyMode = 'major') {
+	if (editMode === 'none') {
+		return `${key} ${keyMode === 'minor' ? 'minor' : 'major'} key`;
 	}
 
-	return Math.min(Math.max(octave, 0), 8);
-}
-
-export function getStaffNotes(notes = [], staffOctave = 4, payload = {}) {
-	const octave = normalizeStaffOctave(staffOctave);
-	const staffKeyLabels = getStaffKeyLabelsByPitchClass(payload);
-
-	return notes
-		.map((note) => {
-			const pitch = getNotePitch(note);
-			const renderedNote = pitch ? `${pitch}${getNoteAccidental(note)}${octave}` : note;
-			const originalMidiNumber = noteToMidi(renderedNote);
-			const staffRenderedNote = getStaffRenderedNote(originalMidiNumber, staffKeyLabels, octave) || renderedNote;
-			const midiNumber = noteToMidi(staffRenderedNote);
-			const noteParts = getMusicXmlNoteParts(staffRenderedNote);
-
-			return midiNumber === null || !noteParts ? null : {
-				...noteParts,
-				midiNumber,
-				note: staffRenderedNote,
-			};
-		})
-		.filter(Boolean);
-}
-
-function getStaffRenderedNote(midiNumber, labelsByPitchClass, fallbackOctave) {
-	if (midiNumber === null || !labelsByPitchClass.size) {
-		return '';
-	}
-
-	const pitchClass = ((midiNumber % 12) + 12) % 12;
-	const label = labelsByPitchClass.get(pitchClass);
-
-	if (!label) {
-		return '';
-	}
-
-	return `${label}${normalizeStaffOctave(fallbackOctave)}`;
-}
-
-function getStaffKeyLabelsByPitchClass(payload) {
-	const signature = getEffectiveStaffKeySignature(payload);
-
-	if (!signature.usesEnharmonicKey || !signature.key) {
-		return new Map();
-	}
-
-	return signature.table === MINOR_KEY_FIFTHS
-		? getMinorKeyLabelsByPitchClass(signature.key)
-		: getMajorKeyLabelsByPitchClass(signature.key);
-}
-
-function getStaffClef(notes = []) {
-	if (!notes.length) {
-		return 'treble';
-	}
-
-	const averageMidi = notes.reduce((sum, note) => sum + note.midiNumber, 0) / notes.length;
-	return averageMidi < noteToMidi('C4') ? 'bass' : 'treble';
-}
-
-function getNotePitch(note) {
-	const match = /^([A-Ga-g])/.exec(String(note || ''));
-	return match ? match[1].toUpperCase() : '';
-}
-
-function getNoteAccidental(note) {
-	const match = /^[A-Ga-g](#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?/u.exec(String(note || ''));
-	return match?.[1] || '';
-}
-
-function getNoteKeyName(note) {
-	const pitch = getNotePitch(note);
-
-	if (!pitch) {
-		return '';
-	}
-
-	return `${pitch}${getAsciiAccidental(getNoteAccidental(note))}`;
-}
-
-function getAsciiAccidental(accidental) {
-	switch (accidental) {
-		case '#':
-		case ACCIDENTAL_SYMBOLS.sharp:
-			return '#';
-		case '##':
-		case 'x':
-		case ACCIDENTAL_SYMBOLS.doubleSharp:
-			return '##';
-		case 'b':
-		case ACCIDENTAL_SYMBOLS.flat:
-			return 'b';
-		case 'bb':
-		case ACCIDENTAL_SYMBOLS.doubleFlat:
-			return 'bb';
-		default:
-			return '';
-	}
-}
-
-function getAccidentalSymbol(note) {
-	const match = /^[A-Ga-g](#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?/u.exec(String(note || ''));
-
-	switch (match?.[1]) {
-		case '#':
-		case ACCIDENTAL_SYMBOLS.sharp:
-			return ACCIDENTAL_SYMBOLS.sharp;
-		case '##':
-		case 'x':
-		case ACCIDENTAL_SYMBOLS.doubleSharp:
-			return ACCIDENTAL_SYMBOLS.doubleSharp;
-		case 'b':
-		case ACCIDENTAL_SYMBOLS.flat:
-			return ACCIDENTAL_SYMBOLS.flat;
-		case 'bb':
-		case ACCIDENTAL_SYMBOLS.doubleFlat:
-			return ACCIDENTAL_SYMBOLS.doubleFlat;
-		case 'n':
-		case ACCIDENTAL_SYMBOLS.natural:
-			return ACCIDENTAL_SYMBOLS.natural;
-		default:
-			return '';
-	}
-}
-
-function getMusicXmlNoteParts(note) {
-	const match = /^([A-Ga-g])(#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?(-?\d+)$/u.exec(String(note || ''));
-
-	if (!match) {
-		return null;
-	}
-
-	const alter = getAccidentalOffset(match[2] || '');
-
-	return {
-		accidentalName: getMusicXmlAccidentalName(match[2] || ''),
-		alter,
-		octave: Number(match[3]),
-		step: match[1].toUpperCase(),
-	};
-}
-
-function getMusicXmlAccidentalName(accidental) {
-	switch (accidental) {
-		case '#':
-		case ACCIDENTAL_SYMBOLS.sharp:
-			return 'sharp';
-		case '##':
-		case 'x':
-		case ACCIDENTAL_SYMBOLS.doubleSharp:
-			return 'double-sharp';
-		case 'b':
-		case ACCIDENTAL_SYMBOLS.flat:
-			return 'flat';
-		case 'bb':
-		case ACCIDENTAL_SYMBOLS.doubleFlat:
-			return 'flat-flat';
-		case 'n':
-		case ACCIDENTAL_SYMBOLS.natural:
-			return 'natural';
-		default:
-			return '';
-	}
-}
-
-function getKeySignatureAlter(step, fifths) {
-	const sharpSteps = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
-	const flatSteps = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
-
-	if (fifths > 0) {
-		return sharpSteps.slice(0, fifths).includes(step) ? 1 : 0;
-	}
-
-	if (fifths < 0) {
-		return flatSteps.slice(0, Math.abs(fifths)).includes(step) ? -1 : 0;
-	}
-
-	return 0;
-}
-
-export function getPayloadKeyFifths(payload) {
-	const signature = getEffectiveStaffKeySignature(payload);
-
-	if (!signature.key) {
-		return 0;
-	}
-
-	return signature.table[signature.key] ?? 0;
-}
-
-function getEffectiveStaffKeySignature(payload) {
-	const signature = getPayloadKeySignature(payload);
-	const rawKey = getPayloadKey(payload);
-
-	return {
-		...signature,
-		usesEnharmonicKey: signature.key !== rawKey && Boolean(getPayloadEnharmonicKeyOption(payload)),
-	};
-}
-
-function getPayloadKeySignature(payload) {
-	const key = getEffectivePayloadKey(payload);
-
-	if (!key) {
-		return { key: '', table: MAJOR_KEY_FIFTHS };
-	}
-
-	if (payload.scaleId && /\bminor\b/i.test(payload.label || '')) {
-		return { key, table: MINOR_KEY_FIFTHS };
-	}
-
-	if (!payload.scaleId && payload.displayKeyMode === 'minor') {
-		return { key, table: MINOR_KEY_FIFTHS };
-	}
-
-	const modeMatch = /\b(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian)\b/i.exec(payload.label || '');
-
-	if (modeMatch) {
-		const mode = modeMatch[1].toLowerCase();
-		const parentKey = getModeParentMajorKey(payload, mode)
-			|| transposePitchClass(key, MODE_PARENT_MAJOR_OFFSETS[mode]);
-		return { key: parentKey, table: MAJOR_KEY_FIFTHS };
-	}
-
-	return { key, table: MAJOR_KEY_FIFTHS };
-}
-
-function getModeParentMajorKey(payload, mode) {
-	const noteIndex = MODE_PARENT_NOTE_INDEX[mode];
-	const noteKey = getNoteKeyName(payload.notes?.[noteIndex]);
-
-	if (noteKey && MAJOR_KEY_FIFTHS[noteKey] !== undefined) {
-		return noteKey;
-	}
-
-	return '';
-}
-
-function getPayloadEnharmonicKeyOption(payload) {
-	return getEnharmonicKeyOption(getPayloadKey(payload));
-}
-
-function getEnharmonicKeyOption(key) {
-	const normalizedKey = normalizeKeyName(key);
-
-	if (!normalizedKey || MAJOR_KEY_FIFTHS[normalizedKey] !== undefined) {
-		return '';
-	}
-
-	return getEnharmonicKeyInSignatureTable(normalizedKey, MAJOR_KEY_FIFTHS);
-}
-
-function getEffectivePayloadKey(payload) {
-	return getEffectiveKeyName(getPayloadKey(payload), payload);
-}
-
-function getEffectiveKeyName(key, payload) {
-	const normalizedKey = normalizeKeyName(key);
-	const enharmonicKey = getEnharmonicKeyOption(normalizedKey);
-
-	return enharmonicKey && isUsingEnharmonicKey(payload) ? enharmonicKey : normalizedKey;
-}
-
-function isUsingEnharmonicKey(payload) {
-	return payload.useEnharmonicKey !== false;
-}
-
-function getEnharmonicKeyInSignatureTable(key, table) {
-	const midiNumber = noteToMidi(`${key}4`);
-
-	if (midiNumber === null) {
-		return '';
-	}
-
-	const pitchClass = ((midiNumber % 12) + 12) % 12;
-
-	return Object.keys(table)
-		.filter((candidateKey) => {
-			const candidateMidiNumber = noteToMidi(`${candidateKey}4`);
-			return candidateMidiNumber !== null
-				&& ((candidateMidiNumber % 12) + 12) % 12 === pitchClass;
-		})
-		.sort((firstKey, secondKey) => Math.abs(table[firstKey]) - Math.abs(table[secondKey]))[0] || '';
-}
-
-function getPayloadKey(payload) {
-	if (payload.displayKey) {
-		return normalizeKeyName(payload.displayKey);
-	}
-
-	if (payload.progressionId) {
-		const match = /^typed:([^:]+)/.exec(payload.progressionId);
-		return normalizeKeyName(match?.[1]);
-	}
-
-	if (payload.scaleId) {
-		const match = /^typed:([A-Ga-g](?:#|b)?)/.exec(payload.scaleId);
-		return normalizeKeyName(match?.[1]);
-	}
-
-	const root = payload.rootNote || payload.notes?.[0] || payload.label;
-	const match = /^([A-Ga-g](?:#|b)?)/.exec(String(root || ''));
-	return normalizeKeyName(match?.[1]);
-}
-
-function normalizeKeyName(key) {
-	if (!key) {
-		return '';
-	}
-
-	return `${key.charAt(0).toUpperCase()}${key.slice(1)}`;
-}
-
-function transposePitchClass(key, semitones) {
-	const midiNumber = noteToMidi(`${key}4`);
-
-	if (midiNumber === null) {
-		return key;
-	}
-
-	const transposedPitchClass = ((midiNumber + semitones) % 12 + 12) % 12;
-	const sharpNames = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
-	return sharpNames[transposedPitchClass];
-}
-
-function KeyboardPreview({ payload }) {
-	const pianoRef = useRef(null);
-	const displayKey = getEffectivePayloadKey(payload);
-	const noteMidiNumbers = useMemo(
-		() => notesToMidi(payload.highlightedNotes || payload.notes),
-		[payload.highlightedNotes, payload.notes],
-	);
-	const noteRange = useMemo(
-		() => getKeyboardNoteRange(noteMidiNumbers, displayKey, payload.staffOctave),
-		[noteMidiNumbers, displayKey, payload.staffOctave],
-	);
-	const firstNote = noteRange.first;
-	const lastNote = noteRange.last;
-	const highlightedNotes = useMemo(
-		() => noteMidiNumbers,
-		[noteMidiNumbers],
-	);
-	const spelledLabelsByMidi = useMemo(
-		() => getSpelledLabelsByMidi(payload.highlightedNotes || payload.notes),
-		[payload.highlightedNotes, payload.notes],
-	);
-	const keyLabelsByMidi = useMemo(
-		() => getKeyLabelsByMidi(firstNote, lastNote, displayKey),
-		[firstNote, lastNote, displayKey],
-	);
-	const rootNote = noteToMidi(payload.rootNote || payload.notes[0]);
-	const hasHighlights = highlightedNotes.length > 0;
-	const showNoteNames = payload.keyboardShowNoteNames !== false;
-	const renderNoteLabel = useCallback(
-		(noteProps) => renderKeyboardNoteLabel(noteProps, spelledLabelsByMidi, keyLabelsByMidi, showNoteNames),
-		[spelledLabelsByMidi, keyLabelsByMidi, showNoteNames],
-	);
-
-	useLayoutEffect(() => {
-		const piano = pianoRef.current;
-
-		if (!piano) {
-			return;
-		}
-
-		piano.querySelectorAll('.ReactPiano__Key').forEach((key) => {
-			key.classList.remove('music-keyboard-key-highlighted', 'music-keyboard-key-root');
-		});
-
-		piano.querySelectorAll('[data-midi-number]').forEach((label) => {
-			const midiNumber = Number(label.dataset.midiNumber);
-			const key = label.closest('.ReactPiano__Key');
-
-			if (!key) {
-				return;
-			}
-
-			if (highlightedNotes.includes(midiNumber)) {
-				key.classList.add('music-keyboard-key-highlighted');
-			}
-
-			if (midiNumber === rootNote) {
-				key.classList.add('music-keyboard-key-root');
-			}
-		});
-	}, [highlightedNotes, rootNote]);
-
-	return (
-			<div
-				ref={pianoRef}
-				className={hasHighlights
-					? 'music-keyboard-embed-piano music-keyboard-embed-has-highlights'
-					: 'music-keyboard-embed-piano'}
-				aria-hidden="true"
-			>
-				<Piano
-					activeNotes={[]}
-					keyWidthToHeight={0.28}
-					noteRange={{ first: firstNote, last: lastNote }}
-					playNote={() => {}}
-					renderNoteLabel={renderNoteLabel}
-					stopNote={() => {}}
-					width={getPreviewWidth(payload.width)}
-				/>
-			</div>
-	);
-}
-
-function getPreviewWidth(width) {
-	const previewWidth = Number(width) - EMBED_HORIZONTAL_CHROME;
-
-	if (!Number.isFinite(previewWidth) || previewWidth <= 0) {
-		return DEFAULT_WIDTH;
-	}
-
-	return previewWidth;
-}
-
-function renderKeyboardNoteLabel({ midiNumber, isAccidental }, spelledLabelsByMidi, keyLabelsByMidi, showNoteNames) {
-	if (!showNoteNames) {
-		return <span data-midi-number={midiNumber} />;
-	}
-
-	const spelledLabel = spelledLabelsByMidi.get(midiNumber);
-	const keyLabel = keyLabelsByMidi.get(midiNumber);
-	const label = spelledLabel || keyLabel || '';
-
-	if (isAccidental) {
-		return (
-			<span data-midi-number={midiNumber}>
-				<span className="music-keyboard-accidental-marker">
-					{renderKeyboardLabelText(label)}
-				</span>
-			</span>
-		);
-	}
-
-	return (
-		<span data-midi-number={midiNumber}>
-			<span className={spelledLabel || keyLabel ? 'music-keyboard-spelled-label' : ''}>
-				{renderKeyboardLabelText(label || MidiNumbers.getAttributes(midiNumber).pitchName)}
-			</span>
-		</span>
-	);
-}
-
-function renderKeyboardLabelText(label) {
-	const labelParts = splitKeyboardLabel(label);
-
-	if (!labelParts) {
-		return label;
-	}
-
-	return (
-		<>
-			<span className="music-keyboard-note-letter">{labelParts.letter}</span>
-			{labelParts.accidental ? (
-				<span className="music-keyboard-note-accidental">{labelParts.accidental}</span>
-			) : null}
-		</>
-	);
-}
-
-function splitKeyboardLabel(label) {
-	const match = /^([A-G])(\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?$/u.exec(String(label || ''));
-
-	if (!match) {
-		return null;
-	}
-
-	return {
-		accidental: match[2] || '',
-		letter: match[1],
-	};
-}
-
-function notesToMidi(notes = []) {
-	return notes
-		.map(noteToMidi)
-		.filter((midiNumber) => midiNumber !== null);
-}
-
-function getKeyLabelsByMidi(firstNote, lastNote, displayKey = '') {
-	const labelsByPitchClass = getMajorKeyLabelsByPitchClass(displayKey);
-	const labelsByMidi = new Map();
-
-	if (!labelsByPitchClass.size) {
-		return labelsByMidi;
-	}
-
-	for (let midiNumber = firstNote; midiNumber <= lastNote; midiNumber += 1) {
-		const pitchClass = ((midiNumber % 12) + 12) % 12;
-		const label = labelsByPitchClass.get(pitchClass);
-
-		if (label) {
-			labelsByMidi.set(midiNumber, label);
-		}
-	}
-
-	return labelsByMidi;
-}
-
-function getMajorKeyLabelsByPitchClass(displayKey = '') {
-	const key = normalizeKeyName(displayKey);
-	const tonicMidi = noteToMidi(`${key}4`);
-	const labelsByPitchClass = new Map();
-
-	if (tonicMidi === null) {
-		return labelsByPitchClass;
-	}
-
-	const letters = getMajorScaleLetters(key.charAt(0));
-	const intervals = [0, 2, 4, 5, 7, 9, 11];
-
-	letters.forEach((letter, index) => {
-		const pitchClass = ((tonicMidi + intervals[index]) % 12 + 12) % 12;
-		const naturalPitchClass = PITCH_OFFSETS[letter];
-		const accidentalOffset = normalizeAccidentalOffset(pitchClass - naturalPitchClass);
-
-		labelsByPitchClass.set(pitchClass, `${letter}${getAccidentalText(accidentalOffset)}`);
-	});
-
-	return labelsByPitchClass;
-}
-
-function getMinorKeyLabelsByPitchClass(displayKey = '') {
-	const key = normalizeKeyName(displayKey);
-	const tonicMidi = noteToMidi(`${key}4`);
-	const labelsByPitchClass = new Map();
-
-	if (tonicMidi === null) {
-		return labelsByPitchClass;
-	}
-
-	const letters = getMajorScaleLetters(key.charAt(0));
-	const intervals = [0, 2, 3, 5, 7, 8, 10];
-
-	letters.forEach((letter, index) => {
-		const pitchClass = ((tonicMidi + intervals[index]) % 12 + 12) % 12;
-		const naturalPitchClass = PITCH_OFFSETS[letter];
-		const accidentalOffset = normalizeAccidentalOffset(pitchClass - naturalPitchClass);
-
-		labelsByPitchClass.set(pitchClass, `${letter}${getAccidentalText(accidentalOffset)}`);
-	});
-
-	return labelsByPitchClass;
-}
-
-function getMajorScaleLetters(tonicLetter) {
-	const letters = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-	const startIndex = letters.indexOf(tonicLetter);
-
-	if (startIndex < 0) {
-		return letters;
-	}
-
-	return [
-		...letters.slice(startIndex),
-		...letters.slice(0, startIndex),
-	];
-}
-
-function normalizeAccidentalOffset(offset) {
-	let nextOffset = offset;
-
-	while (nextOffset > 6) {
-		nextOffset -= 12;
-	}
-
-	while (nextOffset < -6) {
-		nextOffset += 12;
-	}
-
-	return nextOffset;
-}
-
-function getAccidentalText(offset) {
-	switch (offset) {
-		case -2:
-			return ACCIDENTAL_SYMBOLS.doubleFlat;
-		case -1:
-			return ACCIDENTAL_SYMBOLS.flat;
-		case 1:
-			return ACCIDENTAL_SYMBOLS.sharp;
-		case 2:
-			return ACCIDENTAL_SYMBOLS.doubleSharp;
-		default:
-			return '';
-	}
-}
-
-function getKeyboardNoteRange(midiNumbers = [], displayKey = '', staffOctave = 4) {
-	const keyStart = getDisplayKeyStartNote(displayKey, staffOctave);
-
-	if (!midiNumbers.length) {
-		return {
-			first: keyStart || noteToMidi(DEFAULT_FIRST_NOTE),
-			last: getMinimumOctaveLastNote(
-				keyStart || noteToMidi(DEFAULT_FIRST_NOTE),
-				keyStart || noteToMidi(DEFAULT_LAST_NOTE),
-			),
-		};
-	}
-
-	const firstNote = getNaturalKeyAtOrBefore(Math.min(...midiNumbers));
-	const lastNote = getMinimumOctaveLastNote(
-		firstNote,
-		getNaturalKeyAtOrAfter(Math.max(...midiNumbers)),
-	);
-
-	return {
-		first: firstNote,
-		last: lastNote,
-	};
-}
-
-function getDisplayKeyStartNote(displayKey, staffOctave = 4) {
-	const key = normalizeKeyName(displayKey);
-
-	if (!key) {
-		return null;
-	}
-
-	const keyMidiNumber = noteToMidi(`${key}${normalizeStaffOctave(staffOctave)}`);
-	return keyMidiNumber === null ? null : getNaturalKeyAtOrBefore(keyMidiNumber);
-}
-
-function getMinimumOctaveLastNote(firstNote, lastNote) {
-	const minimumLastNote = firstNote + 12;
-
-	if (lastNote >= minimumLastNote) {
-		return lastNote;
-	}
-
-	return getNaturalKeyAtOrAfter(minimumLastNote);
-}
-
-function getNaturalKeyAtOrBefore(midiNumber) {
-	let nextMidiNumber = midiNumber;
-
-	while (!isNaturalMidiNumber(nextMidiNumber)) {
-		nextMidiNumber -= 1;
-	}
-
-	return nextMidiNumber;
-}
-
-function getNaturalKeyAtOrAfter(midiNumber) {
-	let nextMidiNumber = midiNumber;
-
-	while (!isNaturalMidiNumber(nextMidiNumber)) {
-		nextMidiNumber += 1;
-	}
-
-	return nextMidiNumber;
-}
-
-function isNaturalMidiNumber(midiNumber) {
-	return NATURAL_PITCH_CLASSES.includes(midiNumber % 12);
-}
-
-function getSpelledLabelsByMidi(notes = []) {
-	return notes.reduce((markers, note) => {
-		const midiNumber = noteToMidi(note);
-		const marker = getSpelledLabel(note);
-
-		if (midiNumber !== null && marker) {
-			markers.set(midiNumber, marker);
-		}
-
-		return markers;
-	}, new Map());
-}
-
-function getSpelledLabel(note) {
-	const match = /^([A-Ga-g])(#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?/u.exec(String(note || ''));
-
-	if (!match) {
-		return '';
-	}
-
-	const pitch = match[1].toUpperCase();
-
-	switch (match[2]) {
-		case undefined:
-		case '':
-			return '';
-		case '#':
-		case ACCIDENTAL_SYMBOLS.sharp:
-			return `${pitch}${ACCIDENTAL_SYMBOLS.sharp}`;
-		case '##':
-		case 'x':
-		case ACCIDENTAL_SYMBOLS.doubleSharp:
-			return `${pitch}${ACCIDENTAL_SYMBOLS.doubleSharp}`;
-		case 'b':
-		case ACCIDENTAL_SYMBOLS.flat:
-			return `${pitch}${ACCIDENTAL_SYMBOLS.flat}`;
-		case 'bb':
-		case ACCIDENTAL_SYMBOLS.doubleFlat:
-			return `${pitch}${ACCIDENTAL_SYMBOLS.doubleFlat}`;
-		case 'n':
-		case ACCIDENTAL_SYMBOLS.natural:
-			return `${pitch}${ACCIDENTAL_SYMBOLS.natural}`;
-		default:
-			return '';
-	}
-}
-
-function noteToMidi(note) {
-	const parsedMidiNumber = parseNoteToMidi(note);
-
-	if (parsedMidiNumber !== null) {
-		return parsedMidiNumber;
-	}
-
-	try {
-		return MidiNumbers.fromNote(String(note || '').toLowerCase());
-	} catch {
-		return null;
-	}
-}
-
-function parseNoteToMidi(note) {
-	const match = /^([A-Ga-g])(#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?(-?\d+)$/u.exec(String(note || ''));
-
-	if (!match) {
-		return null;
-	}
-
-	const pitch = match[1].toUpperCase();
-	const accidental = match[2] || '';
-	const octave = Number(match[3]);
-	const pitchOffset = PITCH_OFFSETS[pitch];
-
-	if (!Number.isInteger(octave) || pitchOffset === undefined) {
-		return null;
-	}
-
-	return 12 + pitchOffset + getAccidentalOffset(accidental) + (12 * octave);
-}
-
-function getAccidentalOffset(accidental) {
-	switch (accidental) {
-		case '#':
-		case ACCIDENTAL_SYMBOLS.sharp:
-			return 1;
-		case '##':
-		case 'x':
-		case ACCIDENTAL_SYMBOLS.doubleSharp:
-			return 2;
-		case 'b':
-		case ACCIDENTAL_SYMBOLS.flat:
-			return -1;
-		case 'bb':
-		case ACCIDENTAL_SYMBOLS.doubleFlat:
-			return -2;
-		default:
-			return 0;
-	}
+	return `${key} major`;
 }

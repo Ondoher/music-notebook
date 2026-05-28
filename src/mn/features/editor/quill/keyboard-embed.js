@@ -2,6 +2,7 @@ import React from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import Quill from 'quill';
+import MusicNotebookProvider from '../../../common/MusicNotebookProvider.jsx';
 import MusicEmbedView from '../components/MusicEmbedView.jsx';
 import { getKeyboardChordPreset } from './keyboard-chords.js';
 
@@ -16,7 +17,8 @@ const DEFAULT_HEIGHT = 266;
 const MIN_WIDTH = 240;
 const MIN_HEIGHT = 180;
 
-const DEFAULT_CHORD_PRESET = getKeyboardChordPreset('c-dim7');
+const DEFAULT_CHORD_PRESET = getKeyboardChordPreset('c-major');
+let musicNotebookContextValue = null;
 
 export const DEFAULT_KEYBOARD_PAYLOAD = Object.freeze({
 	id: 'keyboard-1',
@@ -39,6 +41,7 @@ export class MusicKeyboardEmbed extends BlockEmbed {
 		setKeyboardNodePayload(node, payload);
 
 		renderKeyboardComponent(node, payload, {
+			initialEditMode: value?.initialEditMode,
 			initialDialogOpen: value?.openEditor === true,
 		});
 
@@ -72,6 +75,10 @@ export function registerKeyboardEmbed() {
 
 	Quill.register(MusicKeyboardEmbed);
 	Quill[REGISTER_FLAG] = true;
+}
+
+export function configureKeyboardEmbedContext(contextValue) {
+	musicNotebookContextValue = contextValue || null;
 }
 
 export function normalizeKeyboardPayload(value = {}) {
@@ -164,11 +171,14 @@ function renderKeyboardComponent(node, payload, options = {}) {
 
 	flushSync(() => {
 		node.__musicNotebookKeyboardRoot.render(
-			<MusicEmbedView
-				initialDialogOpen={options.initialDialogOpen === true}
-				payload={payload}
-				onPayloadChange={(nextPayload) => updateKeyboardPayload(node, nextPayload)}
-			/>,
+			<MusicNotebookProvider contextValue={musicNotebookContextValue || {}}>
+				<MusicEmbedView
+					initialEditMode={options.initialEditMode}
+					initialDialogOpen={options.initialDialogOpen === true}
+					payload={payload}
+					onPayloadChange={(nextPayload) => updateKeyboardPayload(node, nextPayload)}
+				/>
+			</MusicNotebookProvider>,
 		);
 	});
 }

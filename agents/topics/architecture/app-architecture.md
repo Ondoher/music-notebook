@@ -6,7 +6,7 @@ Capture the parts of the architecture that are specific to `music-notebook` rath
 
 Use [Foundation Architecture](foundation-architecture.md) for the reusable architectural framing and conventions.
 
-## Early Product Shape
+## Current Product Shape
 
 The application is a music notebook with an editor-first experience.
 
@@ -17,7 +17,7 @@ Current working product assumptions:
 - the first known display modes are keyboards and musical staffs
 - the current keyboard and staff rendering component choices are provisional
 - the shell outside the editor matters, but it is secondary to getting the editor and embed mechanics right
-- saving and persistence were intentionally deferred during the first spike and now need real planning
+- saving and persistence were intentionally deferred during the first spike and now need MVP planning
 
 The most important early architectural consequence is that the document editor is not just one feature among many. It is likely the primary composition surface around which the rest of the app is organized.
 
@@ -207,6 +207,7 @@ Current preferred direction:
 - choose the simplest component or library that can render the needed result well enough
 - if two options are otherwise comparable, prefer the one that works better with `MusicXML`
 - do not overcommit to an initial library choice if it adds complexity without helping the document/embed model
+- keep playback behind the `player` feature service so the editor feature does not own the playback loadable or player lifecycle
 
 ### 5. Persistence Is Deferred, But Some Architectural Decisions Depend On It
 
@@ -257,17 +258,17 @@ Current preferred direction:
 
 ## Practical Near-Term Guidance
 
-Until more is known, the safest path seems to be:
+With the post-POC cleanup complete, the safest MVP planning path seems to be:
 
 1. Treat the editor as the center of the app.
 2. Keep persistence behind services and avoid hardcoding a backend model.
 3. Keep the custom embed path as the leading editor-object implementation.
 4. Design the durable document model before broadening the app shell.
-5. Refactor POC React code into class-based components and shared domain helpers before treating it as production structure.
+5. Build new substantial React presentation components as class components and use the shared component/domain helper layers created during cleanup.
 
 ## Suggested Next Docs
 
-After the first spike, this note should probably split into smaller topic docs such as:
+During MVP planning, this note should probably split into smaller topic docs such as:
 
 - feature mechanics
 - build and asset flow

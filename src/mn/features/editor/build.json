@@ -7,19 +7,5 @@
 			"keepNest": true
 		}
 	],
-	"resources": [
-		{
-			"dest": "",
-			"cwd": "../../../../node_modules/@music-i18n/musicxml-player/build",
-			"glob": "spessasynth_processor.js",
-			"keepNest": false
-		}
-	],
-	"loadables": [
-		{
-			"name": "musicxml-player",
-			"index": "musicxml-player-loadable.js"
-		}
-	],
 	"index": "index.js"
 }

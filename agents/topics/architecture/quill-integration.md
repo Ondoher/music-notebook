@@ -12,7 +12,7 @@ This note is about:
 - rendering versus interactivity tradeoffs
 - practical risks and recommendations after the first spike
 
-This note is written after the first POC and for the early application-planning phase.
+This note is written after the first POC and post-POC cleanup, with MVP implementation planning now active.
 It should be treated as a working integration guide, not a final specification.
 
 ## Why Quill Fits The App
@@ -86,11 +86,17 @@ Those hooks are likely to be important for both the editor shell and any later s
 
 The current target is to support a `Quill` document containing:
 
+- inline chord objects
 - an embedded keyboard
 - an embedded staff
 
 The POC implemented this as one custom Quill embed type, `music-keyboard`, whose payload includes a `displayMode` field.
 Despite the blot name, it now represents a more general music object that can render as either a keyboard or staff.
+
+Inline chord objects are a separate, text-flow object type.
+They should be created when the user types an ASCII chord symbol in the editor and the app replaces that text with a properly formatted chord object.
+They should use the shared chord parser/normalizer, preserve enough source/normalized data to edit and round-trip, and remain much lighter than keyboard/staff embeds.
+They should inherit the document-level chord display style by default, with a local display-style override only when a specific object needs different presentation.
 
 The main intent of those embedded objects is rendering.
 
@@ -235,7 +241,7 @@ Practical implication:
 The first real music-object renderer spike used React inside the custom `music-keyboard` Quill blot.
 Keyboard display uses `react-piano`.
 Staff display uses `opensheetmusicdisplay` from generated `MusicXML`.
-Playback uses `@music-i18n/musicxml-player` as a Polylith loadable, also from generated `MusicXML`.
+Playback uses the `player` registry service, which owns the `@music-i18n/musicxml-player` Polylith loadable and plays generated `MusicXML`.
 
 This keeps the Quill/Delta contract stable while replacing the initial hand-built keyboard DOM with an actual React component.
 
@@ -243,13 +249,22 @@ Current findings:
 
 - `react-piano` is viable enough for keyboard display in the POC
 - `opensheetmusicdisplay` is viable enough to prove staff notation, key signatures, clefs, and chord rendering from music payloads
-- `@music-i18n/musicxml-player` is viable enough to audition generated MusicXML through a loadable
+- `@music-i18n/musicxml-player` is viable enough to audition generated MusicXML through the player service and its loadable
 - keep the payload shape independent from `react-piano` internals
 - keep inline interaction minimal while Quill owns document input
 - treat audio playback as an object action, not as a reason to make the embed itself highly interactive
 
 This is still provisional.
 The main thing being tested is whether a real React-rendered music component can live inside the document flow without making selection, serialization, or focus behavior brittle.
+
+Because each Quill embed mounts its own React root, normal React context from the main app root does not automatically reach embedded components.
+The current direction is to bridge app context explicitly:
+
+- use `MusicNotebookProvider` around embed-owned React roots
+- expose watched app data, starting with locale, through the shared app-data service
+- configure embed roots with the same localization and context values needed by shared components
+
+This keeps localized `MUI`-based controls usable both in the main app tree and in Quill-owned embed roots.
 
 ### Current Embed Payload Shape
 
@@ -270,8 +285,8 @@ The POC payload currently carries:
 
 `openEditor` is a transient insertion flag, not persisted in the normalized Delta payload.
 
-This payload is intentionally POC-shaped.
-It is useful enough to test the editor/embed seam, but it should not yet be treated as the final notebook file format.
+This payload began as a POC-shaped structure.
+It is useful enough to test the editor/embed seam, but MVP planning should translate it into an intentional notebook object model rather than treat it as the final file format.
 
 ## Stream-In / Stream-Out Implications
 
@@ -279,10 +294,10 @@ One of the most important app-specific requirements is that the UI representatio
 
 For Quill, that means we need to be able to:
 
-- construct a document that includes embedded objects
+- construct a document that includes inline chord objects and larger embedded objects
 - load that structured content into the editor
 - read the document back out
-- preserve enough structure to identify embedded keyboard and staff objects reliably
+- preserve enough structure to identify inline chord, embedded keyboard, and embedded staff objects reliably
 
 Practical implication:
 
@@ -310,11 +325,23 @@ That model is likely less fragile than trying to make each embedded object behav
 
 Current preferred direction for `music-notebook`:
 
+- inline chord objects stay in the text flow and render as formatted chord symbols
+- inline chord objects inherit the document-level chord display style unless they carry a local override
+- typing an ASCII chord symbol can be replaced with an inline chord object once it is recognized and accepted
+- selecting or activating an inline chord object can open a small floating editor field for editing the chord text
+- inline chord editing should not open the full music-object dialog unless the user is converting or promoting the chord into a larger object
 - embedded keyboard and staff objects render as part of the document
 - selecting or activating one can launch a dedicated editor dialog
 - inline interaction inside Quill should be kept minimal unless a later need clearly justifies more
 - small floating controls are acceptable for object-level actions such as edit, playback, and resize
 - resize is part of the embed payload and updates the Quill Delta through the existing embed-change path
+- the edit dialog should live as a reusable shared component rather than as a large subtree inside the editor feature
+- the current shared dialog component is `src/mn/components/MusicEmbedDialog.jsx`
+- playback belongs behind the `player` feature service; editor components should call `player.play(payload)` and `player.stop()` rather than importing the playback loadable directly
+- edit fields should use shared `MUI`-based components where available for localization and accessibility behavior
+- chord editing is moving toward one unified input that auto-detects direct chord names, Roman numeral degrees, and numeric degrees
+- numeric chord degrees use the selected key mode to infer default diatonic quality, while Roman numeral capitalization remains explicit quality notation
+- chord-name parsing details are tracked in [Chord Name Parsing](../mvp/chord-name-parsing.md), including the current direction to preserve typed text, normalize internally, include slash bass/inversion in the normalizer result, and investigate `chord-symbol`
 
 ## Risks
 

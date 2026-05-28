@@ -67,7 +67,7 @@ Examples:
 
 - app-wide images under `assets/images`
 - app-wide fonts under `assets/fonts`
-- app-wide CSS under `assets/css`
+- app-wide CSS under `assets/styles` for the `mn` app
 - feature-local CSS under the app-scoped feature path, for example `src/<app>/features/<feature>/assets/css`
 - feature-local images under the app-scoped feature path, for example `src/<app>/features/<feature>/assets/images`
 
@@ -103,8 +103,8 @@ Example from `builds/mn.json`:
 
 - app-wide Music Notebook images under `src/mn/assets/images/**` would be emitted to
   `dist/mn/assets/images/**` when configured as app resources
-- app-wide Music Notebook CSS under `src/mn/assets/css/**` would be emitted to
-  `dist/mn/assets/css/**` when configured as app CSS
+- app-wide Music Notebook CSS under `src/mn/assets/styles/**` is the current app-wide style location and should be emitted to
+  `dist/mn/assets/styles/**` when configured as app CSS
 
 So an app-wide Music Notebook icon such as
 `src/mn/assets/images/music-object.svg` should be referenced at runtime
@@ -137,11 +137,19 @@ That means imported CSS should not be the normal choice for new shipped styling 
 When deciding where a CSS or image file belongs:
 
 - if it must be copied into `dist`, place it under the appropriate `assets` folder
-- if it is app-wide styling, prefer app-wide `assets/css`
+- if it is app-wide `mn` styling, prefer app-wide `assets/styles`
 - if it is feature-shipped styling, prefer that feature's `assets/css`
 - if it is a shipped image asset, prefer the relevant `assets/images`
 - treat CSS import support as deprecated rather than as a normal default path
 - CSS and image filenames should use `kebab-case`
+
+For the `mn` app specifically:
+
+- global app styles live in `src/mn/assets/styles/mn.css`
+- shared component styles should live in `src/mn/assets/styles`
+- component-specific shared styles should use a component-oriented `kebab-case` filename such as `key-picker.css`
+- color tokens and cross-component CSS variables should be centralized in `mn.css`
+- feature-owned editor styles should stay in the editor feature stylesheet when they only affect that feature's document/editor surface
 
 ## Feature Build Files
 
@@ -160,24 +168,25 @@ Important consequence:
 
 - if a feature-local stylesheet or image is meant to ship as an asset, putting it next to a component is not enough
 
-## Current MN Editor Loadable
+## Current MN Player Loadable
 
-The editor feature currently uses its feature build file for the POC playback path.
+The player feature currently owns the MusicXML playback path.
 
 Concrete example:
 
-- `src/mn/features/editor/build.json` declares a `musicxml-player` loadable
-- the app loads that module through `@polylith/loader` when a music object is played
+- `src/mn/features/player/build.json` declares a `musicxml-player` loadable
+- `src/mn/features/player/player.js` exposes the `player` registry service
+- editor-side music-object components request playback through the `player` service
 - the same feature build file copies the `spessasynth_processor.js` worklet resource from `@music-i18n/musicxml-player`
 
 This is a useful example of the build/runtime split:
 
 - the loadable and worker resource are known to the build
-- playback is activated only when the user invokes it at runtime
+- playback is activated only when the user invokes it at runtime through the service
 - changing the loadable or resource shape requires restarting the watcher
 
 Loadables are runtime delivery boundaries in the current Polylith line.
-They should not be treated as a way to avoid full-build participation during this POC phase.
+They should not be treated as a way to avoid full-build participation during MVP implementation.
 
 ## Agent Checklist
 

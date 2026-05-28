@@ -2,16 +2,30 @@ import React from 'react';
 import Quill from 'quill';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IconClefStaff, IconPiano } from '@tabler/icons-react';
-import '@fontsource/comic-neue/400';
-import '@fontsource/comic-neue/400-italic';
-import '@fontsource/comic-neue/700';
-import '@fontsource/comic-neue/700-italic';
+import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
 import 'quill/dist/quill.snow.css';
-import { DEFAULT_KEYBOARD_PAYLOAD, KEYBOARD_EMBED_BLOT, registerKeyboardEmbed } from '../quill/keyboard-embed.js';
+import {
+	configureKeyboardEmbedContext,
+	DEFAULT_KEYBOARD_PAYLOAD,
+	KEYBOARD_EMBED_BLOT,
+	registerKeyboardEmbed,
+} from '../quill/keyboard-embed.js';
 
 registerKeyboardEmbed();
 
+/**
+ * Renders the Quill-backed document editor page and music embed toolbar hooks.
+ *
+ * @extends {React.Component<EditorPageProps, EditorPageState>}
+ */
 export default class EditorPage extends React.Component {
+	static contextType = MusicNotebookContext;
+
+	/**
+	 * Initializes editor state and refs.
+	 *
+	 * @param {EditorPageProps} props
+	 */
 	constructor(props) {
 		super(props);
 		this.state = {
@@ -24,14 +38,34 @@ export default class EditorPage extends React.Component {
 		this.quill = null;
 	}
 
+	/**
+	 * Subscribes to page-view updates and mounts Quill.
+	 *
+	 * @returns {void}
+	 */
 	componentDidMount() {
 		this.updatedListener = this.props.pageView?.listen?.(
 			'updated',
 			(state) => this.setState(state),
 		);
+		this.configureKeyboardEmbedContext();
 		this.mountEditor();
 	}
 
+	/**
+	 * Refreshes the Quill embed context when watched app data updates.
+	 *
+	 * @returns {void}
+	 */
+	componentDidUpdate() {
+		this.configureKeyboardEmbedContext();
+	}
+
+	/**
+	 * Cleans up page-view subscriptions and editor DOM.
+	 *
+	 * @returns {void}
+	 */
 	componentWillUnmount() {
 		if (this.props.pageView && this.updatedListener) {
 			this.props.pageView.unlisten('updated', this.updatedListener);
@@ -41,6 +75,11 @@ export default class EditorPage extends React.Component {
 		this.cleanupEditorDom();
 	}
 
+	/**
+	 * Creates the Quill editor instance and configures music toolbar handlers.
+	 *
+	 * @returns {void}
+	 */
 	mountEditor() {
 		if (this.quill || !this.editorRef.current) {
 			return;
@@ -79,6 +118,20 @@ export default class EditorPage extends React.Component {
 		this.updateDocumentJson();
 	}
 
+	/**
+	 * Shares the current Music Notebook context with Quill-owned React roots.
+	 *
+	 * @returns {void}
+	 */
+	configureKeyboardEmbedContext() {
+		configureKeyboardEmbedContext(/** @type {MusicNotebookContextValue} */ (this.context));
+	}
+
+	/**
+	 * Removes editor-generated DOM from the editor surface.
+	 *
+	 * @returns {void}
+	 */
 	cleanupEditorDom() {
 		const surface = this.editorSurfaceRef.current;
 		const editor = this.editorRef.current;
@@ -93,6 +146,12 @@ export default class EditorPage extends React.Component {
 		editor.innerHTML = '';
 	}
 
+	/**
+	 * Inserts a new music embed at the current Quill selection.
+	 *
+	 * @param {KeyboardDisplayMode} [displayMode]
+	 * @returns {void}
+	 */
 	insertMusicEmbed(displayMode = 'keyboard') {
 		if (!this.quill) {
 			return;
@@ -102,9 +161,15 @@ export default class EditorPage extends React.Component {
 		const index = selection?.index ?? this.quill.getLength();
 		const payload = {
 			...DEFAULT_KEYBOARD_PAYLOAD,
+			chordId: '',
 			displayMode,
+			displayKey: 'C',
 			id: `keyboard-${Date.now()}`,
+			initialEditMode: 'none',
+			label: 'C major key',
+			notes: [],
 			openEditor: true,
+			rootNote: '',
 		};
 
 		this.quill.insertEmbed(index, KEYBOARD_EMBED_BLOT, payload, 'user');
@@ -113,6 +178,11 @@ export default class EditorPage extends React.Component {
 		this.updateDocumentJson();
 	}
 
+	/**
+	 * Applies accessible labels and icons to custom music toolbar buttons.
+	 *
+	 * @returns {void}
+	 */
 	configureMusicToolbarButtons() {
 		const toolbar = this.editorSurfaceRef.current?.querySelector(':scope > .ql-toolbar');
 
@@ -132,6 +202,14 @@ export default class EditorPage extends React.Component {
 		);
 	}
 
+	/**
+	 * Configures one custom Quill toolbar button.
+	 *
+	 * @param {Element | null} button
+	 * @param {string} label
+	 * @param {React.ReactElement} icon
+	 * @returns {void}
+	 */
 	configureMusicToolbarButton(button, label, icon) {
 		if (!button) {
 			return;
@@ -143,6 +221,11 @@ export default class EditorPage extends React.Component {
 		button.setAttribute('type', 'button');
 	}
 
+	/**
+	 * Updates the debug JSON document snapshot from Quill contents.
+	 *
+	 * @returns {void}
+	 */
 	updateDocumentJson() {
 		if (!this.quill) {
 			return;
@@ -153,6 +236,11 @@ export default class EditorPage extends React.Component {
 		});
 	}
 
+	/**
+	 * Renders the editor page and debug document output.
+	 *
+	 * @returns {React.ReactElement}
+	 */
 	render() {
 		return (
 			<section className="editor-page">

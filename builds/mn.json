@@ -13,18 +13,30 @@
 	"resources": [
 		{
 			"dest": "images",
-			"cwd": "images",
-			"glob": "**/*.{png,jpg,gif,svn}",
+			"cwd": "assets/images",
+			"glob": "**/*.{png,jpg,gif,svg}",
+			"keepNest": true
+		},
+		{
+			"dest": "icons",
+			"cwd": "assets/pwa",
+			"glob": "**/*.{ico,jpg,svg,gif,png}",
+			"keepNest": true
+		},
+		{
+			"dest": "fonts",
+			"cwd": "assets/fonts",
+			"glob": "**/*.{woff,woff2}",
 			"keepNest": true
 		}
 	],
 	"css": [
 		{
 			"dest": "styles",
-			"cwd": "styles",
+			"cwd": "assets/styles",
 			"glob": "**/*.css",
 			"keepNest": true
 		}
 	],
-	"features": ["features/app", "features/editor"]
+	"features": ["features/app", "features/player", "features/editor"]
 }

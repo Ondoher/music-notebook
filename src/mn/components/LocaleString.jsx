@@ -1,10 +1,22 @@
+/// <reference path="../common/types.d.ts" />
+
 import React, { Component } from 'react';
 import parse from 'html-react-parser';
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
 
+/**
+ * Renders localized text and refreshes when the locale service changes.
+ *
+ * @extends {Component<LocaleStringProps>}
+ */
 export default class LocaleString extends Component {
 	static contextType = MusicNotebookContext;
 
+	/**
+	 * Initializes refresh state for locale updates.
+	 *
+	 * @param {LocaleStringProps} props
+	 */
 	constructor(props) {
 		super(props);
 
@@ -13,23 +25,50 @@ export default class LocaleString extends Component {
 		};
 	}
 
+	/**
+	 * Gets the typed Music Notebook context value.
+	 *
+	 * @returns {MusicNotebookContextValue}
+	 */
+	getMusicNotebookContext() {
+		return /** @type {MusicNotebookContextValue} */ (this.context);
+	}
+
+	/**
+	 * Handles locale service changes.
+	 *
+	 * @param {string} locale
+	 * @returns {void}
+	 */
 	newLocale(locale) {
 		if (locale !== this.locale) {
 			this.setState({ locale });
 		}
 	}
 
+	/**
+	 * Forces a refresh when translation content updates.
+	 *
+	 * @returns {void}
+	 */
 	updated() {
 		this.setState({ updated: this.state.updated + 1 });
 	}
 
+	/**
+	 * Lazily connects to the localization service.
+	 *
+	 * @returns {void}
+	 */
 	setupLocaleService() {
 		if (this.localize) {
 			return;
 		}
 
-		this.registry = this.context.registry;
-		this.localize = this.context.localize || this.registry?.subscribe?.('localize');
+		const context = this.getMusicNotebookContext();
+
+		this.registry = context.registry;
+		this.localize = context.localize || this.registry?.subscribe?.('localize');
 
 		if (!this.localize) {
 			return;
@@ -40,6 +79,11 @@ export default class LocaleString extends Component {
 		this.locale = this.localize.getLocale?.();
 	}
 
+	/**
+	 * Removes localization service listeners before unmount.
+	 *
+	 * @returns {void}
+	 */
 	componentWillUnmount() {
 		if (this.localize && this.localeListener) {
 			this.localize.unlisten('changeLocale', this.localeListener);
@@ -50,6 +94,11 @@ export default class LocaleString extends Component {
 		}
 	}
 
+	/**
+	 * Resolves the current translated string.
+	 *
+	 * @returns {string}
+	 */
 	getTranslation() {
 		this.setupLocaleService();
 
@@ -74,6 +123,11 @@ export default class LocaleString extends Component {
 			: this.localize.t(phrase, replacements, cardinal);
 	}
 
+	/**
+	 * Renders the translated string as text or parsed HTML.
+	 *
+	 * @returns {React.ReactElement | string | null}
+	 */
 	render() {
 		const {
 			className,

@@ -1,5 +1,5 @@
 import { Scale } from 'tonal';
-import { KEY_OPTIONS, normalizeKey } from '../keys/key-options.js';
+import { KEY_OPTIONS, normalizeKey } from './key-options.js';
 
 const DEFAULT_OCTAVE = 4;
 
@@ -11,6 +11,8 @@ export const SCALE_TYPE_OPTIONS = Object.freeze([
 	{ label: 'Harmonic minor', phrase: 'music.scale.harmonic_minor', value: 'harmonic-minor', scaleType: 'harmonic minor' },
 	{ label: 'Major pentatonic', phrase: 'music.scale.major_pentatonic', value: 'major-pentatonic', scaleType: 'major pentatonic' },
 	{ label: 'Minor pentatonic', phrase: 'music.scale.minor_pentatonic', value: 'minor-pentatonic', scaleType: 'minor pentatonic' },
+	{ label: 'Major blues', phrase: 'music.scale.major_blues', value: 'major-blues', scaleType: 'major blues' },
+	{ label: 'Minor blues', phrase: 'music.scale.minor_blues', value: 'minor-blues', scaleType: 'minor blues' },
 	{ label: 'Mode', phrase: 'music.scale.mode', value: 'mode', scaleType: 'ionian' },
 ]);
 

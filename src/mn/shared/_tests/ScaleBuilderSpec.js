@@ -26,6 +26,16 @@ describe('ScaleBuilder', function() {
 		expect(minorPentatonic.payload.notes).toEqual(['A4', 'C4', 'D4', 'E4', 'G4']);
 	});
 
+	it('builds blues scale payloads', function() {
+		const majorBlues = buildKeyboardScalePayload({ key: 'C', scaleType: 'major-blues' });
+		const minorBlues = buildKeyboardScalePayload({ key: 'C', scaleType: 'minor-blues' });
+
+		expect(majorBlues.payload.label).toBe('C major blues');
+		expect(majorBlues.payload.notes).toEqual(['C4', 'D4', 'Eb4', 'E4', 'G4', 'A4']);
+		expect(minorBlues.payload.label).toBe('C minor blues');
+		expect(minorBlues.payload.notes).toEqual(['C4', 'Eb4', 'F4', 'Gb4', 'G4', 'Bb4']);
+	});
+
 	it('builds mode payloads when mode scale type is selected', function() {
 		const result = buildKeyboardScalePayload({
 			key: 'D',

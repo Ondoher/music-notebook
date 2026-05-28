@@ -1,0 +1,73 @@
+.MuiFormControl-root.mn-chord-input,
+.MuiFormControl-root.mn-chord-builder,
+.MuiFormControl-root.mn-progression-builder {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+	width: 100%;
+}
+
+.mn-chord-input-label,
+.mn-chord-builder-label,
+.mn-progression-builder-label {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+.mn-chord-input-field,
+.mn-chord-builder-field,
+.mn-progression-builder-field {
+	min-width: 0;
+}
+
+.mn-chord-input-checkbox,
+.mn-chord-builder-checkbox,
+.mn-progression-builder-checkbox {
+	align-self: center;
+	margin-top: 0;
+	white-space: nowrap;
+}
+
+.mn-chord-input-checkbox.base-checkbox,
+.mn-chord-builder-checkbox.base-checkbox,
+.mn-progression-builder-checkbox.base-checkbox {
+	width: auto;
+	min-width: max-content;
+}
+
+.mn-chord-input-helper,
+.mn-chord-builder-helper,
+.mn-progression-builder-helper {
+	grid-column: 1 / -1;
+	min-height: 20px;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mn-chord-input-key-picker {
+	grid-column: 1 / -1;
+}
+
+@media (max-width: 560px) {
+	.MuiFormControl-root.mn-chord-input,
+	.MuiFormControl-root.mn-chord-builder,
+	.MuiFormControl-root.mn-progression-builder {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.mn-chord-input-key-picker,
+	.mn-chord-input-helper,
+	.mn-chord-builder-helper,
+	.mn-progression-builder-helper {
+		grid-column: 1;
+	}
+}

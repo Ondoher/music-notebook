@@ -1,0 +1,38 @@
+.mn-key-picker,
+.music-display-key-picker,
+.mn-chord-input-key-picker,
+.mn-scale-input-key-picker,
+.mn-chord-builder-key-picker,
+.mn-scale-builder-key-picker,
+.mn-progression-builder-key-picker {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+}
+
+.mn-key-picker-key-field,
+.music-display-key-field,
+.mn-chord-input-key-picker > .mn-chord-input-field,
+.mn-scale-input-key-picker > .mn-scale-input-field,
+.mn-chord-builder-key-picker > .mn-chord-builder-field,
+.mn-scale-builder-key-picker > .mn-scale-builder-field,
+.mn-progression-builder-key-picker > .mn-progression-builder-field {
+	flex: 1 1 180px;
+	min-width: 0;
+}
+
+.mn-key-picker-mode-field,
+.music-display-key-mode-field {
+	flex: 0 0 120px;
+	min-width: 112px;
+}
+
+.mn-key-picker-enharmonic-field,
+.music-key-enharmonic-option {
+	flex: 0 0 auto;
+	align-self: flex-start;
+	margin-top: 8px;
+	white-space: nowrap;
+}

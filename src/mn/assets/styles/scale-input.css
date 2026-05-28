@@ -1,0 +1,46 @@
+.mn-scale-input,
+.mn-scale-builder {
+	display: block;
+	min-width: 0;
+}
+
+.mn-scale-input-label,
+.mn-scale-builder-label {
+	display: block;
+	margin-bottom: 8px;
+}
+
+.mn-scale-input-controls,
+.mn-scale-builder-controls {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	align-items: start;
+	gap: 8px;
+	min-width: 0;
+}
+
+.mn-scale-input-key-picker,
+.mn-scale-builder-key-picker {
+	grid-column: 1 / -1;
+}
+
+.mn-scale-input-field,
+.mn-scale-builder-field {
+	min-width: 0;
+}
+
+.mn-scale-input-helper,
+.mn-scale-builder-helper {
+	min-height: 20px;
+	margin: 8px 0 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+	.mn-scale-input-controls,
+	.mn-scale-builder-controls {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

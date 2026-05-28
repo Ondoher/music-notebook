@@ -1,7 +1,7 @@
 import Quill from 'quill';
 import { act } from 'react';
-import { buildMusicXml, getPayloadKeyFifths, getStaffNotes } from '../../components/MusicEmbedView.jsx';
-import { KEYBOARD_EMBED_BLOT, registerKeyboardEmbed } from '../keyboard-embed.js';
+import { buildMusicXml, getPayloadKeyFifths, getStaffNotes } from '../../../../shared/music_helper.js';
+import { configureKeyboardEmbedContext, KEYBOARD_EMBED_BLOT, registerKeyboardEmbed } from '../keyboard-embed.js';
 
 describe('KeyboardEmbed', function() {
 	let container;
@@ -15,6 +15,7 @@ describe('KeyboardEmbed', function() {
 	});
 
 	afterEach(function() {
+		configureKeyboardEmbedContext(null);
 		container.remove();
 		container = null;
 		quill = null;
@@ -131,6 +132,64 @@ describe('KeyboardEmbed', function() {
 		expect(playButton.tagName).toBe('BUTTON');
 		expect(playButton.type).toBe('button');
 		expect(playButton.textContent).toBe('Play');
+	});
+
+	it('updates localized embed controls when the watched locale changes', function() {
+		let locale = 'en-US-u-ms-ussystem';
+		const appData = makeAppDataMock({ locale });
+		const localize = {
+			getLocale() {
+				return locale;
+			},
+			t(phrase) {
+				if (phrase === 'music.controls.play') {
+					return locale === 'es-ES' ? 'Reproducir' : 'Play';
+				}
+
+				if (phrase === 'music.controls.resize_object') {
+					return locale === 'es-ES' ? 'Cambiar tamano' : 'Resize music object';
+				}
+
+				return phrase;
+			},
+		};
+
+		configureKeyboardEmbedContext({
+			app: { id: 'mn' },
+			appData,
+			localize,
+			locale,
+			registry: {
+				subscribe(serviceName) {
+					return serviceName === 'app-data' ? appData : localize;
+				},
+			},
+		});
+
+		act(() => {
+			quill.setContents([
+				{
+					insert: {
+						[KEYBOARD_EMBED_BLOT]: {
+							id: 'keyboard-locale-watch-spec',
+							label: 'C major',
+							notes: ['C4', 'E4', 'G4'],
+						},
+					},
+				},
+				{ insert: '\n' },
+			]);
+		});
+
+		expect(container.querySelector('.music-keyboard-play-button').textContent).toBe('Play');
+
+		act(() => {
+			locale = 'es-ES';
+			appData.update('locale', locale);
+		});
+
+		expect(container.querySelector('.music-keyboard-play-button').textContent).toBe('Reproducir');
+		expect(container.querySelector('.music-embed-resize-handle').textContent).toBe('Cambiar tamano');
 	});
 
 	it('persists embed dimensions from the resize handle pointer drag', function() {
@@ -288,7 +347,7 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const inversionSelect = dialog.querySelector('.mn-chord-builder-field select');
+		const inversionSelect = queryCombobox(dialog, '.mn-chord-builder-field');
 
 		act(() => {
 			selectValue(inversionSelect, '1');
@@ -297,7 +356,7 @@ describe('KeyboardEmbed', function() {
 		const contents = quill.getContents();
 		const keyboardOperation = contents.ops.find((operation) => operation.insert?.[KEYBOARD_EMBED_BLOT]);
 
-		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].chordId).toBe('typed:Cdim7:inv1');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].chordId).toBe('typed:Cdim7/Eb:inv1');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].inversion).toBe(1);
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].rootNote).toBe('C5');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].notes).toEqual(['Eb4', 'Gb4', 'Bbb4', 'C5']);
@@ -326,16 +385,14 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+		const modeSelect = queryCombobox(dialog, '.music-keyboard-edit-mode');
 
 		expect(modeSelect).toBeTruthy();
 		expect(dialog.querySelector('.music-display-key-field input')).toBeTruthy();
 		expect(dialog.querySelector('.mn-chord-builder input')).toBeTruthy();
 
 		act(() => {
-			modeSelect.value = 'scale';
-			modeSelect.dispatchEvent(new Event('input', { bubbles: true }));
-			modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+			selectValue(modeSelect, 'scale');
 		});
 
 		expect(dialog.querySelector('.mn-chord-builder input')).toBeFalsy();
@@ -352,9 +409,9 @@ describe('KeyboardEmbed', function() {
 		closeOpenDialog();
 	});
 
-	it('updates the embed payload when a progression Roman numeral is entered', function() {
+	it('updates the embed payload when a chord degree Roman numeral is entered', function() {
 		const payload = {
-			id: 'keyboard-progression-spec',
+			id: 'keyboard-chord-degree-spec',
 			label: 'C major',
 			notes: ['C4', 'E4', 'G4'],
 		};
@@ -373,23 +430,17 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+		const chordInput = dialog.querySelector('.mn-chord-builder-field input');
 
 		act(() => {
-			selectValue(modeSelect, 'progression');
-		});
-
-		const progressionInput = dialog.querySelector('.mn-progression-builder-field input');
-
-		act(() => {
-			setInputValue(progressionInput, 'ii');
-			progressionInput.dispatchEvent(new Event('input', { bubbles: true }));
+			setInputValue(chordInput, 'ii');
+			chordInput.dispatchEvent(new Event('input', { bubbles: true }));
 		});
 
 		const contents = quill.getContents();
 		const keyboardOperation = contents.ops.find((operation) => operation.insert?.[KEYBOARD_EMBED_BLOT]);
 
-		expect(dialog.querySelector('.mn-progression-builder-helper').textContent).toBe('D minor');
+		expect(dialog.querySelector('.mn-chord-builder-helper').textContent).toBe('D minor');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionId).toBe('typed:C:ii');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].sourceChordSymbol).toBe('Dm');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].label).toBe('C: ii');
@@ -398,9 +449,9 @@ describe('KeyboardEmbed', function() {
 		closeOpenDialog();
 	});
 
-	it('uses minor key mode when a numeric progression degree is entered', function() {
+	it('uses minor key mode when a numeric chord degree is entered in chord mode', function() {
 		const payload = {
-			id: 'keyboard-numeric-progression-spec',
+			id: 'keyboard-numeric-chord-spec',
 			label: 'C major',
 			notes: ['C4', 'E4', 'G4'],
 		};
@@ -419,28 +470,22 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
-
-		act(() => {
-			selectValue(modeSelect, 'progression');
-		});
-
-		const keyModeSelect = dialog.querySelector('.music-display-key-mode-field select');
-		const progressionInput = dialog.querySelector('.mn-progression-builder-field input');
-
-		act(() => {
-			setInputValue(progressionInput, '2');
-			progressionInput.dispatchEvent(new Event('input', { bubbles: true }));
-		});
+		const keyModeSelect = queryCombobox(dialog, '.music-display-key-mode-field');
+		const chordInput = dialog.querySelector('.mn-chord-builder-field input');
 
 		act(() => {
 			selectValue(keyModeSelect, 'minor');
 		});
 
+		act(() => {
+			setInputValue(chordInput, '2');
+			chordInput.dispatchEvent(new Event('input', { bubbles: true }));
+		});
+
 		const contents = quill.getContents();
 		const keyboardOperation = contents.ops.find((operation) => operation.insert?.[KEYBOARD_EMBED_BLOT]);
 
-		expect(dialog.querySelector('.mn-progression-builder-helper').textContent).toBe('D diminished');
+		expect(dialog.querySelector('.mn-chord-builder-helper').textContent).toBe('D diminished');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].displayKeyMode).toBe('minor');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionId).toBe('typed:C:ii\u00b0');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].progressionInput).toBe('2');
@@ -451,7 +496,7 @@ describe('KeyboardEmbed', function() {
 		closeOpenDialog();
 	});
 
-	it('allows the shared key field to be cleared while editing chord degrees', function() {
+	it('allows the shared key field to be cleared while editing chord degrees in chord mode', function() {
 		const payload = {
 			id: 'keyboard-clear-key-spec',
 			label: 'C: I',
@@ -472,12 +517,6 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
-
-		act(() => {
-			selectValue(modeSelect, 'progression');
-		});
-
 		const keyInput = dialog.querySelector('.music-display-key-field input');
 
 		act(() => {
@@ -511,15 +550,9 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
-
-		act(() => {
-			selectValue(modeSelect, 'progression');
-		});
-
-		const fields = dialog.querySelectorAll('.mn-progression-builder-field');
+		const fields = dialog.querySelectorAll('.mn-chord-builder-field');
 		const romanInput = fields[0].querySelector('input');
-		const inversionSelect = fields[1].querySelector('select');
+		const inversionSelect = fields[1].querySelector('[role="combobox"]');
 
 		act(() => {
 			setInputValue(romanInput, 'V');
@@ -542,7 +575,7 @@ describe('KeyboardEmbed', function() {
 		closeOpenDialog();
 	});
 
-	it('uses the resolved chord symbol when switching from chord degree back to chord', function() {
+	it('uses direct chord values after entering a chord degree', function() {
 		const payload = {
 			id: 'keyboard-degree-to-chord-spec',
 			label: 'C: I',
@@ -563,17 +596,18 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
-
-		act(() => {
-			selectValue(modeSelect, 'progression');
-		});
-
-		act(() => {
-			selectValue(modeSelect, 'chord');
-		});
-
 		const chordInput = dialog.querySelector('.mn-chord-builder input');
+
+		act(() => {
+			setInputValue(chordInput, 'V');
+			chordInput.dispatchEvent(new Event('input', { bubbles: true }));
+		});
+
+		act(() => {
+			setInputValue(chordInput, 'C');
+			chordInput.dispatchEvent(new Event('input', { bubbles: true }));
+		});
+
 		const contents = quill.getContents();
 		const keyboardOperation = contents.ops.find((operation) => operation.insert?.[KEYBOARD_EMBED_BLOT]);
 
@@ -607,7 +641,7 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+		const modeSelect = queryCombobox(dialog, '.music-keyboard-edit-mode');
 
 		act(() => {
 			selectValue(modeSelect, 'scale');
@@ -615,7 +649,7 @@ describe('KeyboardEmbed', function() {
 
 		const keyInput = dialog.querySelector('.music-display-key-field input');
 		const scaleFields = dialog.querySelectorAll('.mn-scale-builder-field');
-		const typeSelect = scaleFields[0].querySelector('select');
+		const typeSelect = scaleFields[0].querySelector('[role="combobox"]');
 
 		act(() => {
 			setInputValue(keyInput, 'D');
@@ -626,7 +660,7 @@ describe('KeyboardEmbed', function() {
 			selectValue(typeSelect, 'mode');
 		});
 
-		const modeScaleSelect = dialog.querySelectorAll('.mn-scale-builder-field')[1].querySelector('select');
+		const modeScaleSelect = dialog.querySelectorAll('.mn-scale-builder-field')[1].querySelector('[role="combobox"]');
 
 		act(() => {
 			selectValue(modeScaleSelect, 'dorian');
@@ -665,13 +699,16 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+		const modeSelect = queryCombobox(dialog, '.music-keyboard-edit-mode');
 
 		act(() => {
 			selectValue(modeSelect, 'none');
 		});
 
 		const keyInput = dialog.querySelector('.music-display-key-field input');
+		const keyModeSelect = queryCombobox(dialog, '.music-display-key-mode-field');
+
+		expect(keyModeSelect).toBeTruthy();
 
 		act(() => {
 			setInputValue(keyInput, '');
@@ -685,6 +722,10 @@ describe('KeyboardEmbed', function() {
 			keyInput.dispatchEvent(new Event('input', { bubbles: true }));
 		});
 
+		act(() => {
+			selectValue(keyModeSelect, 'minor');
+		});
+
 		const contents = quill.getContents();
 		const keyboardOperation = contents.ops.find((operation) => operation.insert?.[KEYBOARD_EMBED_BLOT]);
 
@@ -693,7 +734,8 @@ describe('KeyboardEmbed', function() {
 		expect(dialog.querySelector('.mn-progression-builder')).toBeFalsy();
 		expect(Array.from(dialog.querySelectorAll('label')).some((label) => label.textContent.includes('Arpeggiate'))).toBe(false);
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].displayKey).toBe('D');
-		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].label).toBe('D key');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].displayKeyMode).toBe('minor');
+		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].label).toBe('D minor key');
 		expect(keyboardOperation.insert[KEYBOARD_EMBED_BLOT].notes).toEqual([]);
 
 		closeOpenDialog();
@@ -720,7 +762,7 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const displaySelect = dialog.querySelector('.music-display-options select');
+		const displaySelect = queryCombobox(dialog, '.music-display-options-field');
 
 		act(() => {
 			selectValue(displaySelect, 'staff');
@@ -792,7 +834,7 @@ describe('KeyboardEmbed', function() {
 
 		const dialog = getLatestDialog();
 		const enharmonicCheckbox = Array.from(dialog.querySelectorAll('input[type="checkbox"]'))
-			.find((input) => input.closest('label')?.textContent.includes('Use Bb'));
+			.find((input) => input.closest('label')?.textContent.includes('Use B♭'));
 
 		expect(enharmonicCheckbox).toBeTruthy();
 		expect(enharmonicCheckbox.checked).toBe(true);
@@ -832,7 +874,7 @@ describe('KeyboardEmbed', function() {
 		});
 
 		const dialog = getLatestDialog();
-		const modeSelect = dialog.querySelector('.music-keyboard-edit-mode select');
+		const modeSelect = queryCombobox(dialog, '.music-keyboard-edit-mode');
 
 		act(() => {
 			selectValue(modeSelect, 'scale');
@@ -1047,9 +1089,14 @@ function setInputValue(input, value) {
 }
 
 function selectValue(select, value) {
-	select.value = value;
-	select.dispatchEvent(new Event('input', { bubbles: true }));
-	select.dispatchEvent(new Event('change', { bubbles: true }));
+	const input = select.parentElement.querySelector('input');
+
+	setInputValue(input, value);
+	input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function queryCombobox(container, selector) {
+	return container.querySelector(`${selector} [role="combobox"]`);
 }
 
 function dispatchPointerEvent(target, type, options = {}) {
@@ -1065,6 +1112,38 @@ function dispatchPointerEvent(target, type, options = {}) {
 	}
 
 	target.dispatchEvent(event);
+}
+
+function makeAppDataMock(initialValues = {}) {
+	const values = { ...initialValues };
+	const listeners = {};
+
+	return {
+		get(name, defaultValue) {
+			return values[name] === undefined ? defaultValue : values[name];
+		},
+		listen(eventName, listener) {
+			listeners[eventName] = listeners[eventName] || [];
+			listeners[eventName].push(listener);
+			return listener;
+		},
+		unlisten(eventName, listener) {
+			listeners[eventName] = (listeners[eventName] || [])
+				.filter((existingListener) => existingListener !== listener);
+		},
+		update(name, value) {
+			values[name] = value;
+			(listeners.updated || []).forEach((listener) => listener(name, value));
+			(listeners[`updated:${name}`] || []).forEach((listener) => listener(value));
+		},
+		watch(name, defaultValue) {
+			if (values[name] === undefined) {
+				values[name] = defaultValue;
+			}
+
+			return values[name];
+		},
+	};
 }
 
 function closeOpenDialog() {

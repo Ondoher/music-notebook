@@ -199,8 +199,8 @@ A loadable can define:
 
 This lets the app defer loading some code while still preserving build-time structural knowledge.
 
-For the POC, the editor feature declares a `musicxml-player` loadable for `@music-i18n/musicxml-player`.
-The app loads it through `@polylith/loader` only when playback is requested.
+The `player` feature declares a `musicxml-player` loadable for `@music-i18n/musicxml-player`.
+The app loads it through `@polylith/loader` only when playback is requested through the `player` registry service.
 
 Important nuance:
 
@@ -209,7 +209,7 @@ Important nuance:
 - the watcher rebuilds changed inputs, but it should be restarted after build configuration changes such as adding a loadable or copied resource
 
 The player also needs its audio worklet resource copied into the built app.
-That is handled through the editor feature's `resources` entry for `spessasynth_processor.js`.
+That is handled through the player feature's `resources` entry for `spessasynth_processor.js`.
 
 Current planning stance:
 

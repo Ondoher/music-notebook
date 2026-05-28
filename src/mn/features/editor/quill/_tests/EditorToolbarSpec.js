@@ -38,14 +38,22 @@ describe('EditorToolbar', function() {
 			const embed = result.container.querySelector('.music-keyboard-embed');
 			const payload = JSON.parse(embed.dataset.keyboardPayload);
 			const dialog = getLatestDialog();
-			const displaySelect = dialog.querySelector('.music-display-options select');
+			const contentTypeSelect = dialog.querySelector('.music-keyboard-edit-mode [role="combobox"]');
+			const displaySelect = dialog.querySelector('.music-display-options-field [role="combobox"]');
 
 			expect(button).toBeTruthy();
 			expect(button.getAttribute('aria-label')).toBe(label);
 			expect(button.querySelector('svg')).toBeTruthy();
 			expect(payload.displayMode).toBe(displayMode);
+			expect(payload.chordId).toBeUndefined();
+			expect(payload.displayKey).toBe('C');
+			expect(payload.initialEditMode).toBeUndefined();
+			expect(payload.label).toBe('C major key');
+			expect(payload.notes).toEqual([]);
 			expect(payload.openEditor).toBeUndefined();
-			expect(displaySelect.value).toBe(displayMode);
+			expect(contentTypeSelect.textContent).toBe('None');
+			expect(dialog.querySelector('.mn-chord-builder')).toBeFalsy();
+			expect(displaySelect.textContent).toBe(displayMode === 'keyboard' ? 'Keyboard' : 'Staff');
 			expect(getInsertedMusicPayload(result.container).displayMode).toBe(displayMode);
 		});
 	});

@@ -1,0 +1,56 @@
+.mn-button.MuiButton-root {
+	border-radius: 6px;
+	font-family: var(--mn-font-application);
+	font-weight: 700;
+	text-transform: none;
+}
+
+.mn-button-small.MuiButton-root {
+	min-height: 32px;
+	padding: 4px 12px;
+	font-size: 0.875rem;
+}
+
+.mn-button-large.MuiButton-root {
+	min-height: 42px;
+	padding: 8px 18px;
+	font-size: 1rem;
+}
+
+.mn-button-primary.MuiButton-root {
+	border: 1px solid var(--primary-button-border);
+	background: var(--primary-button-background);
+	color: var(--primary-button-text);
+}
+
+.mn-button-primary.MuiButton-root:hover,
+.mn-button-primary.MuiButton-root:focus-visible {
+	border-color: var(--primary-button-border);
+	background: var(--button-background-hover);
+	color: var(--primary-button-text);
+}
+
+.mn-button-secondary.MuiButton-root {
+	border: 1px solid var(--secondary-button-border);
+	background: var(--secondary-button-background);
+	color: var(--secondary-button-text);
+}
+
+.mn-button-secondary.MuiButton-root:hover,
+.mn-button-secondary.MuiButton-root:focus-visible {
+	border-color: var(--primary-button-border);
+	background: var(--button-background-hover);
+	color: var(--primary-button-text);
+}
+
+.mn-button-selected.MuiButton-root {
+	border-color: var(--primary-button-border);
+	background: var(--button-background-hover);
+	color: var(--primary-button-text);
+}
+
+.mn-button.MuiButton-root.Mui-disabled {
+	border-color: var(--disabled-button-border);
+	background: var(--disabled-button-background);
+	color: var(--disabled-button-text);
+}

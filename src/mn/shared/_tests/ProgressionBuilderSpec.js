@@ -69,6 +69,40 @@ describe('ProgressionBuilder', function() {
 		expect(halfDiminished.payload.notes).toEqual(['B4', 'D5', 'F5', 'A5']);
 	});
 
+	it('supports typed half-diminished Roman numeral aliases', function() {
+		const circleSlash = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'viio/7' });
+		const slashCircle = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'vii/o7' });
+
+		expect(circleSlash.isValid).toBeTrue();
+		expect(circleSlash.effectiveRomanNumeral).toBe('vii\u00f87');
+		expect(circleSlash.chordSymbol).toBe('Bm7b5');
+		expect(circleSlash.payload.label).toBe('C: vii\u00f87');
+		expect(circleSlash.payload.notes).toEqual(['B4', 'D5', 'F5', 'A5']);
+		expect(slashCircle.payload.notes).toEqual(circleSlash.payload.notes);
+	});
+
+	it('supports typed diminished Roman numeral aliases', function() {
+		const compactAlias = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'iidim' });
+		const wordAlias = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'ii diminished' });
+
+		expect(compactAlias.isValid).toBeTrue();
+		expect(compactAlias.effectiveRomanNumeral).toBe('ii\u00b0');
+		expect(compactAlias.chordSymbol).toBe('Ddim');
+		expect(compactAlias.payload.notes).toEqual(['D4', 'F4', 'Ab4']);
+		expect(wordAlias.payload.notes).toEqual(compactAlias.payload.notes);
+	});
+
+	it('supports typed augmented Roman numeral aliases', function() {
+		const compactAlias = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'Iaug' });
+		const wordAlias = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'I augmented' });
+
+		expect(compactAlias.isValid).toBeTrue();
+		expect(compactAlias.effectiveRomanNumeral).toBe('I+');
+		expect(compactAlias.chordSymbol).toBe('Caug');
+		expect(compactAlias.payload.notes).toEqual(['C4', 'E4', 'G#4']);
+		expect(wordAlias.payload.notes).toEqual(compactAlias.payload.notes);
+	});
+
 	it('supports figured bass inversions on Roman numerals', function() {
 		const triadFirstInversion = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'I6' });
 		const triadSecondInversion = buildKeyboardProgressionPayload({ key: 'C', romanNumeral: 'I64' });

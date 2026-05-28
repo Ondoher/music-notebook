@@ -1,0 +1,48 @@
+.music-keyboard-editor-dialog {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding-top: 10px;
+	font-family: var(--mn-font-application);
+}
+
+.music-keyboard-dialog .MuiDialog-paper {
+	font-family: var(--mn-font-application);
+}
+
+.music-keyboard-dialog .mn-base-dialog__content {
+	padding-top: 12px;
+}
+
+.music-key-control-row,
+.music-key-control-row-single {
+	display: block;
+	min-width: 0;
+}
+
+.music-keyboard-edit-mode,
+.music-display-options,
+.music-display-options-field {
+	min-width: 0;
+}
+
+.music-display-options {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.music-display-options-field {
+	flex: 1 1 180px;
+}
+
+.music-display-options-field-checkbox {
+	flex: 0 0 auto;
+	align-self: flex-start;
+	margin-top: 8px;
+}
+
+.music-keyboard-editor-dialog > .music-staff-preview {
+	height: 260px;
+}

@@ -7,7 +7,7 @@ Capture the current architectural direction for `music-notebook` in a way that b
 - the practical, pattern-extracting style used in `modmod`
 - the scoped, decision-oriented synthesis style used in `poly-gc-react`
 
-This note is intentionally early-stage. It should be read as:
+This note is a foundation brief for the MVP planning phase. It should be read as:
 
 - a working architecture brief
 - a place to record preferred patterns
@@ -119,18 +119,19 @@ A useful boundary from both reference codebases is:
 - services provide the app-facing or UI-facing interface over those models
 - views should prefer consuming services rather than reaching directly into models
 
-### 5. Completed Spike, Durable Learnings
+### 5. Completed Spike And Cleanup, Durable Learnings
 
-The first editor/embed spike has now wrapped successfully enough to move into real application planning.
+The first editor/embed spike and post-POC React cleanup have now wrapped successfully enough to move into MVP implementation planning.
 
 That leaves an important architectural rule:
 
-- POC code may still be temporary
+- the completed cleanup is the current React/component baseline
+- some POC-era payload and workflow choices may still be temporary
 - learned boundaries, constraints, and successful patterns should be treated as durable
 - the POC payload shape should not be mistaken for the final notebook document model
 
 The goal is not to freeze the first structure forever.
-The goal is to carry forward the proven editor/embed approach while designing the real document, persistence, and application seams deliberately.
+The goal is to carry forward the proven editor/embed approach and cleaned-up component structure while designing the real document, persistence, and application seams deliberately.
 
 ## Working Conventions To Borrow
 
