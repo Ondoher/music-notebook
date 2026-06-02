@@ -1,4 +1,5 @@
-import { Chord, Note } from 'tonal';
+import { Chord } from 'tonal';
+import { normalizeAscendingNotes } from './music-notes.js';
 
 const DEFAULT_OCTAVE = 4;
 
@@ -79,22 +80,7 @@ export function getChordSymbolForInversion(chordName, inversion) {
 }
 
 function getInvertedNotes(notes, octave, inversion) {
-	let previousMidi = null;
-
-	return rotate(notes, inversion)
-		.map((note) => {
-			let noteOctave = octave;
-			let midi = Note.midi(`${note}${noteOctave}`);
-
-			while (midi !== null && previousMidi !== null && midi <= previousMidi) {
-				noteOctave += 1;
-				midi = Note.midi(`${note}${noteOctave}`);
-			}
-
-			previousMidi = midi;
-
-			return `${note}${noteOctave}`;
-		});
+	return normalizeAscendingNotes(rotate(notes, inversion), octave);
 }
 
 function getBaseChord(chordName, chord) {

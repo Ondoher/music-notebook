@@ -8,7 +8,7 @@ function makeLocalizeMock(overrides = {}) {
 			return 'en-US-u-ms-ussystem';
 		},
 		listen() {},
-		t(phrase) {
+		translate(phrase) {
 			if (phrase === 'empty') {
 				return '';
 			}
@@ -23,7 +23,7 @@ function makeLocalizeMock(overrides = {}) {
 
 			return '';
 		},
-		t_locale(locale, phrase) {
+		translateLocale(locale, phrase) {
 			return `${locale}:${phrase}`;
 		},
 		unlisten() {},
@@ -94,14 +94,28 @@ describe('LocaleString', function() {
 		expect(result.container.children.length).toBe(0);
 	});
 
-	it('uses fallback text when no translation is available', function() {
-		harness = createTestHarness();
+	it('reports missing translations without disrupting rendering', function() {
+		const localize = makeLocalizeMock();
+		spyOn(console, 'error');
+
+		harness = createTestHarness()
+			.withService('localize', localize)
+			.withContext({ localize });
 
 		const result = harness.render(LocaleString, {
-			fallback: 'Edit mode',
 			phrase: 'missing_phrase',
 		});
 
-		expect(result.container.textContent).toBe('Edit mode');
+		expect(result.container.textContent).toBe('missing_phrase');
+		expect(console.error).toHaveBeenCalledWith('Missing translation for phrase "missing_phrase".');
+	});
+
+	it('reports when no localization service is available', function() {
+		const component = new LocaleString({ phrase: 'missing_phrase' });
+		component.setupLocaleService = () => {};
+		spyOn(console, 'error');
+
+		expect(component.getTranslation()).toBe('');
+		expect(console.error).toHaveBeenCalledWith('LocaleString cannot render without a localize service.');
 	});
 });

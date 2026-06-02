@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Registry } from '@polylith/core';
 
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
+import { createDefaultLocalize } from '../common/default-localize.js';
 
 if (typeof globalThis !== 'undefined') {
 	globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,7 +19,9 @@ export default class TestHarness {
 	constructor() {
 		this.app = {};
 		this.props = {};
-		this.context = {};
+		this.context = {
+			localize: createDefaultLocalize(),
+		};
 		this.registry = new Registry();
 		this.container = null;
 		this.root = null;

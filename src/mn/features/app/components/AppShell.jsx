@@ -1,5 +1,8 @@
 import React from 'react';
 import LocaleString from '../../../components/LocaleString.jsx';
+import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
+import DocumentTabs from './DocumentTabs.jsx';
+import MainMenu from './MainMenu.jsx';
 
 /**
  * Renders the app shell around the active page supplied by the app-view service.
@@ -7,6 +10,8 @@ import LocaleString from '../../../components/LocaleString.jsx';
  * @extends {React.Component<AppShellProps, AppShellState>}
  */
 export default class AppShell extends React.Component {
+	static contextType = MusicNotebookContext;
+
 	/**
 	 * Initializes app shell state from props.
 	 *
@@ -126,11 +131,26 @@ export default class AppShell extends React.Component {
 	 * @returns {React.ReactElement}
 	 */
 	render() {
+		const documentModel = this.props.documentModel
+			|| this.context?.registry?.subscribe?.('document-model')
+			|| null;
+
 		return (
 			<div className="mn-shell">
+				<header className="mn-shell-topbar">
+					<MainMenu
+						appTitle={this.props.appTitle}
+						mainMenu={this.props.mainMenu}
+					/>
+					<div className="mn-shell-account">
+						{this.props.accountComponent || null}
+					</div>
+				</header>
 				<main className="mn-shell-editor" aria-label={this.props.appTitle || 'Music Notebook'}>
 					{this.renderPageRegion()}
 				</main>
+				<DocumentTabs documentModel={documentModel} />
+				{this.props.featureComponents || null}
 			</div>
 		);
 	}

@@ -1,347 +1,311 @@
 .editor-page {
 	display: grid;
-	grid-template-rows: auto minmax(0, 1fr) auto;
-	gap: 12px;
+	grid-template-rows: auto minmax(0, 1fr);
+	height: 100%;
 	min-height: 100%;
 	box-sizing: border-box;
-	padding: 16px;
-}
-
-.editor-page-meta {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 16px;
-	max-width: 980px;
-	width: 100%;
-	margin: 0 auto;
-}
-
-.editor-page-meta > div {
-	display: grid;
-	gap: 4px;
-}
-
-.editor-page-meta h2 {
-	margin: 0;
-	color: var(--text-dark);
-	font-size: 16px;
-	line-height: 1.2;
-}
-
-.editor-page-meta span {
-	color: var(--text-medium);
-	font-size: 13px;
+	padding: 0;
 }
 
 .editor-page-surface {
-	max-width: 980px;
+	overflow: auto;
 	width: 100%;
+	height: 100%;
 	min-height: 0;
-	margin: 0 auto;
 	box-sizing: border-box;
-	border: 1px solid var(--mui-palette-divider);
-	background: var(--mui-palette-background-paper);
-	box-shadow: 0 12px 32px rgba(31, 35, 42, 0.08);
+	background: #ffffff;
 }
 
-.editor-page-surface .ql-toolbar.ql-snow {
+.mn-editor-split-workspace {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(320px, 48%);
+	width: 100%;
+	min-height: 100%;
+	box-sizing: border-box;
+}
+
+.mn-document-workspace {
+	display: flex;
+	align-items: stretch;
+	justify-content: flex-start;
+	width: 100%;
+	min-height: 100%;
+	box-sizing: border-box;
+	padding: 24px;
+	overflow: auto;
+}
+
+.mn-editor-split-workspace > .mn-document-workspace {
+	min-width: 0;
+	border-right: 1px solid var(--mui-palette-divider);
+}
+
+.mn-document-sheet {
+	display: grid;
+	grid-template-rows: minmax(0, 1fr);
+	flex: 0 0 auto;
+	width: var(--mn-page-width);
+	min-height: var(--mn-page-height);
+	box-sizing: border-box;
+	padding:
+		var(--mn-margin-top)
+		var(--mn-margin-right)
+		var(--mn-margin-bottom)
+		var(--mn-margin-left);
+	background: #ffffff;
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.22);
+}
+
+.mn-document-sheet--continuous {
+	--mn-content-width: calc(var(--mn-page-width) - var(--mn-margin-left) - var(--mn-margin-right));
+	width: var(--mn-content-width, 100%);
+	min-width: var(--mn-content-width);
+	max-width: var(--mn-content-width);
+	min-height: 100%;
+	padding: 0;
+	box-shadow: none;
+}
+
+.mn-document-content {
+	position: relative;
+	width: var(--mn-editor-overflow-width, 100%);
+	min-width: 0;
+	max-width: none;
+	min-height: calc(var(--mn-page-height) - var(--mn-margin-top) - var(--mn-margin-bottom));
+	box-sizing: border-box;
+	background: #ffffff;
+}
+
+.mn-document-sheet--continuous .mn-document-content {
+	min-height: 100%;
+}
+
+.mn-document-sheet--continuous .mn-document-content::after {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 4;
+	display: block;
+	width: var(--mn-content-width, 100%);
+	box-sizing: border-box;
+	border-right: 1px dotted rgba(32, 36, 44, 0.34);
+	content: "";
+	pointer-events: none;
+}
+
+.mn-line-selection-gutter {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -28px;
+	z-index: 3;
+	width: 24px;
+	cursor: ne-resize;
+	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath fill='white' stroke='black' stroke-linejoin='round' stroke-width='1.5' d='M25 3 7 16l7 1.5-4 8 3.6 1.8 4-8L23 25z'/%3E%3C/svg%3E") 7 16, ne-resize;
+	user-select: none;
+}
+
+.mn-table-column-selection-cursor,
+.mn-table-column-selection-cursor .ql-editor,
+.mn-table-column-selection-cursor .ql-editor * {
+	cursor: s-resize;
+	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath fill='black' d='M16 28 5 12h7V3h8v9h7z'/%3E%3C/svg%3E") 16 18, s-resize;
+}
+
+.mn-editor-toolbar {
 	position: sticky;
 	top: 0;
 	z-index: 1;
-	border: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 42px;
+	box-sizing: border-box;
 	border-bottom: 1px solid var(--mui-palette-divider);
+	padding: 4px 12px;
 	background: var(--mui-palette-background-paper);
 }
 
-.editor-page-surface .ql-container.ql-snow {
-	min-height: calc(100vh - 162px);
+.mn-editor-toolbar__section {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.mn-editor-toolbar__control {
+	display: inline-flex;
+	align-items: center;
+}
+
+.mn-editor-toolbar__font-size .font-size-picker {
+	width: 150px;
+}
+
+.mn-editor-toolbar__font-size .font-size-picker__input {
+	min-width: 64px;
+}
+
+.mn-editor-toolbar__select .base-select {
+	width: 140px;
+}
+
+.mn-editor-toolbar__button[aria-disabled="true"] {
+	color: var(--mui-palette-action-disabled);
+	cursor: default;
+}
+
+.mn-editor-toolbar__button[aria-pressed="true"] {
+	background: rgba(var(--mui-palette-primary-mainChannel) / 0.12);
+	color: var(--mui-palette-primary-main);
+}
+
+.mn-editor-toolbar__fallback-icon {
+	display: inline-block;
+	max-width: 24px;
+	overflow: hidden;
+	font-size: 10px;
+	line-height: 1;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mn-document-content .ql-container.ql-snow {
+	width: var(--mn-content-width, 100%);
+	min-width: 0;
+	max-width: var(--mn-content-width, 100%);
+	height: auto;
+	min-height: 0;
 	border: 0;
+	background: #ffffff;
 	font-size: 16px;
 }
 
-.editor-page-surface .ql-editor {
-	min-height: calc(100vh - 162px);
-	padding: 28px 34px;
+.mn-document-content .ql-editor {
+	width: var(--mn-content-width, 100%);
+	min-width: 0;
+	max-width: var(--mn-content-width, 100%);
+	height: 100%;
+	min-height: 100%;
+	padding: 0;
+	background: #ffffff;
+	box-sizing: border-box;
 	font-family: var(--mn-font-notebook);
-	font-size: 20px;
+	font-size: var(--mn-document-font-size, 12px);
 	line-height: 1.58;
+	overflow-wrap: break-word;
 }
 
-.editor-page-surface .ql-editor::after {
+.mn-document-content .ql-editor figure,
+.mn-document-content .ql-editor .music-keyboard-embed {
+	max-width: 100%;
+}
+
+.mn-document-content .ql-editor .ql-table-wrapper {
+	display: inline-block;
+	width: max-content;
+	min-width: 100%;
+	max-width: none;
+	overflow: visible;
+}
+
+.mn-document-content .table-up-toolbox {
+	width: var(--mn-editor-overflow-width, 100%) !important;
+	overflow: visible;
+}
+
+.mn-document-content .ql-editor::after {
 	display: block;
 	clear: both;
 	content: "";
 }
 
-.music-keyboard-embed {
-	display: block;
-	float: left;
+.mn-document-workspace .ql-editor .ql-paragraph-start-next-page {
 	position: relative;
-	width: var(--music-embed-width, 456px);
-	height: var(--music-embed-height, 266px);
-	max-width: calc(100% - 18px);
-	box-sizing: border-box;
-	margin: 8px 18px 12px 0;
-	border: 0;
-	border-radius: 0;
-	padding: 0;
-	overflow: hidden;
-	background: transparent;
 }
 
-.music-keyboard-embed-content {
-	height: 100%;
-	min-height: 0;
-}
-
-.music-embed-resize-handle {
+.mn-document-workspace .ql-editor .ql-paragraph-start-next-page::before {
 	position: absolute;
 	right: 0;
-	bottom: 0;
-	z-index: 20;
-	width: 18px;
-	height: 18px;
-	box-sizing: border-box;
-	border: 0;
-	border-radius: 4px 0 0;
-	padding: 0;
-	background:
-		linear-gradient(135deg, transparent 0 48%, rgba(32, 36, 44, 0.72) 50% 54%, transparent 56%),
-		linear-gradient(135deg, transparent 0 64%, rgba(32, 36, 44, 0.72) 66% 70%, transparent 72%),
-		rgba(255, 254, 250, 0.84);
-	cursor: nwse-resize;
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 120ms ease;
-}
-
-.music-keyboard-embed:hover .music-embed-resize-handle,
-.music-keyboard-embed:focus-within .music-embed-resize-handle {
-	opacity: 1;
-	pointer-events: auto;
-}
-
-.music-embed-resize-handle:focus-visible {
-	opacity: 1;
-	outline: 2px solid rgba(var(--mui-palette-primary-mainChannel) / 0.34);
-	outline-offset: 2px;
-}
-
-.music-embed-resize-label {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	margin: -1px;
-	overflow: hidden;
-	clip: rect(0 0 0 0);
-	white-space: nowrap;
-}
-
-.music-embed-toolbar {
-	position: absolute;
-	top: 8px;
-	right: 8px;
-	z-index: 20;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 120ms ease;
-}
-
-.music-keyboard-edit-button,
-.music-keyboard-play-button {
-	min-height: 28px;
-	border: 1px solid var(--primary-button-border);
-	border-radius: 6px;
-	padding: 0 10px;
-	background: var(--primary-button-background);
-	color: var(--primary-button-text);
-	font: inherit;
-	font-size: 12px;
-	font-weight: 700;
-	cursor: pointer;
-}
-
-.music-keyboard-play-button:disabled {
-	border-color: var(--disabled-button-border);
-	background: var(--disabled-button-background);
-	color: var(--disabled-button-text);
-	cursor: wait;
-	opacity: 0.72;
-}
-
-.music-keyboard-embed:hover .music-embed-toolbar,
-.music-keyboard-embed:focus-within .music-embed-toolbar {
-	opacity: 1;
-	pointer-events: auto;
-}
-
-.music-keyboard-edit-button:hover,
-.music-keyboard-edit-button:focus-visible,
-.music-keyboard-play-button:hover,
-.music-keyboard-play-button:focus-visible {
-	border-color: var(--primary-button-border);
-	background: var(--button-background-hover);
-	color: var(--primary-button-text);
-	outline: 2px solid rgba(var(--mui-palette-primary-mainChannel) / 0.24);
-	outline-offset: 2px;
-}
-
-.music-keyboard-embed-piano {
-	width: 100%;
-	max-width: 100%;
-	overflow: hidden;
-	font-family: var(--mn-font-notebook);
-	pointer-events: none;
-}
-
-.music-keyboard-embed > .music-keyboard-embed-content > .music-keyboard-embed-piano {
-	height: 100%;
-}
-
-.music-keyboard-embed-piano .ReactPiano__Keyboard {
-	height: 118px;
-}
-
-.music-keyboard-embed-piano .ReactPiano__Key--accidental {
-	border-color: #f7f8f6;
-	background: #747474;
-}
-
-.music-keyboard-embed-piano .ReactPiano__Key {
-	cursor: default;
-}
-
-.music-keyboard-embed-has-highlights .ReactPiano__Key--natural {
-	border-color: #c8d0cd;
-	background: #edf0ec;
-}
-
-.music-keyboard-embed-has-highlights .ReactPiano__Key--accidental {
-	border-color: #e6ebe8;
-	background: #d0d7d4;
-}
-
-.music-keyboard-embed-piano .music-keyboard-key-highlighted {
-	border-color: #346f68;
-	background: #477c76;
-	color: #fffefa;
-}
-
-.music-keyboard-embed-piano .ReactPiano__Key--accidental.music-keyboard-key-highlighted {
-	border-color: #346f68;
-	border-top-color: #346f68;
-	background: #477c76;
-}
-
-.music-keyboard-embed-piano .music-keyboard-key-root {
-	box-shadow: inset 0 -4px 0 #20242c;
-}
-
-.music-keyboard-embed-piano .ReactPiano__NoteLabelContainer {
-	display: flex;
-	align-items: flex-end;
-	justify-content: center;
-	padding-bottom: 10px;
-}
-
-.music-keyboard-embed-piano .ReactPiano__NoteLabel {
-	line-height: 1;
-}
-
-.music-keyboard-embed-piano .music-keyboard-key-highlighted .ReactPiano__NoteLabel--natural {
-	color: #fffefa;
-	font-weight: 700;
-}
-
-.music-keyboard-embed-piano .music-keyboard-spelled-label {
-	font: inherit;
-}
-
-.music-keyboard-embed-piano .music-keyboard-note-accidental {
-	font-family: "Bravura Text", "Bravura", "Noto Music", "Noto Sans Symbols 2", "Segoe UI Symbol", "DejaVu Sans", serif;
-	font-size: 0.95em;
-	font-weight: inherit;
-	line-height: 1;
-}
-
-.music-keyboard-embed-piano .music-keyboard-accidental-marker {
-	display: none;
-	color: #fffefa;
-	font: inherit;
-	line-height: 1;
-}
-
-.music-keyboard-embed-piano .music-keyboard-key-highlighted .music-keyboard-accidental-marker {
-	display: inline-block;
-}
-
-.music-staff-preview {
-	display: flex;
-	align-items: center;
-	justify-content: flex-start;
-	width: 100%;
-	height: 100%;
-	max-width: 100%;
-	min-height: 0;
-	overflow: hidden;
-	pointer-events: none;
-	background: rgba(255, 254, 250, 0.74);
-}
-
-.music-staff-osmd {
-	width: 100%;
-	height: 100%;
-	min-height: 0;
-}
-
-.music-staff-osmd svg {
+	bottom: 100%;
+	left: 0;
 	display: block;
-	width: 100%;
-	height: 100%;
-	max-width: 100%;
-	max-height: 100%;
+	border-top: 1px dotted rgba(32, 36, 44, 0.28);
+	content: "";
+	pointer-events: none;
 }
 
-.editor-debug-document {
-	max-width: 980px;
-	width: 100%;
-	margin: 0 auto;
-	color: var(--text-medium);
+.mn-white-space-overlay {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 2;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.mn-white-space-marker {
+	position: absolute;
+	display: block;
+	color: rgba(32, 36, 44, 0.32);
+	font-family: var(--mn-font-ui);
+	font-size: 0.72em;
+	font-weight: 500;
+	line-height: 1;
+	text-align: center;
+	transform: translate(-50%, -50%);
+	user-select: none;
+}
+
+.mn-white-space-marker--paragraph {
+	color: rgba(32, 36, 44, 0.42);
+	font-size: 0.8em;
+	transform: translate(0, -50%);
+}
+
+.mn-paged-preview {
+	position: relative;
+	min-width: 0;
+	min-height: 100%;
+	box-sizing: border-box;
+	overflow: auto;
+	background: #f1f3f4;
+}
+
+.mn-paged-preview__status {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--mui-palette-divider);
+	padding: 6px 10px;
+	background: rgba(255, 255, 255, 0.92);
+	color: var(--mui-palette-text-secondary);
+	font-family: var(--mn-font-ui);
 	font-size: 12px;
 }
 
-.editor-debug-document summary {
-	cursor: pointer;
-	font-weight: 700;
-}
-
-.editor-debug-document pre {
-	max-height: 220px;
-	overflow: auto;
-	box-sizing: border-box;
-	border: 1px solid var(--mui-palette-divider);
-	border-radius: 6px;
-	padding: 10px;
-	background: var(--mui-palette-background-paper);
-	color: var(--mui-palette-text-primary);
-	white-space: pre-wrap;
+.mn-paged-preview__output {
+	min-height: 100%;
 }
 
 @media (max-width: 760px) {
-	.editor-page {
-		padding: 10px;
+	.mn-editor-split-workspace {
+		grid-template-columns: minmax(0, 1fr);
 	}
 
-	.editor-page-meta {
-		display: grid;
-		gap: 4px;
+	.mn-paged-preview {
+		display: none;
 	}
 
-	.editor-page-surface .ql-editor {
-		padding: 20px 18px;
+	.mn-document-sheet--continuous {
+		width: calc(var(--mn-page-width) - var(--mn-margin-left) - var(--mn-margin-right));
+		padding: 0;
+	}
+
+	.mn-document-workspace {
+		padding: 18px;
 	}
 }

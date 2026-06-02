@@ -1,6 +1,11 @@
 import './theme.js';
 import './app-data.js';
+import './css-vars.js';
+import './document-format.js';
+import './icon-registry.js';
+import './object-type-registry.js';
 import './localize.js';
+import './io.js';
 import './url.js';
 import './app-pages.js';
 import './views.js';

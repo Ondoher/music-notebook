@@ -10,15 +10,22 @@ The MVP should turn the proven POC mechanics into a coherent small application w
 
 The editor/embed POC is proven and the post-POC React cleanup is complete.
 
-MVP implementation planning is now the active phase.
-The first planning priority is to define the durable notebook document model and the MVP implementation sequence around it.
+MVP implementation is now underway.
+The first-pass notebook document model exists as the `document-model` service.
+The first account/session slice and Mongo-backed document persistence slice also exist.
+The document model is still the client implementation seam for tabs, active editor content, document settings, and generic document objects; the server document record wraps that snapshot with ownership and metadata.
+The first table implementation slice is now active through `quill-table-up` and a dedicated `table` feature.
+That slice includes table insertion, row/column selection, keyboard cell navigation, column resizing, a feature-owned context menu view, and row/column/table operations.
 
 Near-term planning should cover:
 
-- notebook document model and serialization
+- hardening document save/open/new/rename/delete flows
+- completing remaining document commands such as delete and duplicate UI
+- hardening notebook document serialization around the current `document-model` snapshot
 - Quill Delta consolidation with structured inline chord objects and larger music-object payloads
 - document-level settings such as page layout and chord display style
-- persistence and auth service seams
+- hardening table paste, table serialization/reload confidence, read-view pagination, and export behavior
+- persistence and auth service seams as they move from first pass to durable behavior
 - PDF export boundary and viable export strategy
 - inline chord object insertion/editing behavior
 - chord parser/normalizer implementation strategy, including whether to use `chord-symbol`
@@ -26,12 +33,44 @@ Near-term planning should cover:
 
 For context bootstrap, assume:
 
-- the POC mechanics are proven but not the durable document model
+- the POC mechanics are proven
+- the first-pass document model and backend persistence wrapper are implemented, but the durable notebook format is not final
+- account creation, login, logout, session restore, bearer refresh, and last-open-document metadata are implemented
+- document list/create/save/open/save-as/rename/duplicate/delete routes exist server-side
+- client document new/open/save/save-as/rename flows exist; delete/duplicate UI still needs hardening
 - React cleanup is done and new substantial React components should be class components
 - shared music editing controls now live in `src/mn/components`
 - shared music theory helpers now live flat under `src/mn/shared`
 - playback is behind the `player` feature service
+- `accounts` owns account status, dialogs, `account-ui`, and logout intent flow
+- `document` owns document command dialogs and save/open/rename orchestration
+- `table` owns table selection, interaction handling, context-menu view registration, and table operation commands
+- notebook tabs are persisted document metadata, not Quill objects
 - chord parsing decisions are tracked in [Chord Name Parsing](chord-name-parsing.md)
+
+## Current Implementation Baseline
+
+Current MVP implementation pieces:
+
+- `document-model` service in `src/mn/models/document-model.js`
+- document typography default of 12px
+- document-global paragraph styles: `Normal`, `Header 1`, `Header 2`, and `Header 3`
+- main app shell with menu, editor region, and bottom document tabs
+- bottom document tabs rendered by `src/mn/features/app/components/DocumentTabs.jsx`
+- tab add, select, rename, and reorder through the document model
+- tab rename starts on double click
+- tab drag-and-drop reordering uses `dnd-kit`
+- `EditorPage` loads Quill content from the active document tab and writes user edits back to that tab
+- `document-format` service plus feature controller for document-level page size, orientation, margins, and base font size
+- `paragraph-format` feature for paragraph style, direct paragraph formatting, alignment, and start behavior
+- `editor-toolbar` service for grouped editor toolbar controls
+- `music-object` feature owns keyboard/staff embed behavior, edit dialog, object-format dialog, and embed sessions
+- `player` feature owns MusicXML playback through a registry service
+- `table` feature owns table selection, keyboard navigation, context-menu view registration, and row/column/table operation commands
+- `editor-interactions` lets features register Quill/editor DOM event handlers without moving feature behavior into `EditorPage`
+- `editor-views` lets features register named React views and request that `EditorPage` mount them with feature-provided props
+
+See [Document Model](document-model.md) for the current document-model service contract.
 
 ## Current MVP Thesis
 
@@ -39,8 +78,9 @@ The MVP is an editor-first music notebook where a user can:
 
 - write rich text notes
 - add tables to notes
-- jump between notebook sections with visible tabs
-- switch the editor between continuous view and page view
+- jump between notebook tabs
+- write in an edit view backed by the continuous `Quill` editor stream
+- review document layout in a read view
 - insert page breaks
 - insert a keyboard music object
 - insert a staff music object
@@ -78,12 +118,12 @@ Music objects support explanation, illustration, and study rather than full comp
 
 - single editor-first document surface
 - document-focused application flow
-- visible tabs for jumping between notebook sections
-- add, delete, and rename sections from the document tab list
+- visible tabs for jumping between notebook tabs
+- add, delete, rename, join, and reorder tabs from the document tab list
 - drag-and-drop tab reordering
-- continuous editor view
-- page editor view
-- view toggle between page and continuous modes
+- edit view backed by the continuous `Quill` editor stream
+- read view that renders paginated document layout
+- view toggle between edit and read modes
 - document zoom
 - possible standard top menu in addition to formatting and icon toolbar controls
 - page breaks
@@ -92,8 +132,8 @@ Music objects support explanation, illustration, and study rather than full comp
 - global page margins
 - paragraph styling with space before and space after
 - paragraph indentation as a paragraph setting
-- title paragraph style
-- at least one header paragraph style
+- font size as a paragraph setting
+- predefined paragraph styles: Normal, Header 1, Header 2, and Header 3
 - rich text editing through `Quill`
 - text-only paste
 - text-only copy
@@ -113,8 +153,12 @@ Music objects support explanation, illustration, and study rather than full comp
 - dedicated music-object edit dialog
 - visually simple embedded object rendering
 - optional captions for music embeds
+- music embed caption text can include context-aware `{{short}}`, `{{long}}`, and `{{key}}` tokens for values such as chord notation, friendly chord labels, keys, or scales
+- music embed caption formatting with style, font size, alignment, bold, italic, and underline
 - accessible embedded object toolbar with edit, play, border, and resize controls
-- music embeds default to half the effective page width
+- music embeds default to the available content width
+- music embed rendering is width-driven and natural-height, without clipping
+  captions or forcing a fixed preview height
 - music embed captions appear under the embed
 - music embeds can convert between keyboard and staff modes through the edit dialog
 - inline chord objects render as formatted chord symbols inside the text flow
@@ -149,6 +193,7 @@ Music objects support explanation, illustration, and study rather than full comp
 ### Should Have
 
 - basic document title or notebook name
+- current document name appears in the browser title, not as persistent on-screen header text
 - basic notebook section labels
 - clear empty document state
 - color support if a spike proves the scope is manageable
@@ -161,6 +206,8 @@ Music objects support explanation, illustration, and study rather than full comp
 - shared tests for document serialization
 - UI tests for the highest-risk editor/embed workflows
 - preservation of the in-progress anonymous document after account creation
+- session restore through `HttpOnly` cookie and fresh bearer-token exchange
+- last-open-document restore after successful login/session restore
 - notebook-style background lines if they do not complicate editing or export
 
 ### Can Wait
@@ -205,16 +252,42 @@ It is not required for MVP.
 Offline mode is a serious consideration for the PWA direction, especially for tablet use and document-focused writing.
 The exact MVP offline commitment is undecided until investigation.
 
-Color support is a serious MVP consideration, but the exact scope requires a spike before it becomes a firm feature commitment.
-The MVP should include at least a title paragraph style and one header paragraph style.
-Broader named style support needs investigation and may be skipped if it does not prove useful enough for MVP.
+Document typography and paragraph styles are now part of the document model.
+New documents default to 12px base typography.
+The current default styles are `Normal`, `Header 1`, `Header 2`, and `Header 3`.
+Header styles are bold, use sizes 25, 20, and 15, and start on a full line.
+Style selection is available in paragraph formatting and the toolbar.
+Paragraph direct formatting should preserve which properties were changed so inherited style changes still apply to untouched properties.
+For now, paragraph formatting can reset all direct overrides back to the selected style; per-property reset can wait.
+
+Color support is a likely MVP implementation area, but the exact scope still requires a spike before it becomes a firm feature commitment.
+If font/text color is included, it should be treated as a shared formatting capability across paragraph formatting, selected text formatting, and object/caption formatting rather than a one-off control.
+The likely implementation path is to adapt `modmod`'s `ColorSelector` / `ColorPickerDialog` pattern into the local Music Notebook shared component layer.
+Color should follow a clear cascade:
+
+1. document/default style
+2. paragraph style
+3. inline selected-text formatting
+4. local object or caption formatting
+
+Inline color choices override paragraph styles, and paragraph styles override document defaults.
+Music embed captions and object text should inherit from document or paragraph context by default, with local object formatting only when the object explicitly overrides that inherited color.
+The MVP now includes a few predefined document paragraph styles.
+Broader named style management, style editing, and style creation remain later steps.
 Multi-column document layout needs investigation before deciding whether to cut it from MVP.
-Page breaks are required.
-Page view and export should support portrait and landscape orientation as global document settings.
+Page breaks are required and should be represented as explicit objects in the `Quill` editor stream.
+Read view and export should support portrait and landscape orientation as global document settings.
+Edit view is the first implementation target: the area under the main menu should be filled by the editor toolbar and editor surface.
+Edit view uses the global page size as a wrapping width, but it does not promise exact automatic pagination.
+Read view is deferred until the continuous edit view and document model are stable.
+Read view is where automatic page overflow and page boxes belong.
 The MVP should support at least 8.5x11 Letter and A4 paper sizes as global document settings.
 The MVP should support global page margins.
-Paragraph styling should include at least normal font controls plus space before, space after, and indentation.
+Paragraph styling should include at least font size, space before, space after, and indentation.
 Paragraph settings may be used to keep paragraphs together, including to support multi-paragraph numbered or bulleted list items.
+Paragraph settings should include start behavior values for continuous flow, start on a full line, and next page.
+Start on full line is a block-start option for paragraphs, headings, tables, and other blocks.
+Next page is primarily a read-view/export instruction unless edit view later adds a simple visible marker.
 Widow and orphan control is strongly desired, but likely needs investigation across editor rendering and `PDF` export.
 The `PDF` library/export path is still an open question.
 If no good `PDF` library or export strategy can support the required document shape, `PDF` export may be cut from MVP, but only as a last resort.
@@ -238,7 +311,7 @@ Account mode:
 - user creates an account with a username and password
 - email address is not required for MVP
 - authenticated users can save, reload, and export documents
-- login and account-creation password fields should use an adapted `BasePasswordInput` pattern from `modmod`
+- login and account-creation password fields use the adapted shared `PasswordInput` pattern from `modmod`
 - password fields should include a localized accessible visibility toggle
 - account-creation password fields may include optional localized complexity-rule feedback
 
@@ -258,14 +331,33 @@ MFA is out of scope for MVP.
 Password reset is only possible if email is supplied, and email remains out of scope unless the account model changes.
 Privacy guarantees are limited without end-to-end encryption.
 
+Near-term implementation note:
+
+- document persistence is the current major product slice
+- save is gated behind account creation or sign-in
+- account creation and login are implemented before the first real save UI
+- the anonymous in-progress document should be preserved through that account transition if feasible
+
 ## Embedded Object Controls
 
 Music object embeds should expose a toolbar on hover or focus.
 
 Music object embeds should support an optional caption.
 Captions should appear under the embed.
-Caption formatting should inherit the preceding context by default, with a possible settings hover button if needed.
-Music embeds should default to half the effective page width.
+Caption text is edited in the music-object edit dialog.
+Caption text can include `{{short}}`, `{{long}}`, and `{{key}}` tokens.
+Caption formatting is edited in the music-object format dialog.
+Current caption formatting includes style, font size, alignment, bold, italic, and underline.
+Caption formatting should inherit document/style context by default, with local object formatting only when explicitly set.
+Music embeds are large inline Quill embed leaves, similar to image embeds. Text
+does not wrap around them through float-style wrapping.
+Side-by-side music layout should use tables or a later explicit layout container.
+Music embeds should default to the available content width, clamped by shared
+music-object layout limits.
+Music embed width is the primary resize/scale value. The rendered height should
+come from the preview content: keyboard previews compute their host height from
+the piano width/key ratio, staff previews scale the generated SVG naturally, and
+captions remain visible below the preview.
 
 Minimum toolbar actions:
 
@@ -279,7 +371,9 @@ The controls should be reachable without hover, including keyboard and touch-ori
 Embeds should delete like a character.
 Duplicate should work through copy/paste.
 Keyboard/staff conversion should happen in the edit dialog, matching the POC direction.
-MVP embed alignment is limited to text wrap or new line only.
+MVP embed alignment is provisional under the inline/image-like model and should
+be reconciled with paragraph alignment and table-cell layout before it is
+treated as a durable layout contract.
 Embed content remains limited to a single chord or scale unless later investigation expands it.
 The current POC embed edit options should be treated as the minimum MVP editing functionality.
 
@@ -311,7 +405,8 @@ Editing update:
 - scale editing is excluded from this major/minor key-mode behavior
 - chord editing is moving toward one unified input that auto-detects direct chord names, Roman numeral degrees, and numeric degrees
 - the older separate chord-name and chord-degree edit modes may be removed once the unified input is proven in the dialog
-- numeric chord input uses the default chord quality implied by the selected key mode
+- numeric chord input uses the default chord quality implied by the selected key quality
+- key quality is the shared tonal-context selector for major, minor, modal, pentatonic, and blues scale contexts; scale editing should use that selector rather than a separate mode dropdown
 - numeric chord input is supported as an alternative to Roman numerals
 - numeric chord input avoids relying on Roman numeral capitalization to encode major/minor quality
 - numeric input is recognized directly from the field value
@@ -327,22 +422,37 @@ Editing update:
 - chord text input should not rewrite the user's visible text while typing
 - examples: `iidim`, `ii diminished`, and `Cdim` should resolve as diminished; `iaug` and `Caug` should resolve as augmented; `viim7b5`, `viiø7`, and possibly `vii07` should resolve as half-diminished
 
-## Notebook Section Tabs
+## Notebook Tabs
 
-Notebook section tabs should be visible along the top only.
+Notebook tabs are persisted document metadata.
+Each tab owns one Quill editor content payload, and the active tab determines which payload the editor is currently editing.
+Tabs are not Quill objects.
+
+In edit view, tabs should appear at the bottom of the screen.
+In read view, tab placement may become configurable.
 
 Tab behavior:
 
 - tabs may be color coded
-- tabs may compress to fit more sections across the top
+- tabs may compress to fit more tabs in the available strip
 - compressed tabs should expand on hover, focus/tab entry, or selection
 - tab scrolling is out of scope
 - an ellipsis-style overflow selector may be used for tabs that do not fit
-- add, delete, and rename section actions should live in the tab list
+- add, delete, rename, join, and reorder actions should live in the tab list
 - tabs should support drag-and-drop reordering
-- default section name is `New Tab`
-- sections may be empty
-- deleting a section with content should require confirmation
+- the default tab title is intentionally unsettled; the model currently allows an empty title
+- tabs may be empty
+- deleting or joining a tab with content should require confirmation
+
+Current implementation:
+
+- tabs render at the bottom in edit view
+- single click selects a tab
+- double click edits the tab name inline
+- plus adds a tab after the active tab
+- right-side arrow buttons reorder the active tab left or right
+- drag-and-drop reorders tabs
+- delete and join are model operations but do not yet have finished UI controls
 
 The tab interaction must remain accessible for keyboard and tablet users.
 
@@ -350,32 +460,51 @@ The tab interaction must remain accessible for keyboard and tablet users.
 
 Tables are an MVP feature, but table support can be intentionally limited.
 
+The current implementation uses `quill-table-up` plus a dedicated local
+`table` feature.
+See [Quill Table Up Spike](quill-table-up-spike.md).
+
 MVP table support should include:
 
 - table borders
 - header row or header column support
 - basic row and column editing
+- music/object embeds inside table cells
+- row and column selection affordances
+- keyboard navigation from cell to cell
+- column width resizing
 
 MVP table support may exclude:
 
 - nested tables
-- music/object embeds inside table cells
+- merged/split cells
+- pasted external table preservation
 - spreadsheet-like behavior
 - complex table styling
 
 The goal is useful notebook tables, not a full table editor.
+Current table interaction work supports row/column selection, drag selection
+for multiple columns, `Tab`/`Shift+Tab` cell navigation, adding a row from the
+last cell, column resizing, a selection-aware context menu, and basic
+insert/delete row/column/table operations.
+Tables may visually extend beyond the page content width while editing; the
+page margin/content guide should remain tied to the effective page width so the
+user can size the table back to fit.
 
 ## Paragraph Formatting Scope
 
 Tentative starting point for paragraph formatting:
 
 - paragraph style
+- font size
+- font/text color, if color support is included
 - alignment
 - space before
 - space after
 - paragraph indentation
 - keep lines or paragraphs together
 - page break before or explicit page break
+- start on next full line / block-start behavior
 - widow and orphan control if feasible
 - numbered lists
 - bulleted lists
@@ -388,11 +517,10 @@ This list should be trimmed to the required MVP set after investigation.
 Tentative starting point for inline formatting:
 
 - font/typeface, probably, but may be limited to paragraph styles
-- size, but may be limited to paragraph styles
 - bold
 - italics
 - underline
-- color, depending on the color spike
+- font/text color, if color support is included
 
 This list should be trimmed to the required MVP set after investigation.
 
@@ -407,7 +535,7 @@ The MVP should create these seams early:
 - music-object payload normalization
 - editor/embed integration
 
-The document model is the most important MVP planning item.
+The document model is the most important MVP implementation seam.
 The document remains the main product surface.
 
 Preferred direction:
@@ -415,20 +543,25 @@ Preferred direction:
 - treat the Quill Delta as the editor stream
 - keep music-object payloads explicit and identifiable
 - wrap both in a notebook document format owned by the app, not by Quill
-- consolidate Quill Deltas, document settings, section metadata, and music-object payloads into one saved notebook state
+- consolidate per-tab Quill Deltas, document settings, tab metadata, and music-object payloads into one saved notebook state
 - allow the POC payload shape to be translated rather than frozen
 - keep the editor/document architecture compatible with future multi-user editing
-- model visible section tabs as part of the document-focused workflow
-- place notebook section tabs strictly along the top
-- keep continuous view and page view as editor presentation modes unless the document model needs otherwise
+- model visible tabs as part of the persisted notebook document
+- place notebook tabs at the bottom in edit view
+- treat edit view and read view as distinct document presentations
+- keep edit view `Quill`-native and continuous
+- keep read view paginated and layout-focused, likely using a separate renderer over the notebook document model/editor stream
+- store manual page breaks as stream objects, but treat automatic page boundaries as computed layout metadata
 - treat document zoom as transient app view state, not persisted document data
-- use Quill's available undo/redo behavior across embeds and section changes for MVP
+- use Quill's available undo/redo behavior across embeds while treating tab operations as document-model operations
 - treat embeds as a character for selection behavior if possible
 - treat any standard top menu as a supporting document command surface
 - treat `MusicXML` as the native music specification
 - use `tonal` as the preferred music theory library for chords, scales, and progressions
 - allow temporary conversion into library-specific formats for rendering, playback, or export adapters
 - store notebook documents in `MongoDB` through a service boundary
+- scope saved documents by app id and authenticated account id
+- use app-owned UUIDs for accounts and documents
 - keep account/auth mechanics separate from the document model where practical
 
 ## POC Pieces To Carry Forward
@@ -438,7 +571,8 @@ Preferred direction:
 - dedicated dialog editing as the default object-editing flow
 - current POC embed edit options as the minimum editing baseline
 - accessible hover/focus toolbar for small object actions
-- width and height in object payloads
+- width-driven object sizing, with legacy height payload compatibility where
+  older POC-shaped data still carries it
 - generated `MusicXML` as the staff/playback payload bridge
 - UI tests around editor/embed behavior
 
@@ -446,44 +580,51 @@ Preferred direction:
 
 - large music embed React implementation
 - any remaining native edit-dialog form controls; MVP edit fields should use shared `MUI`-based controls
-- `modmod` `PasswordInput` should be adapted when account creation and login UI are implemented
+- `modmod`-derived password input has been adapted for account creation and login UI
 - POC-shaped payload as the only durable document structure
 - any shell layout that exists only to support the spike
 - renderer/playback coupling that makes document serialization harder
 - debug-only document JSON as the only readout path
 
-## First MVP Decisions To Make
+## Current Decision Frontier
 
-1. What is the first notebook document format?
-2. Is the editor feature the app shell, or does it sit inside a thin shell?
-3. What is the first `MongoDB` document shape for users and notebooks?
-4. What `PDF` library or export strategy is viable for the MVP document shape?
-5. Which renderer/playback libraries are good enough to keep through MVP?
-6. What is the first refactor boundary for the music embed component?
-7. What exact challenge/salt/password-verifier flow should auth use?
-8. How should the anonymous document be preserved when a user creates an account?
-9. Should anonymous work survive page refresh, or only the current browser session?
-10. What should happen if an anonymous user tries to export before signing up?
-11. Are visible tabs persisted notebook sections, app navigation affordances, or both?
-12. Can each notebook section own its own editor stream, or is there one stream with section anchors?
-13. Does page view affect only presentation, or does it create persistent page/layout metadata?
-14. Should `PDF` export mirror page view exactly in MVP?
-15. If `PDF` export is cut as a last resort, what replaces it in the MVP user promise?
-16. Are page headers and footers part of MVP page view or `PDF` export?
+Resolved enough for implementation:
+
+- account records use app-owned UUIDs, normalized usernames, password hash versioning, optional email, and last-open-document metadata
+- auth uses deterministic username salts, client-side password hashing, durable `HttpOnly` session cookies, and short-lived bearer tokens
+- MongoDB is the first concrete account/session/document persistence target
+- saved documents are scoped by app id and authenticated account id
+- the first saved document record wraps `document-model` JSON content with name, size, created/modified timestamps, and `lockedAt`
+
+Still open:
+
+1. What is the first durable notebook document format beyond the current `document-model` snapshot?
+2. What `PDF` library or export strategy is viable for the MVP document shape?
+3. Which renderer/playback libraries are good enough to keep through MVP?
+4. How should the anonymous document be preserved when a user creates an account?
+5. Should anonymous work survive page refresh, or only the current browser session?
+6. What should happen if an anonymous user tries to export before signing up?
+7. What is the first visible naming convention for a newly added tab?
+8. What exact confirmation flow should joining tabs use?
+9. Does read view affect only presentation, or does it create persistent page/layout metadata beyond manual page-break objects?
+10. Should `PDF` export mirror read view exactly in MVP?
+11. If `PDF` export is cut as a last resort, what replaces it in the MVP user promise?
+12. Are page headers and footers part of MVP read view or `PDF` export?
 
 ## Suggested Build Order
 
-1. Define the notebook document model.
-2. Add shared tests for serialization and music-object extraction.
-3. Wire the editor to stream out a notebook document instead of only debug JSON.
-4. Define the minimal user/account model.
-5. Add the first auth service boundary.
-6. Add a `MongoDB` persistence service around the document shape.
-7. Add a minimal save/load UI that does not dominate the editor.
-8. Add account-gated save/export handling for anonymous users.
-9. Harden the music embed component boundaries.
-10. Add the first `PDF` export service path.
-11. Tighten accessibility, localization, and UI tests around the MVP workflow.
+1. Harden the current notebook document model and serialization tests.
+2. Finish the current document command flows, especially delete and duplicate.
+3. Tighten save/open/new/logout unsaved-work prompts.
+4. Preserve the anonymous in-progress document through successful account creation if feasible.
+5. Harden the MongoDB persistence service around the current document shape.
+6. Harden account-gated save/export handling for anonymous users.
+7. Continue editor/embed selection, caret, and natural-sizing polish for large inline music objects.
+8. Add delete/join tab UI with confirmation flows.
+9. Add explicit page-break objects in the editor stream.
+10. Harden the music embed component boundaries.
+11. Add the first `PDF` export service path.
+12. Tighten accessibility, localization, and UI tests around the MVP workflow.
 
 ## Open Questions
 
@@ -491,28 +632,28 @@ Anything in this section remains an open question until it is explicitly answere
 
 ### Document Basics
 
-- What is the minimum useful `MongoDB` schema for notebook documents?
 - Should MVP save whole documents, revisions, or both?
 - How should Quill Deltas be consolidated into the unified saved notebook state?
-- How should document title behavior work?
-- How should duplicate or save-as behavior work?
-- What is the new document flow?
+- How should document title editing work if the current name is shown in the browser title rather than as persistent on-screen text?
+- Should duplicate and save-as use identical name-conflict behavior to create and rename?
+- How should delete and duplicate fit into the current document flow?
 
-### Sections And Tabs
+### Tabs
 
-- How should section tabs be represented in the notebook document model?
-- How should compressed top tabs behave for overflow, color coding, hover, focus, and selection?
-- Are visible tabs persisted notebook sections, app navigation affordances, or both?
-- Can each notebook section own its own editor stream, or is there one stream with section anchors?
+- What is the first visible naming convention for a newly added tab?
+- How should compressed tabs behave for overflow, color coding, hover, focus, and selection?
+- Should a new tab become active immediately when added from inside the current tab?
+- Should joining tabs append source content, insert at the current cursor, or offer both later?
 - What is the maximum practical number of visible tabs before compression or ellipsis overflow selection?
 
 ### Editor Behavior
 
-- How should continuous/page view preference be stored: per user, per document, or transient session state?
-- Where should view commands live for page view and continuous view?
+- How should edit/read view preference be stored: per user, per document, or transient session state?
+- Where should view commands live for edit view and read view?
 - Where should document zoom controls live?
 - What should find/search include for MVP?
 - Can embeds be treated as a single character in Quill selection behavior?
+- Should pasted or inserted image embeds be supported in MVP, and if so, should Quill image sources be stored as external URLs, data URLs, or app-managed uploaded assets? See [Paste](paste.md).
 - How should the UI prevent page breaks inside tables?
 - Can continuing bullets/numbering after page breaks in a list be handled through paragraph style or list style behavior?
 - What are the default font, paragraph style, and visual theme?
@@ -536,20 +677,23 @@ Anything in this section remains an open question until it is explicitly answere
 
 ### Formatting
 
-- What color scope is appropriate for MVP: text color, highlight color, table color, object border color, or a smaller subset?
-- Can color support meet accessibility and export requirements without expanding the MVP too far?
-- Beyond title and one header paragraph style, are named styles useful enough for MVP, or should the editor keep simpler direct formatting?
+- What final color scope is appropriate for MVP: paragraph font color, selected text color, object/caption font color, highlight color, table color, object border color, or a smaller subset?
+- Can likely MVP color support meet accessibility and export requirements without expanding the MVP too far?
+- What shared palette or token system should paragraph, text, and object formatting use?
+- How should the app adapt `modmod`'s `ColorSelector` / `ColorPickerDialog` pattern for paragraph, text, and object color picking?
+- Should MVP expose font picking at all, and if so, should it apply to paragraph styles, inline text, music embed captions, object labels, or only a constrained preset set?
+- Beyond title and a few predefined header styles, are named styles useful enough for MVP, or should the editor keep simpler direct formatting?
 - If named styles exist, are they document-level styles, application presets, or export-only helpers?
-- Is multi-column document layout useful enough for MVP, and can it work with page view, export, and tablet layout?
+- Is multi-column document layout useful enough for MVP, and can it work with read view, export, and tablet layout?
 - Can paragraph space before/after be represented cleanly in Quill Deltas and `PDF` export?
+- Should start-on-full-line be a direct paragraph option, a default on heading/table styles, or both?
 - Can Quill support multiple paragraphs inside a single numbered or bulleted list item cleanly enough for editing, serialization, and export, or should paragraph keep-together settings model that behavior?
 - Is widow/orphan control feasible with the chosen editor and export path?
 
 ### Tables
 
-- What table implementation fits Quill, serialization, accessibility, and `PDF` export well enough for MVP?
+- Does `quill-table-up` remain stable enough through save/reload, paste, read view, and `PDF` export to keep as the MVP table implementation? See [Quill Table Up Spike](quill-table-up-spike.md).
 - What should the insert table size picker look like?
-- How should add/delete row and column controls work?
 - Should MVP support header row, header column, or both?
 - What table border presets are needed?
 - Should MVP support cell alignment?
@@ -559,14 +703,16 @@ Anything in this section remains an open question until it is explicitly answere
 ### Music Embeds
 
 - What is the accessible interaction pattern for embed toolbars across mouse, keyboard, and tablet touch?
-- How should optional music embed captions be edited, serialized, and exported?
+- How should music embed caption templates and formatting serialize into the final durable notebook schema and export to `PDF`?
+- Should music embed captions and object text ever allow font-family picking, or should they use document styles and constrained presets?
+- What table-cell and explicit layout-container controls are needed for side-by-side music embeds?
 - Which renderer/playback libraries are good enough to keep through MVP?
 - Which render/playback libraries require temporary conversion away from `MusicXML`, and where should those adapters live?
 - Are there any music theory needs for MVP that `tonal` does not cover well?
 - Should playback include count-in or tempo controls?
 - Should caption settings be exposed through a hover/focus control?
 - Does MVP need any embed content beyond a single chord or scale?
-- What exact payload shape should preserve key major/minor mode and original numeric progression input in the durable notebook document model?
+- What exact payload shape should preserve key quality and original numeric progression input in the durable notebook document model?
 - Should numeric progression input support only single degrees `1` through `7`, or later accept richer degree syntax?
 - When should the separate chord-degree edit mode be removed from the dialog after unified chord input is fully proven?
 - Which additional typed music-symbol aliases should the parser support beyond diminished, augmented, and half-diminished?
@@ -575,22 +721,24 @@ Anything in this section remains an open question until it is explicitly answere
 
 ### Page And Export
 
-- Does page view affect only presentation, or does it create persistent page/layout metadata?
-- Should `PDF` export mirror page view exactly in MVP?
+- Does read view affect only presentation, or does it create persistent page/layout metadata beyond manual page-break objects?
+- Should `PDF` export mirror read view exactly in MVP?
 - If `PDF` export is cut as a last resort, what replaces it in the MVP user promise?
-- Are page headers and footers part of MVP page view or `PDF` export?
+- Are page headers and footers part of MVP read view or `PDF` export?
+- How should image embeds be laid out, constrained, persisted, and exported in read view and `PDF` output? See [Paste](paste.md).
 - How should page breaks be represented in the editor stream and exported document?
-- Should notebook documents support page headers and footers, and if so, are they document-wide or section-specific?
+- Should notebook documents support page headers and footers, and if so, are they document-wide or tab-specific?
 - How should global Letter/A4 page size and portrait/landscape orientation be represented in the document model and export path?
-- Are global page margins enough for MVP, or is there a later need for section-specific margins?
+- Are global page margins enough for MVP, or is there a later need for tab-specific margins?
 - Which `PDF` library best supports Quill content, custom embeds, page breaks, table borders/headers, and paragraph spacing?
 - Should MVP prefer `Puppeteer`/embedded Chrome export over a direct `PDF` generation library for fidelity?
 - Should page numbering be supported?
 - What are export filename defaults?
 - Should print support be separate from `PDF` export?
-- Should export support current section, full notebook, or both?
+- Should export support current tab, full notebook, or both?
 - Should users see a `PDF` preview before export?
-- How are page breaks shown in continuous mode?
+- How are manual page breaks shown in edit view?
+- How does read view indicate automatic page overflow?
 - Do notebook-style background lines appear in exported `PDF`?
 
 ### Accounts And Security
@@ -656,13 +804,15 @@ Anything in this section remains an open question until it is explicitly answere
 
 ### Investigation Spikes
 
-- Quill tables
+- Quill tables, including the current `quill-table-up` implementation path
 - multi-paragraph list items
-- page breaks and page view
+- page breaks and read view
 - `PDF` export via `Puppeteer`
 - offline/PWA behavior
 - color support
 - columns
+- alphaTab for post-MVP tablature, Guitar Pro import, and practice/playback objects
+- pitchy for post-MVP microphone pitch detection and voice exercise objects
 - MIDI input
 - exercise objects
 - guided score capture from MIDI input
@@ -675,6 +825,8 @@ Anything in this section remains an open question until it is explicitly answere
 - fuller music composition workflows after the notebook/document experience is stable
 - handwriting input for tablet users if a suitable library is found
 - MIDI input for music embeds if investigation shows it fits the document workflow
+- tablature and Guitar Pro import through alphaTab if a spike proves it fits the notebook object model
+- voice-aware exercise objects using pitchy if a spike proves browser microphone pitch detection is stable enough
 - exercise objects for short note/chord practice sequences
 - guided MIDI-to-score insertion after the notebook MVP is stable
 - richer offline-first PWA behavior after the core save/load model is stable
@@ -727,7 +879,19 @@ The important thing is that its core document loop is real.
 ## Related Topics
 
 - [Base Dialog Design](base-dialog.md)
+- [Accounts](accounts.md)
+- [alphaTab Investigation](alphatab-investigation.md)
 - [Chord Name Parsing](chord-name-parsing.md)
+- [Document Model](document-model.md)
+- [Editor Toolbar](editor-toolbar.md)
+- [MVP Implementation Plan](implementation-plan.md)
+- [Main Menu](main-menu.md)
+- [Paged View Mode Spike](paged-view-mode-spike.md)
+- [Paste](paste.md)
+- [Pitchy Voice Exercise Investigation](pitchy-voice-exercises.md)
+- [Quill Embed Navigation](quill-embed-navigation.md)
+- [Quill Table Up Spike](quill-table-up-spike.md)
+- [View Mode](view-mode.md)
 - [Music Notebook App Architecture](../architecture/app-architecture.md)
 - [Quill Integration](../architecture/quill-integration.md)
 - [Testing Strategy](../testing/testing-strategy.md)

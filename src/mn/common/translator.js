@@ -28,19 +28,19 @@ export default class Translator {
 		return new Intl.PluralRules(this.locale).select(number);
 	}
 
-	t(key, replacements = {}, cardinal = 0) {
+	translate(key, replacements = {}, cardinal = 0) {
 		if (key === undefined) {
-			console.warn('Attempted to translate an undefined phrase key.');
+			console.error('Attempted to translate an undefined phrase key.');
 			return '';
 		}
 
 		let text = this.phrases[key] || this.defaultPhrases[key] || key;
 
 		if (text !== this.phrases[key] && text === this.defaultPhrases[key]) {
-			console.warn('Unknown translation key, used default translation:', key);
+			console.error('Unknown translation key, used default translation:', key);
 		} else if (text !== this.phrases[key]) {
-			console.warn('Unknown translation key, not found in default translations:', key);
-			text = '';
+			console.error(`Missing translation for phrase "${key}".`);
+			text = key;
 		}
 
 		if (!['string', 'object'].includes(typeof text)) {
@@ -66,7 +66,7 @@ export default class Translator {
 			if (replacements[match[1]] !== undefined) {
 				sub = replacements[match[1]];
 			} else {
-				sub = this.t(match[1]);
+				sub = this.translate(match[1]);
 				sub = sub === match[1] ? '' : sub;
 			}
 

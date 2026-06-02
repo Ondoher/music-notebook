@@ -5,7 +5,7 @@ import {
 	buildKeyboardProgressionPayload,
 	normalizeRomanNumeralAliases,
 } from '../shared/progression-builder.js';
-import BaseTextInput from './BaseTextInput.jsx';
+import TextInput from './TextInput.jsx';
 
 const ROMAN_NUMERAL_PATTERN = /^[ivIV]+(?:\u00b0|\u00f8|o|\+|aug|maj7|M7|\^7|m|sus\d*|add\d*)?\d*$/u;
 const NUMERIC_DEGREE_PATTERN = /^[1-7]$/;
@@ -152,7 +152,7 @@ export default class ChordText extends Component {
 		} = this.props;
 
 		return (
-			<BaseTextInput
+			<TextInput
 				className={className || 'mn-chord-text'}
 				label={label}
 				onBlur={onBlur}

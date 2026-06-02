@@ -4,7 +4,7 @@ import { act } from 'react';
 import BaseCheckbox from '../BaseCheckbox.jsx';
 import BaseRadioButtons from '../BaseRadioButtons.jsx';
 import BaseSelect from '../BaseSelect.jsx';
-import BaseTextInput from '../BaseTextInput.jsx';
+import TextInput from '../TextInput.jsx';
 import { createTestHarness } from '../../testing/TestHarness.js';
 
 function makeLocalizeMock() {
@@ -13,7 +13,7 @@ function makeLocalizeMock() {
 			return 'en-US-u-ms-ussystem';
 		},
 		listen() {},
-		t(phrase) {
+		translate(phrase) {
 			return {
 				'field.choice': 'Choice',
 				'field.enabled': 'Enabled',
@@ -48,7 +48,7 @@ describe('Base form controls', function() {
 			.withService('localize', localize)
 			.withContext({ localize });
 
-		const result = harness.render(BaseTextInput, {
+		const result = harness.render(TextInput, {
 			helperText: 'helper.name',
 			label: 'field.name',
 			value: 'C',
@@ -71,7 +71,7 @@ describe('Base form controls', function() {
 			.withService('localize', localize)
 			.withContext({ localize });
 
-		const result = harness.render(BaseTextInput, {
+		const result = harness.render(TextInput, {
 			label: 'field.name',
 			onChange(event) {
 				nextValue = event.target.value;

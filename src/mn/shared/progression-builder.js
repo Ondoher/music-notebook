@@ -1,5 +1,6 @@
 import { Chord, Note, RomanNumeral } from 'tonal';
 import { buildKeyboardChordPayload } from './chord-builder.js';
+import { isMinorKeyQuality, normalizeKeyQuality } from './key-qualities.js';
 import { KEY_OPTIONS, normalizeKey } from './key-options.js';
 
 const DEFAULT_ROMAN_NUMERAL = 'I';
@@ -115,7 +116,9 @@ function getNumericDegree(input) {
 }
 
 function normalizeKeyMode(keyMode) {
-	return keyMode === 'minor' ? 'minor' : DEFAULT_KEY_MODE;
+	const normalizedKeyMode = normalizeKeyQuality(keyMode);
+
+	return isMinorKeyQuality(normalizedKeyMode) ? 'minor' : DEFAULT_KEY_MODE;
 }
 
 function getChordSymbol(key, roman) {

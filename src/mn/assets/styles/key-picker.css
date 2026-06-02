@@ -29,6 +29,15 @@
 	min-width: 112px;
 }
 
+.music-display-key-field {
+	flex: 1 1 120px;
+}
+
+.music-display-key-mode-field {
+	flex: 1.6 1 220px;
+	min-width: 180px;
+}
+
 .mn-key-picker-enharmonic-field,
 .music-key-enharmonic-option {
 	flex: 0 0 auto;

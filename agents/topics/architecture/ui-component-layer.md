@@ -105,6 +105,36 @@ Prefer this order:
 5. Use scoped feature CSS for product and editor layout.
 6. Use high-specificity MUI class overrides only when there is no cleaner slot or theme option.
 
+## Base And Shared Component Boundary
+
+Components named `BaseXXXX` are the local equivalent of abstract UI classes
+when they exist. They capture common implementation behavior for concrete Music
+Notebook components. If a base component proves useful as-is, it should be
+renamed/promoted to a concrete shared component rather than kept behind a thin
+feature wrapper.
+
+Current example:
+
+- the usable text input foundation was promoted to shared `TextInput`
+- feature-specific wrappers such as `AccountTextInput` should be removed when
+  they add no product-specific behavior
+
+Use `BaseXXXX` components to centralize concerns such as:
+
+- MUI wiring
+- localization
+- accessible labels and helper text
+- shared validation presentation
+- stable app-level class names
+
+Feature UI should normally consume a concrete component with a product-shaped
+name and API, such as `TextInput`, `PasswordInput`, `ChordInput`, or `FontSizePicker`.
+Those concrete components may build on the `BaseXXXX` layer internally.
+
+This keeps feature JSX expressive and prevents screens from assembling raw base
+controls into ad hoc product components. It also lets the base layer evolve
+without making every feature screen depend on low-level form-control details.
+
 ## Current Implementation
 
 The `mn` app currently installs MUI at the React root with:
@@ -113,8 +143,12 @@ The `mn` app currently installs MUI at the React root with:
 - `ThemeProvider` using a CSS-variable theme
 - `CssBaseline`
 - a registry-owned `theme` service
+- a registry-owned `css-vars` service for reading and writing CSS custom properties when document or app settings need to cross into CSS
 
 This gives the app stable MUI components and globally available CSS variables while preserving a CSS-first editor surface.
+
+Use the `css-vars` service for runtime CSS variable bridges that need to be read, written, removed, or snapshotted by services or controllers.
+Do not make ordinary component styling go through that service when a local stylesheet is enough.
 
 The POC also separates application UI typography from document typography:
 
@@ -136,6 +170,7 @@ MUI should help build:
 - form fields
 - icon buttons
 - settings panels
+- color picking controls, likely adapted from `modmod`'s `ColorSelector` and `ColorPickerDialog` if MVP color support is kept
 
 Feature CSS should own:
 

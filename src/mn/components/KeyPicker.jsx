@@ -1,14 +1,11 @@
 import React, { Component } from 'react';
 import BaseCheckbox from './BaseCheckbox.jsx';
 import BaseSelect from './BaseSelect.jsx';
-import BaseTextInput from './BaseTextInput.jsx';
+import TextInput from './TextInput.jsx';
 import { KEY_OPTIONS } from '../shared/key-options.js';
+import { KEY_QUALITY_OPTIONS, normalizeKeyQuality } from '../shared/key-qualities.js';
 
 let keyPickerId = 0;
-const KEY_MODE_OPTIONS = Object.freeze([
-	{ fallback: 'Major', label: 'music.key_mode.major', value: 'major' },
-	{ fallback: 'Minor', label: 'music.key_mode.minor', value: 'minor' },
-]);
 const ACCIDENTAL_DISPLAY = Object.freeze({
 	'#': '♯',
 	'##': '𝄪',
@@ -69,7 +66,7 @@ export default class KeyPicker extends Component {
 	 * @returns {KeyMode}
 	 */
 	getModeValue() {
-		return this.props.mode === 'minor' ? 'minor' : 'major';
+		return normalizeKeyQuality(this.props.mode);
 	}
 
 	/**
@@ -88,7 +85,7 @@ export default class KeyPicker extends Component {
 
 		return (
 			<>
-				<BaseTextInput
+				<TextInput
 					className={keyFieldClassName || 'mn-key-picker-key-field'}
 					label={label}
 					onChange={this.handleKeyChange}
@@ -131,7 +128,7 @@ export default class KeyPicker extends Component {
 				className={modeFieldClassName || 'mn-key-picker-mode-field'}
 				label={modeLabel}
 				onChange={this.handleModeChange}
-				options={KEY_MODE_OPTIONS}
+				options={KEY_QUALITY_OPTIONS}
 				size={size}
 				value={this.getModeValue()}
 			/>

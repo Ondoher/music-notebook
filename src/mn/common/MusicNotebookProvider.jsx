@@ -1,5 +1,6 @@
 import React from 'react';
 import MusicNotebookContext from './MusicNotebookContext.js';
+import { createDefaultLocalize } from './default-localize.js';
 
 /**
  * Provides Music Notebook context and refreshes it from watched app data.
@@ -14,6 +15,7 @@ export default class MusicNotebookProvider extends React.Component {
 	 */
 	constructor(props) {
 		super(props);
+		this.defaultLocalize = createDefaultLocalize();
 		this.state = {
 			locale: this.getLocale(props.contextValue),
 		};
@@ -75,7 +77,8 @@ export default class MusicNotebookProvider extends React.Component {
 	 */
 	getLocale(contextValue = this.props.contextValue) {
 		const appData = this.getAppData(contextValue);
-		const defaultLocale = contextValue.locale || contextValue.localize?.getLocale?.() || 'en-US-u-ms-ussystem';
+		const localize = contextValue.localize || this.defaultLocalize;
+		const defaultLocale = contextValue.locale || localize.getLocale?.() || 'en-US-u-ms-ussystem';
 
 		return /** @type {string} */ (appData?.watch?.('locale', defaultLocale) || defaultLocale);
 	}
@@ -132,6 +135,7 @@ export default class MusicNotebookProvider extends React.Component {
 		const contextValue = {
 			...this.props.contextValue,
 			appData: this.getAppData(),
+			localize: this.props.contextValue.localize || this.defaultLocalize,
 			locale: this.state.locale,
 		};
 

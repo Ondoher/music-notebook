@@ -12,7 +12,7 @@ This note is about:
 - rendering versus interactivity tradeoffs
 - practical risks and recommendations after the first spike
 
-This note is written after the first POC and post-POC cleanup, with MVP implementation planning now active.
+This note is written after the first POC and post-POC cleanup, with MVP implementation now active.
 It should be treated as a working integration guide, not a final specification.
 
 ## Why Quill Fits The App
@@ -253,6 +253,13 @@ Current findings:
 - keep the payload shape independent from `react-piano` internals
 - keep inline interaction minimal while Quill owns document input
 - treat audio playback as an object action, not as a reason to make the embed itself highly interactive
+- render large music objects as width-driven, natural-height inline leaves rather
+  than fixed-height boxes; captions should render below the preview without
+  clipping
+- keyboard preview layout currently computes an explicit host height from width
+  and key ratio to avoid `react-piano` expanding into large blank vertical space
+- staff preview layout lets the generated OSMD SVG scale from its viewBox with
+  natural height
 
 This is still provisional.
 The main thing being tested is whether a real React-rendered music component can live inside the document flow without making selection, serialization, or focus behavior brittle.
@@ -266,9 +273,56 @@ The current direction is to bridge app context explicitly:
 
 This keeps localized `MUI`-based controls usable both in the main app tree and in Quill-owned embed roots.
 
+### Quill Embed Architecture Boundary
+
+Quill blots need a limited exception to ordinary feature layering.
+A custom blot is an adapter to Quill's document model, so it may need to own mechanics that would look unusual in an ordinary React feature.
+
+A blot may own:
+
+- Quill registration
+- `create`, `value`, `detach`, and other blot lifecycle hooks
+- DOM node creation and attributes required by Quill
+- dataset or attribute synchronization needed for Delta round-tripping
+- Quill-specific update/delete/index behavior
+- event bridging from the embedded DOM node back to the editor surface
+- mounting a React root inside the blot DOM node when the embed presentation needs React
+
+A blot should avoid owning reusable domain behavior unless it is still provisional and has no second caller yet.
+Good extraction candidates include:
+
+- payload defaults and normalization used outside the blot
+- object-type definition helpers
+- caption or formatting model rules
+- playback behavior
+- toolbar action decisions
+- durable document-model mutations
+
+The current music-object embed follows this shape:
+
+- `keyboard-embed.js` owns the Quill blot/adapter mechanics and context bridge
+- `music-object-controller` registers the object type and owns music-object commands
+- each rendered embed can attach a controller-owned embed session through `music-object-controller.attachEmbed(...)`
+- the embed session provides presentation-ready actions such as play/stop, edit, and object formatting
+- the React embed presentation renders those actions and reports gestures back to the session
+- payload changes still flow back through the blot's embed-change event and then into the editor/document-model bridge
+
+This means the embed is allowed to reach the registry through the bridged context, but presentation components should treat that access as a delegation path, not an invitation to become controllers.
+Small visual state may stay local to React.
+Behavioral state such as object actions, playback state, edit command routing, or future read-only/view-mode button availability should be owned by the controller or a controller-owned session.
+
+Selection rendering is also part of the embed boundary.
+Quill may still expose native selection/caret mechanics around the embed, but the music-object presentation can render its own selected state so the embed reads as one selected object instead of selected internal text.
+The current direction is to use a simple selected background/overlay and keep richer selection handles for later.
+
+The embed and the edit dialog should use the same preview component for keyboard and staff display.
+The current shared preview path renders keyboard output through `react-piano` and staff output through generated `MusicXML` plus `opensheetmusicdisplay`.
+Staff preview is measured from the generated SVG and cropped with padding so dialog and document embeds stay visually consistent.
+
 ### Current Embed Payload Shape
 
-The POC payload currently carries:
+The current music-object embed payload still descends from the POC shape.
+It currently carries:
 
 - `id`
 - `displayMode`
@@ -277,16 +331,35 @@ The POC payload currently carries:
 - optional `highlightedNotes`
 - optional `displayKey`
 - optional chord, scale, and progression identifiers
+- optional `caption` with a user template
+- optional `format` with object layout and caption formatting
 - optional source chord symbol, root note, and inversion
 - optional `arpeggiate` as a chord/chord-degree specification option
 - staff options such as `staffOctave`
 - keyboard options such as `keyboardShowNoteNames`
-- sizing fields `width` and `height`
+- sizing fields, with `width` and `height` treated as nominal natural object
+  dimensions and optional `scale` controlling displayed size
+- omitted `scale` means `1`, so older payloads render at their nominal size
 
 `openEditor` is a transient insertion flag, not persisted in the normalized Delta payload.
 
+Current caption template tokens:
+
+- `{{short}}`: context-aware short label
+- `{{long}}`: context-aware long/friendly label
+- `{{key}}`: selected key or scale context
+
+Current object formatting concepts:
+
+- large inline embed layout, similar to Quill image embeds
+- provisional object alignment metadata, to be reconciled with paragraph/table
+  layout behavior
+- caption style id, font size, alignment, bold, italic, and underline
+- natural-height rendering: the root should not clip the preview or caption
+  based on a persisted height field
+
 This payload began as a POC-shaped structure.
-It is useful enough to test the editor/embed seam, but MVP planning should translate it into an intentional notebook object model rather than treat it as the final file format.
+It is useful enough to test the editor/embed seam, but MVP implementation should keep translating it into an intentional notebook object model rather than treat it as the final file format.
 
 ## Stream-In / Stream-Out Implications
 
@@ -305,6 +378,49 @@ Practical implication:
 - structural round-tripping remains part of the core document contract
 
 If an embed renders nicely but cannot be read back out in a clean, stable way, that is not enough.
+
+## Current Document Model Bridge
+
+The current editor bridge is implemented through the `document-model` service.
+
+Notebook tabs are not Quill objects.
+Each tab owns a Quill Delta payload in `tab.editorContent`.
+`EditorPage` edits the active tab's payload.
+
+Current behavior:
+
+- on mount, `EditorPage` loads `documentModel.getEditorContent(activeTabId)` into Quill
+- when `active-tab-changed` fires, `EditorPage` replaces Quill contents with the new active tab's content
+- when `document-loaded` fires, `EditorPage` reloads active-tab content from the model
+- user-originated Quill `text-change` events call `documentModel.setEditorContent(quill.getContents(), activeTabId)`
+- model-driven Quill updates use the `silent` source and do not write back into the model
+
+This keeps text editing Quill-native while making tabs, page settings, and generic objects document-model concerns.
+See [Document Model](../mvp/document-model.md) for the current service contract.
+
+## Edit View And Read View
+
+The MVP direction separates editing from paginated reading.
+
+Edit view is the `Quill`-native view:
+
+- one continuous editable document stream
+- `Quill` owns typing, selection, undo, and embed placement
+- page size can constrain the wrapping width
+- manual page breaks render as visible block objects in the stream
+- automatic page overflow is not promised as an exact live editing feature
+
+Read view is the paginated document layout view:
+
+- not the primary editing surface for MVP
+- renders page boxes from the notebook document model and editor stream
+- honors page size, orientation, margins, and manual page-break objects
+- computes automatic page overflow as layout metadata
+- should become the closest match for print/PDF preview
+
+This split avoids forcing `Quill` to behave like a live paginated word processor.
+Manual page breaks are document structure and should live in the `Quill` stream as objects.
+Automatic page boundaries are layout interpretation and should be computed by read view or export.
 
 ## Editing Model Notes
 
@@ -334,13 +450,24 @@ Current preferred direction for `music-notebook`:
 - selecting or activating one can launch a dedicated editor dialog
 - inline interaction inside Quill should be kept minimal unless a later need clearly justifies more
 - small floating controls are acceptable for object-level actions such as edit, playback, and resize
-- resize is part of the embed payload and updates the Quill Delta through the existing embed-change path
-- the edit dialog should live as a reusable shared component rather than as a large subtree inside the editor feature
-- the current shared dialog component is `src/mn/components/MusicEmbedDialog.jsx`
+- resize updates the embed's `scale` through the existing embed-change path
+  while preserving nominal `width` and `height`
+  rather than a clipping box
+- music objects are large inline Quill embed leaves, similar to images; text
+  should not flow around them through float-style wrapping
+- side-by-side music layout should use tables or a later explicit layout container, not adjacent floated embeds
+- music object default width is based on the available content width, clamped by shared music-object layout limits
+- minimum music object size is centralized in the shared music-object layout helper, not repeated across controls
+- the edit dialog should live in the feature that owns the music object rather than as a large subtree inside the editor feature
+- the current dialog component is `src/mn/features/music-object/components/MusicEmbedDialog.jsx`
+- the current object-format dialog is feature-owned and controls object alignment and caption formatting
 - playback belongs behind the `player` feature service; editor components should call `player.play(payload)` and `player.stop()` rather than importing the playback loadable directly
 - edit fields should use shared `MUI`-based components where available for localization and accessibility behavior
 - chord editing is moving toward one unified input that auto-detects direct chord names, Roman numeral degrees, and numeric degrees
-- numeric chord degrees use the selected key mode to infer default diatonic quality, while Roman numeral capitalization remains explicit quality notation
+- key quality is the shared tonal-context selector for major, minor, modal, pentatonic, and blues scale contexts
+- scale editing should use key quality rather than a separate mode dropdown
+- numeric chord degrees use the selected key quality to infer default diatonic quality, while Roman numeral capitalization remains explicit quality notation
+- generated keyboard, staff, and playback notes should come from one shared normalized note source for the same music input
 - chord-name parsing details are tracked in [Chord Name Parsing](../mvp/chord-name-parsing.md), including the current direction to preserve typed text, normalize internally, include slash bass/inversion in the normalizer result, and investigate `chord-symbol`
 
 ## Risks
@@ -353,7 +480,7 @@ The main integration risks are:
 - the document representation may become too coupled to Quill-specific internals
 - `MusicXML` payload needs may not map cleanly to the first embed representation
 
-These risks are why the initial POC was valuable, and why the next phase should design a real notebook document model before hardening the POC payload.
+These risks are why the initial POC was valuable, and why the current first-pass notebook document model should keep being hardened before the POC payload becomes a backend persistence schema.
 
 ## POC Findings To Carry Forward
 
@@ -365,7 +492,8 @@ The first spike answered the highest-value Quill questions well enough to contin
 4. Does the initial selection/editing behavior confirm that dedicated-dialog editing is sufficient, or reveal a need for lighter in-document adjustments?
 
 Those questions were answered well enough for the first POC.
-Quill remains viable for the app's first architecture phase, with the important follow-up that the POC payload should be translated into an intentional notebook document model rather than treated as the final durable format.
+Quill remains viable for the app's first architecture phase.
+The important follow-up is to keep translating POC-shaped payloads into the intentional notebook document model rather than treating raw embed payloads as the final durable format.
 
 ## Practical Rule Of Thumb
 

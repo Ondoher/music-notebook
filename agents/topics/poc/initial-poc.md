@@ -27,12 +27,12 @@ The initial POC succeeded.
 It proved that `Quill` can act as the editor-first composition surface while carrying structured embedded music objects in the document flow.
 It also proved that one custom embed payload can support both keyboard and staff display modes, round-trip through Quill Deltas, open a dedicated object editor dialog, resize in the document, and provide a basic playback audition.
 
-The main handoff into MVP implementation planning is now:
+The main handoff into MVP implementation is now:
 
 - keep the custom embed/blot path as the leading implementation direction
 - treat the POC payload as useful learning, not the final notebook format
 - build from the completed post-POC React cleanup baseline: intentional class-based components, shared controls, extracted music preview/display components, player service ownership, and shared domain helpers
-- design a real document model that can wrap editor content plus music-object payloads without overfitting to raw Quill internals
+- keep hardening the first-pass document model that wraps tabbed editor content, settings, and generic objects without overfitting to raw Quill internals
 
 ## Core Goal
 
@@ -110,18 +110,20 @@ The POC implementation moved beyond placeholder rendering:
 - keyboard rendering uses `react-piano`
 - staff rendering uses `opensheetmusicdisplay` from generated `MusicXML`
 - chord, scale, and chord-degree payloads are built with `tonal`
-- the edit dialog supports display mode, key, key major/minor mode for chord editing, enharmonic-key handling, chord/scale/chord-degree/none modes, staff octave, chord arpeggiation, and keyboard note-name display
-- the edit dialog has been extracted into a reusable shared `MusicEmbedDialog` component
+- the edit dialog supports display mode, key context, enharmonic-key handling, chord/scale/chord-degree/none modes, staff octave, chord arpeggiation, and keyboard note-name display
+- the edit dialog has been extracted into `src/mn/features/music-object/components/MusicEmbedDialog.jsx`
 - shared edit controls are moving to `MUI`-based class components with localized labels and accessible helper text
-- embedded objects persist `width` and `height` and can be resized in the document
-- staff SVG output scales inside the embed and is pinned to the top-left
+- embedded objects began with persisted `width` and `height` and can be resized
+  in the document; current MVP rendering treats width as the primary scale
+  value and lets height come from the preview content
+- staff SVG output scales inside the embed from its generated viewBox
 - document text uses `Comic Neue`; dialog controls use the application font
 - object-level floating controls provide edit, playback, and resize affordances
 - playback uses `@music-i18n/musicxml-player` through a Polylith loadable and generated `MusicXML`
 - the Quill embed mounts React through its own root, so app context is bridged with `MusicNotebookProvider` and watched app data such as locale
 
 The current code has moved beyond the original POC shape through post-POC cleanup.
-The remaining architectural concern is not React cleanup; it is defining the MVP document model and hardening the application workflow around it.
+The remaining architectural concern is not React cleanup; it is hardening the first-pass MVP document model and application workflow around it.
 
 ## Post-POC Editing Update
 
@@ -130,7 +132,7 @@ The POC is still considered complete, but the current edit dialog has become the
 - key selection for chord/progression editing includes major or minor
 - scale editing is excluded from this major/minor key-mode behavior
 - numeric chord/progression input is supported as an alternative to Roman numerals
-- numeric input uses the default chord quality implied by the selected key mode
+- numeric input uses the default chord quality implied by the selected key quality
 - numeric input avoids relying on Roman numeral capitalization to encode major/minor quality
 - direct chord names, Roman numeral degrees, and numeric degrees are moving into one auto-detected chord input
 - Roman numeral capitalization remains explicit quality notation, so `ii` and `II` are intentionally different
@@ -295,13 +297,13 @@ The following may be temporary and should not be overprotected:
 
 ## Recommended Next Step After The POC
 
-The next step is MVP implementation planning.
+The next step is MVP implementation.
 Convert the findings into:
 
 - updated architecture notes
 - refined app-specific boundaries
 - a clearer feature/mechanics plan
-- a more intentional document model note
+- continued hardening of the first-pass document model note
 
 Near-term planning should focus on:
 

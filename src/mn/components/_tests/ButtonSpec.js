@@ -10,7 +10,7 @@ function makeLocalizeMock() {
 			return 'en-US';
 		},
 		listen() {},
-		t(phrase) {
+		translate(phrase) {
 			return {
 				'action.save': 'Save',
 				'action.save_aria': 'Save document',
@@ -77,8 +77,8 @@ describe('Button', function() {
 		harness = createTestHarness();
 
 		const result = harness.render(Button, {
+			children: 'Disabled',
 			disabled: true,
-			label: 'Disabled',
 		});
 		const button = result.container.querySelector('button');
 

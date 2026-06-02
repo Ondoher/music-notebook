@@ -1,0 +1,11 @@
+{
+	"css": [
+		{
+			"dest": "document-format/css",
+			"cwd": "assets/css",
+			"glob": "**/*.css",
+			"keepNest": true
+		}
+	],
+	"index": "index.js"
+}

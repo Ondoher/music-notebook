@@ -12,7 +12,7 @@ describe('ScaleInput', function() {
 		harness = null;
 	});
 
-	it('builds a scale payload when the scale type changes', function() {
+	it('builds a scale payload when the key quality changes', function() {
 		let nextResult = null;
 
 		harness = createTestHarness();
@@ -23,19 +23,19 @@ describe('ScaleInput', function() {
 				nextResult = scaleResult;
 			},
 		});
-		const scaleTypeSelect = result.container.querySelector('.mn-scale-input-field [role="combobox"]');
+		const qualitySelect = result.container.querySelector('.mn-scale-input-field [role="combobox"]');
 		const helper = result.container.querySelector('.mn-scale-input-helper');
 
 		act(() => {
-			selectValue(scaleTypeSelect, 'minor');
+			selectValue(qualitySelect, 'minor');
 		});
 
 		expect(helper.textContent).toBe('D minor');
 		expect(nextResult.payload.scaleId).toBe('typed:D minor');
-		expect(nextResult.payload.notes).toEqual(['D4', 'E4', 'F4', 'G4', 'A4', 'Bb4', 'C4']);
+		expect(nextResult.payload.notes).toEqual(['D4', 'E4', 'F4', 'G4', 'A4', 'Bb4', 'C5', 'D5']);
 	});
 
-	it('shows the mode selector only for modal scales', function() {
+	it('builds modal scales from the key quality field', function() {
 		let nextResult = null;
 
 		harness = createTestHarness();
@@ -45,26 +45,16 @@ describe('ScaleInput', function() {
 			onResultChange(scaleResult) {
 				nextResult = scaleResult;
 			},
-			showKey: false,
 		});
-		const typeSelect = result.container.querySelector('.mn-scale-input-field [role="combobox"]');
-
-		expect(result.container.querySelectorAll('.mn-scale-input-field [role="combobox"]').length).toBe(1);
+		const qualitySelect = result.container.querySelector('.mn-scale-input-field [role="combobox"]');
 
 		act(() => {
-			selectValue(typeSelect, 'mode');
+			selectValue(qualitySelect, 'dorian');
 		});
 
-		const selects = result.container.querySelectorAll('.mn-scale-input-field [role="combobox"]');
-		const modeSelect = selects[1];
-
-		act(() => {
-			selectValue(modeSelect, 'dorian');
-		});
-
-		expect(selects.length).toBe(2);
 		expect(result.container.querySelector('.mn-scale-input-helper').textContent).toBe('D dorian');
 		expect(nextResult.payload.scaleId).toBe('typed:D dorian');
+		expect(nextResult.payload.displayKeyMode).toBe('dorian');
 	});
 });
 

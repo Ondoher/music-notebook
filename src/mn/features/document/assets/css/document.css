@@ -1,0 +1,102 @@
+.document-name-dialog__body {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.document-name-dialog__status {
+	margin: 0;
+}
+
+.document-name-dialog__list,
+.document-open-dialog__list {
+	box-sizing: border-box;
+	width: 500px;
+	height: 500px;
+	max-width: 100%;
+	overflow-y: auto;
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	background: var(--surface);
+}
+
+.document-open-dialog__body {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.document-open-dialog__status {
+	margin: 0;
+}
+
+.document-list__empty {
+	padding: 0.75rem;
+	color: var(--text-muted);
+}
+
+.document-list__table-container {
+	height: 100%;
+	overflow: auto;
+}
+
+.document-list__table {
+	table-layout: fixed;
+	min-width: 500px;
+}
+
+.document-list__table th {
+	background: var(--surface);
+	color: var(--text-muted);
+	font-weight: 600;
+}
+
+.document-list__row {
+	cursor: pointer;
+}
+
+.document-list__row:focus {
+	outline: 2px solid var(--focus-color);
+	outline-offset: -2px;
+}
+
+.document-list__name-cell {
+	width: 42%;
+}
+
+.document-list__size-cell {
+	width: 14%;
+}
+
+.document-list__modified-cell,
+.document-list__created-cell {
+	width: 22%;
+}
+
+.document-list__table th,
+.document-list__table td {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.document-list__name-row {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	min-width: 0;
+}
+
+.document-list__name {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--text-dark);
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.document-list__lock {
+	flex: 0 0 auto;
+	color: var(--warning-color);
+}

@@ -43,6 +43,18 @@
 	margin-top: 8px;
 }
 
-.music-keyboard-editor-dialog > .music-staff-preview {
-	height: 260px;
+.music-embed-caption-section {
+	border-top: 1px solid var(--mui-palette-divider);
+	padding-top: 14px;
+}
+
+.music-embed-dialog-preview {
+	width: 100%;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.music-embed-dialog-preview > .music-staff-preview {
+	height: 100%;
+	overflow: hidden;
 }

@@ -6,7 +6,10 @@ Capture how features are actually added to this repo on the client side and how 
 
 This repo is side-effect driven and registry based, so the practical mechanics are easy to forget unless they are written down clearly.
 
-The server is a distinct concern with different architectural mechanics and is not the main focus of this note.
+The server uses the same registry/service idea but a separate Express routing
+surface. Client feature mechanics are the main focus of this note; server
+mechanics are summarized here because the account, markdown, and document
+features now have server counterparts.
 
 This note should be read together with [Build And Asset Flow](build-and-assets.md):
 
@@ -91,6 +94,13 @@ Current working rules are:
 - lifecycle methods such as `start` and `ready` are called directly by Polylith and do not need to be documented in the service `.d.ts` interface
 - service interfaces should include JSDoc comments
 - when the service implementation already has JSDoc, copy that documentation into the service interface where it still applies
+- when a registry service is assigned to a class instance property, add a local JSDoc `@type` comment that points at the service-specific interface so IntelliSense can follow the dependency, for example:
+
+  ```js
+  /** @type {IoService} */
+  this.io = this.registry.subscribe('io');
+  ```
+
 - when organizing class methods, place lower-level dependency methods before the methods that call them
 - in practice, helper methods and leaf operations should appear before composed internal methods, and public methods should usually appear last
 - service `start()` should do local initialization only
@@ -156,3 +166,71 @@ The complementary build-side questions are covered in [Build And Asset Flow](bui
 - whether the feature is included in an app build
 - whether its shipped CSS and images are copied into `dist`
 - how runtime asset paths should be derived from `build.json`
+
+## Server Feature Mechanics
+
+Server startup mirrors the side-effect registration style:
+
+- `server/index.js` imports server services and server features.
+- `server/services/routers.js` aggregates feature routers.
+- Feature routers call `routers.add(serviceName)` in `ready()`.
+- The catch-all app router is installed last with `routers.setLast(...)`.
+
+Current server feature families:
+
+- `accounts`: account creation, login, durable sessions, bearer-token auth, and account metadata.
+- `document`: authenticated document persistence routes.
+- `markdown`: localized static markdown lookup for help/info content.
+- `catch-all`: final app/static fallback.
+
+Server route services should stay small. Prefer a router that owns Express
+route wiring and delegates request behavior to a service class. Database access
+should live behind a feature-local DB wrapper such as `AccountsDb`,
+`AccountSessionsDb`, or `DocumentsDb`.
+
+Authenticated routes should not accept account ids from the request body or URL
+unless that id is the resource being acted on. For owned resources, derive
+`accountId` from the authenticated bearer token. The document router currently
+uses Express middleware with `router.use('/api/documents', authenticate)` to
+enforce this before all document routes.
+
+The document API also scopes by app id. The client sends
+`X-Music-Notebook-App-Id`, currently defaulting to `mn`, through the shared
+`io` service. The server falls back to configured `app.id` when the header is
+missing.
+
+## Cross-Feature UI Services
+
+When one feature needs to trigger another feature's UI, prefer a narrow service
+contract rather than importing that feature's components or controller internals.
+
+Current example:
+
+- `accounts` implements `account-ui`.
+- `document` can call `account-ui.openLoginDialog()` or
+  `account-ui.openCreateAccountDialog()` from the save-login-required message.
+
+This keeps feature ownership intact while allowing legitimate cross-feature
+workflow composition.
+
+Current editor-specific examples:
+
+- `editor-interactions` lets features register editor/Quill event handlers by
+  id, event name, and priority. `EditorPage` dispatches editor events with an
+  editor context object, and the feature decides whether it handled the event.
+- `editor-views` lets features register named view providers. A feature can
+  request a registered view with props, and `EditorPage` subscribes to the
+  service, calls the provider's `getComponent(...)`, and mounts the returned
+  React component in the editor-owned view layer.
+
+The table feature uses both services:
+
+- table row/column selection, table context-menu opening, keyboard cell
+  navigation, and resize-related behavior stay in the table feature instead of
+  accumulating in the editor feature.
+- the table context menu is a table-owned view, but it is mounted by
+  `EditorPage` through the generic editor view registry.
+
+This pattern is preferable when a feature needs editor-local facts, such as the
+current Quill instance or DOM event target, but the behavior still belongs to
+the feature.

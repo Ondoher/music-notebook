@@ -63,10 +63,23 @@ export default class BaseSelect extends Component {
 			? this.getLocalizedText(option.label, option.fallback)
 			: option.label;
 		const ariaLabel = this.getLocalizedText(option.ariaLabel, optionLabel);
+		const optionProps = {
+			...option.props,
+		};
+
+		if (option.dividerBefore) {
+			optionProps.sx = {
+				...(optionProps.sx || {}),
+				borderTop: '1px solid',
+				borderColor: 'divider',
+				mt: 0.5,
+				pt: 1,
+			};
+		}
 
 		return (
 			<MenuItem
-				{...option.props}
+				{...optionProps}
 				aria-label={ariaLabel}
 				key={option.value ?? 'empty'}
 				value={option.value}

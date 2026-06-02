@@ -9,10 +9,20 @@ declaration files.
   to write and read.
 - Keep complex object shapes in `.d.ts` files so component JSDoc can reference
   concise named types.
-- Types in `.d.ts` files do not need `import type` or `export type`.
-- Keep value exports in component `.d.ts` files when they describe the actual
-  JavaScript module API, such as `export default class` or named exported
-  functions.
+- Most local `.d.ts` files should define ambient/global types and should not
+  use `export`.
+- Service-specific `.d.ts` files should live next to the service implementation
+  with the same base filename, for example `io.js` and `io.d.ts`.
+- Service interfaces should mirror the service's `this.implement(...)`
+  contract. Do not include ordinary Polylith lifecycle methods such as
+  `start`, `ready`, or route registration methods unless callers are expected
+  to invoke them directly through the registry.
+- When implementation JSDoc already describes a service method accurately, copy
+  the same documentation into the service interface so IntelliSense works when
+  a registry service is assigned to a class property.
+- In rare module-facing declaration files that must describe an actual
+  JavaScript export, value exports may still be used, but treat that as the
+  exception rather than the default.
 
 ## Type Documentation
 
@@ -30,12 +40,12 @@ Example:
 
 ```ts
 /**
- * Harmonic key mode used when resolving numeric chord degrees.
+ * Harmonic key quality used when resolving numeric chord degrees.
  *
  * - **major** - Resolves numeric chord degrees using major-key defaults.
  * - **minor** - Resolves numeric chord degrees using minor-key defaults.
  */
-type KeyMode = 'major' | 'minor';
+type KeyQuality = 'major' | 'minor';
 ```
 
 ## Component JSDoc

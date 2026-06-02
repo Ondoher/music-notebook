@@ -1,4 +1,3 @@
-import { Note } from 'tonal';
 import {
 	ACCIDENTAL_SYMBOLS,
 	MAJOR_KEY_FIFTHS,
@@ -7,6 +6,14 @@ import {
 	MODE_PARENT_NOTE_INDEX,
 	PITCH_OFFSETS,
 } from './const.js';
+import { isMinorKeyQuality, isModalKeyQuality, normalizeKeyQuality } from './key-qualities.js';
+import {
+	getNoteAccidental,
+	getNoteOctave,
+	getNotePitch,
+	normalizeNoteName,
+	noteToMidi,
+} from './music-notes.js';
 
 /**
  * Builds a one-measure MusicXML document for the supplied staff notes.
@@ -18,12 +25,19 @@ import {
 export function buildMusicXml(payload, staffNotes) {
 	const sequentialNotes = !isChordPayload(payload) || payload.arpeggiate === true;
 	const clef = getStaffClef(staffNotes);
+	const octaveSign = getOctaveSign(staffNotes, clef);
+	const renderedNotes = octaveSign
+		? staffNotes.map((note) => shiftStaffNoteOctave(note, octaveSign.octaveOffset))
+		: staffNotes;
 	const keyFifths = getPayloadKeyFifths(payload);
-	const notesXml = staffNotes.map((note, index) => buildMusicXmlNote(note, {
-		keyFifths,
-		isChordTone: !sequentialNotes && index > 0,
-		sequentialNotes,
-	})).join('\n');
+	const notesXml = renderedNotes.length
+		? renderedNotes.map((note, index) => buildMusicXmlNote(note, {
+			keyFifths,
+			isChordTone: !sequentialNotes && index > 0,
+			sequentialNotes,
+		})).join('\n')
+		: buildMusicXmlHiddenRest();
+	const octaveSignXml = buildOctaveSignDirection(octaveSign);
 
 	return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
@@ -45,6 +59,7 @@ export function buildMusicXml(payload, staffNotes) {
           <line>${clef === 'bass' ? '4' : '2'}</line>
         </clef>
       </attributes>
+      ${octaveSignXml}
       ${notesXml}
     </measure>
   </part>
@@ -65,10 +80,10 @@ export function getStaffNotes(notes = [], staffOctave = 4, payload = {}) {
 
 	return notes
 		.map((note) => {
-			const pitch = getNotePitch(note);
-			const renderedNote = pitch ? `${pitch}${getNoteAccidental(note)}${octave}` : note;
+			const renderedNote = normalizeNoteName(note, octave);
+			const renderedOctave = getNoteOctave(renderedNote) ?? octave;
 			const originalMidiNumber = noteToMidi(renderedNote);
-			const staffRenderedNote = getStaffRenderedNote(originalMidiNumber, staffKeyLabels, octave) || renderedNote;
+			const staffRenderedNote = getStaffRenderedNote(originalMidiNumber, staffKeyLabels, renderedOctave) || renderedNote;
 			const midiNumber = noteToMidi(staffRenderedNote);
 			const noteParts = getMusicXmlNoteParts(staffRenderedNote);
 
@@ -238,16 +253,7 @@ export function getMajorKeyLabelsByPitchClass(displayKey = '') {
  * @param {string} note
  * @returns {number | null}
  */
-export function noteToMidi(note) {
-	const parsedMidiNumber = parseNoteToMidi(note);
-
-	if (parsedMidiNumber !== null) {
-		return parsedMidiNumber;
-	}
-
-	const midiNumber = Note.midi(String(note || ''));
-	return Number.isFinite(midiNumber) ? midiNumber : null;
-}
+export { noteToMidi };
 
 function buildMusicXmlNote(note, { isChordTone, keyFifths, sequentialNotes }) {
 	const noteType = sequentialNotes ? 'quarter' : 'whole';
@@ -266,6 +272,35 @@ function buildMusicXmlNote(note, { isChordTone, keyFifths, sequentialNotes }) {
       <duration>${duration}</duration>
       <type>${noteType}</type>${accidentalXml}
     </note>`;
+}
+
+function buildMusicXmlHiddenRest() {
+	return `      <note print-object="no">
+      <rest measure="yes"/>
+      <duration>4</duration>
+      <type>whole</type>
+    </note>`;
+}
+
+function buildOctaveSignDirection(octaveSign) {
+	if (!octaveSign) {
+		return '';
+	}
+
+	return `<direction placement="${octaveSign.placement}">
+        <direction-type>
+          <words>${octaveSign.label}</words>
+        </direction-type>
+      </direction>`;
+}
+
+function shiftStaffNoteOctave(note, octaveOffset) {
+	return {
+		...note,
+		midiNumber: note.midiNumber + (octaveOffset * 12),
+		note: `${note.step}${getAccidentalText(note.alter || 0)}${note.octave + octaveOffset}`,
+		octave: note.octave + octaveOffset,
+	};
 }
 
 function isChordPayload(payload) {
@@ -312,6 +347,51 @@ function getStaffClef(notes = []) {
 	return averageMidi < noteToMidi('C4') ? 'bass' : 'treble';
 }
 
+function getOctaveSign(notes = [], clef = 'treble') {
+	if (!notes.length) {
+		return null;
+	}
+
+	const highThreshold = clef === 'bass' ? noteToMidi('C4') : noteToMidi('G5');
+	const lowThreshold = clef === 'bass' ? noteToMidi('E2') : noteToMidi('D4');
+	const lowestMidi = Math.min(...notes.map((note) => note.midiNumber));
+	const highestMidi = Math.max(...notes.map((note) => note.midiNumber));
+
+	if (lowestMidi > highThreshold) {
+		const octaveCount = getOctaveSignCount(lowestMidi - highThreshold);
+
+		return {
+			label: getHighOctaveSignLabel(octaveCount),
+			octaveOffset: -octaveCount,
+			placement: 'above',
+		};
+	}
+
+	if (highestMidi < lowThreshold) {
+		const octaveCount = getOctaveSignCount(lowThreshold - highestMidi);
+
+		return {
+			label: getLowOctaveSignLabel(octaveCount),
+			octaveOffset: octaveCount,
+			placement: 'below',
+		};
+	}
+
+	return null;
+}
+
+function getOctaveSignCount(midiDistance) {
+	return Math.min(Math.max(Math.ceil(midiDistance / 12), 1), 3);
+}
+
+function getHighOctaveSignLabel(octaveCount) {
+	return octaveCount === 1 ? '8va' : `${8 + ((octaveCount - 1) * 7)}ma`;
+}
+
+function getLowOctaveSignLabel(octaveCount) {
+	return octaveCount === 1 ? '8vb' : `${8 + ((octaveCount - 1) * 7)}mb`;
+}
+
 function getEffectiveStaffKeySignature(payload) {
 	const signature = getPayloadKeySignature(payload);
 	const rawKey = getPayloadKey(payload);
@@ -329,24 +409,32 @@ function getPayloadKeySignature(payload) {
 		return { key: '', table: MAJOR_KEY_FIFTHS };
 	}
 
-	if (payload.scaleId && /\bminor\b/i.test(payload.label || '')) {
+	const keyMode = getPayloadKeyMode(payload);
+
+	if (isMinorKeyQuality(keyMode)) {
 		return { key, table: MINOR_KEY_FIFTHS };
 	}
 
-	if (!payload.scaleId && payload.displayKeyMode === 'minor') {
-		return { key, table: MINOR_KEY_FIFTHS };
-	}
-
-	const modeMatch = /\b(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian)\b/i.exec(payload.label || '');
-
-	if (modeMatch) {
-		const mode = modeMatch[1].toLowerCase();
-		const parentKey = getModeParentMajorKey(payload, mode)
-			|| transposePitchClass(key, MODE_PARENT_MAJOR_OFFSETS[mode]);
+	if (isModalKeyQuality(keyMode)) {
+		const parentKey = getModeParentMajorKey(payload, keyMode)
+			|| transposePitchClass(key, MODE_PARENT_MAJOR_OFFSETS[keyMode]);
 		return { key: parentKey, table: MAJOR_KEY_FIFTHS };
 	}
 
 	return { key, table: MAJOR_KEY_FIFTHS };
+}
+
+function getPayloadKeyMode(payload) {
+	const displayKeyMode = normalizeKeyQuality(payload.displayKeyMode, '');
+
+	if (displayKeyMode) {
+		return displayKeyMode;
+	}
+
+	const modeMatch = /\b(major|minor|harmonic minor|major pentatonic|minor pentatonic|major blues|minor blues|ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian)\b/i.exec(payload.label || '');
+	const mode = String(modeMatch?.[1] || '').toLowerCase().replace(/\s+/g, '-');
+
+	return normalizeKeyQuality(mode);
 }
 
 function getModeParentMajorKey(payload, mode) {
@@ -392,16 +480,6 @@ function transposePitchClass(key, semitones) {
 	const transposedPitchClass = ((midiNumber + semitones) % 12 + 12) % 12;
 	const sharpNames = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
 	return sharpNames[transposedPitchClass];
-}
-
-function getNotePitch(note) {
-	const match = /^([A-Ga-g])/.exec(String(note || ''));
-	return match ? match[1].toUpperCase() : '';
-}
-
-function getNoteAccidental(note) {
-	const match = /^[A-Ga-g](#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?/u.exec(String(note || ''));
-	return match?.[1] || '';
 }
 
 function getNoteKeyName(note) {
@@ -553,25 +631,6 @@ function getAccidentalText(offset) {
 		default:
 			return '';
 	}
-}
-
-function parseNoteToMidi(note) {
-	const match = /^([A-Ga-g])(#{1,2}|b{1,2}|x|n|\u266f|\u266d|\u266e|\ud834\udd2a|\ud834\udd2b)?(-?\d+)$/u.exec(String(note || ''));
-
-	if (!match) {
-		return null;
-	}
-
-	const pitch = match[1].toUpperCase();
-	const accidental = match[2] || '';
-	const octave = Number(match[3]);
-	const pitchOffset = PITCH_OFFSETS[pitch];
-
-	if (!Number.isInteger(octave) || pitchOffset === undefined) {
-		return null;
-	}
-
-	return 12 + pitchOffset + getAccidentalOffset(accidental) + (12 * octave);
 }
 
 function getAccidentalOffset(accidental) {

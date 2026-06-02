@@ -10,7 +10,7 @@ function makeLocalizeMock() {
 			return 'en-US';
 		},
 		listen() {},
-		t(phrase) {
+		translate(phrase) {
 			return {
 				'action.apply': 'Apply',
 				'action.cancel': 'Cancel',

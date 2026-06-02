@@ -31,11 +31,25 @@ This folder contains working architecture notes for `music-notebook`.
 
 ## Current Status
 
-The editor/embed POC is proven, the post-POC React cleanup is complete, and MVP implementation planning is the active phase.
+The editor/embed POC is proven, the post-POC React cleanup is complete, and MVP implementation is underway.
+The first-pass app shell, document tabs, document-model service, document-format service/feature, paragraph-format feature, editor toolbar service, music-object controller/session path, editor/model tab-content bridge, account/session flow, localized markdown flow, document persistence slice, editor interaction/view services, and first table interaction slice exist.
+
+Current high-value context:
+
+- document-format means document-wide formatting, not per-page formatting
+- document-model stores typography defaults and document paragraph styles
+- paragraph direct formatting overrides style values and should preserve which properties were changed
+- Quill blots are adapter exceptions; behavior should be delegated to controllers or controller-owned sessions
+- read/view mode is a separate presentation path from Quill edit mode, with split view likely for layout-sensitive features
+- editor-local feature behavior should use narrow editor services where possible: `editor-interactions` for event opt-in and `editor-views` for feature-owned views mounted by `EditorPage`
+- table behavior now lives in the `table` feature; `EditorPage` supplies editor context but should not own table commands or table-specific UI
+- accounts use UUIDs, deterministic username salts, durable `HttpOnly` login-session cookies, and short-lived in-memory bearer tokens
+- document APIs are authenticated, account-scoped, app-id-scoped, and backed by MongoDB
+- cross-feature UI launches should go through narrow UI services such as `account-ui`
 
 Right now the main job of these notes is to:
 
 - capture current direction
 - separate likely patterns from unresolved assumptions
-- make inconsistencies visible before MVP implementation hardens around them
+- make inconsistencies visible before MVP implementation hardens further around them
 - provide enough bootstrap context for a fresh agent to continue planning or implementation without rediscovering completed cleanup work

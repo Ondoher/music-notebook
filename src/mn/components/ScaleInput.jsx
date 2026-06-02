@@ -2,12 +2,7 @@ import React, { Component } from 'react';
 import FormControl from '@mui/material/FormControl';
 import FormLabel from '@mui/material/FormLabel';
 
-import {
-	MODE_OPTIONS,
-	SCALE_TYPE_OPTIONS,
-	buildKeyboardScalePayload,
-} from '../shared/scale-builder.js';
-import BaseSelect from './BaseSelect.jsx';
+import { buildKeyboardScalePayload } from '../shared/scale-builder.js';
 import HelperText from './HelperText.jsx';
 import KeyPicker from './KeyPicker.jsx';
 import LocaleString from './LocaleString.jsx';
@@ -31,8 +26,7 @@ export default class ScaleInput extends Component {
 		this.helperId = `mn-scale-input-${scaleInputId}-helper`;
 		this.state = {
 			key: props.initialKey || 'C',
-			mode: props.initialMode || 'ionian',
-			scaleType: props.initialScaleType || 'major',
+			keyMode: props.initialKeyMode || 'major',
 			touched: false,
 		};
 	}
@@ -45,8 +39,14 @@ export default class ScaleInput extends Component {
 	 */
 	componentDidUpdate(previousProps) {
 		if (
-			previousProps.selectedKey !== this.props.selectedKey
-			&& this.props.selectedKey !== undefined
+			(
+				previousProps.selectedKey !== this.props.selectedKey
+				|| previousProps.selectedKeyMode !== this.props.selectedKeyMode
+			)
+			&& (
+				this.props.selectedKey !== undefined
+				|| this.props.selectedKeyMode !== undefined
+			)
 		) {
 			this.props.onResultChange?.(this.getResult());
 		}
@@ -62,6 +62,15 @@ export default class ScaleInput extends Component {
 	}
 
 	/**
+	 * Gets the active key quality.
+	 *
+	 * @returns {KeyMode}
+	 */
+	getKeyMode() {
+		return this.props.selectedKeyMode ?? this.state.keyMode;
+	}
+
+	/**
 	 * Gets the resolved scale builder result.
 	 *
 	 * @returns {MusicBuildResult}
@@ -69,8 +78,7 @@ export default class ScaleInput extends Component {
 	getResult() {
 		return buildKeyboardScalePayload({
 			key: this.getKey(),
-			mode: this.state.mode,
-			scaleType: this.state.scaleType,
+			keyMode: this.getKeyMode(),
 		});
 	}
 
@@ -136,23 +144,17 @@ export default class ScaleInput extends Component {
 	};
 
 	/**
-	 * Handles scale type selection changes.
+	 * Handles key quality changes from the shared key picker.
 	 *
-	 * @param {ScaleTypeValue} scaleType
+	 * @param {KeyMode} keyMode
 	 * @returns {void}
 	 */
-	handleScaleTypeChange = (scaleType) => {
-		this.setState({ scaleType }, () => this.reportResult());
-	};
+	handleKeyModeChange = (keyMode) => {
+		if (this.props.selectedKeyMode !== undefined) {
+			return;
+		}
 
-	/**
-	 * Handles modal scale mode selection changes.
-	 *
-	 * @param {ScaleModeValue} mode
-	 * @returns {void}
-	 */
-	handleModeChange = (mode) => {
-		this.setState({ mode }, () => this.reportResult());
+		this.setState({ keyMode }, () => this.reportResult());
 	};
 
 	/**
@@ -194,65 +196,13 @@ export default class ScaleInput extends Component {
 			<KeyPicker
 				className="mn-scale-input-key-picker"
 				keyFieldClassName={fieldClassName}
+				mode={this.getKeyMode()}
+				modeFieldClassName={fieldClassName}
 				onKeyChange={this.handleKeyChange}
+				onModeChange={this.handleKeyModeChange}
+				showMode
 				size={size}
 				value={this.getKey()}
-			/>
-		);
-	}
-
-	/**
-	 * Renders the scale type selector.
-	 *
-	 * @returns {React.ReactElement}
-	 */
-	renderScaleTypeSelect() {
-		const { fieldClassName = 'mn-scale-input-field', size } = this.props;
-
-		return (
-			<BaseSelect
-				className={fieldClassName}
-				label="music.controls.type"
-				labelFallback="Type"
-				onBlur={this.handleBlur}
-				onChange={this.handleScaleTypeChange}
-				options={SCALE_TYPE_OPTIONS.map((option) => ({
-					fallback: option.label,
-					label: option.phrase,
-					value: option.value,
-				}))}
-				size={size}
-				value={this.state.scaleType}
-			/>
-		);
-	}
-
-	/**
-	 * Renders the modal scale mode selector.
-	 *
-	 * @returns {React.ReactElement | null}
-	 */
-	renderModeSelect() {
-		const { fieldClassName = 'mn-scale-input-field', size } = this.props;
-
-		if (this.state.scaleType !== 'mode') {
-			return null;
-		}
-
-		return (
-			<BaseSelect
-				className={fieldClassName}
-				label="music.controls.mode"
-				labelFallback="Mode"
-				onBlur={this.handleBlur}
-				onChange={this.handleModeChange}
-				options={MODE_OPTIONS.map((option) => ({
-					fallback: option.label,
-					label: option.phrase,
-					value: option.value,
-				}))}
-				size={size}
-				value={this.state.mode}
 			/>
 		);
 	}
@@ -291,8 +241,6 @@ export default class ScaleInput extends Component {
 				</FormLabel>
 				<div className={controlsClassName}>
 					{this.renderKeyPicker()}
-					{this.renderScaleTypeSelect()}
-					{this.renderModeSelect()}
 				</div>
 				<HelperText
 					className={helperClassName}

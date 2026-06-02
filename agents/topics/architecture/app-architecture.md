@@ -17,7 +17,7 @@ Current working product assumptions:
 - the first known display modes are keyboards and musical staffs
 - the current keyboard and staff rendering component choices are provisional
 - the shell outside the editor matters, but it is secondary to getting the editor and embed mechanics right
-- saving and persistence were intentionally deferred during the first spike and now need MVP planning
+- saving and persistence now have a first MongoDB-backed MVP slice, while export and read-view layout still need planning
 
 The most important early architectural consequence is that the document editor is not just one feature among many. It is likely the primary composition surface around which the rest of the app is organized.
 
@@ -98,17 +98,37 @@ Owns:
 - the relationship between editor content and embedded object payloads
 - the distinction between notebook format and `MusicXML` music payloads
 
-This is likely to become one of the most important architectural seams in the app.
+This is one of the most important architectural seams in the app.
+The first-pass implementation is the `document-model` service under `src/mn/models`.
+It owns tabs, active tab state, per-tab editor content, document settings, typography defaults, document paragraph styles, and generic objects.
+The persistence schema is still open, so the current model snapshot should be treated as the implementation seam rather than the final database contract.
+
+Current formatting-related seams:
+
+- `document-format` is a global reusable service for document-level page and typography settings
+- the `document-format` feature controller owns menu/dialog orchestration for those document-wide settings
+- `paragraph-format` owns paragraph style selection, direct paragraph formatting, alignment, and start behavior
+- document styles are stored with the document, not as hardcoded UI-only presets
+- `css-vars` is a reusable service for reading and writing CSS custom properties where document or app styling needs a runtime bridge
+
+The old page-format naming should be avoided.
+The app has document formatting, not per-page formatting.
 
 ### Persistence Services
 
-Should remain abstract for now.
+The first persistence slice is implemented for accounts and documents.
+It should still be treated as a service boundary, not as permission to couple
+the document model directly to MongoDB.
 
-Early preferred direction:
+Current direction:
 
-- define service seams early
-- allow spike code to save nothing or save to mocks
-- avoid letting early UI choices force a backend shape prematurely
+- document-model owns the client document snapshot and dirty state
+- document feature owns client save/open/new/rename flow and dialogs
+- server document feature owns authenticated Express routes and Mongo access
+- account/auth identifies ownership through bearer tokens
+- the client does not send `accountId` for document operations
+- the client sends `X-Music-Notebook-App-Id`; the server combines app id and authenticated account id as document scope
+- Mongo records wrap the notebook document content with metadata such as name, size, created/modified/locked times, app id, and account id
 
 ### Export Services
 
@@ -178,8 +198,14 @@ Now clearer:
 - the first payload can round-trip through Quill Deltas
 - one embed type can support multiple display modes through payload fields
 - floating controls plus a dedicated dialog are workable for first-pass object editing
-- width/height can be persisted in the embed payload and updated through the existing embed-change path
+- width is the primary persisted scale input and can be updated through the
+  existing embed-change path; legacy height metadata may remain, but rendered
+  height is natural and should not clip previews or captions
 - generated `MusicXML` can feed staff rendering and basic playback
+- music-object behavior belongs behind the `music-object-controller` and controller-owned embed sessions, while the Quill blot remains the Quill adapter
+- music-object captions can carry a template plus caption formatting, including style, size, alignment, bold, italic, and underline
+- caption templates currently support `{{short}}`, `{{long}}`, and `{{key}}`
+- music objects are large inline Quill embed leaves, similar to images; tables or a future explicit layout container own intentional side-by-side music layout
 
 Still not clear yet:
 
@@ -187,6 +213,7 @@ Still not clear yet:
 - whether to use placeholders with sidecar object data
 - whether the POC payload shape should evolve into a notebook document model or be translated into a separate durable format
 - how much of the POC object-editing UI should survive once a real document model exists
+- whether object/caption styles should always reference paragraph styles or later use a separate style type
 
 This is no longer a blocker for application planning.
 The next architecture question is how to wrap the Quill Delta and music-object payloads in a durable notebook document model.
@@ -209,33 +236,41 @@ Current preferred direction:
 - do not overcommit to an initial library choice if it adds complexity without helping the document/embed model
 - keep playback behind the `player` feature service so the editor feature does not own the playback loadable or player lifecycle
 
-### 5. Persistence Is Deferred, But Some Architectural Decisions Depend On It
+### 5. Persistence Exists, But The Durable Notebook Format Is Still Young
 
-Deferring persistence is a good spike choice, but it creates some ambiguity.
+The first MongoDB path exists and is good enough for MVP hardening.
 
-Not clear yet:
+Now clearer:
 
-- what minimum document serialization shape is needed even for local testing
-- whether temporary save/load seams should preserve realistic future constraints
-- how much the initial document model should anticipate backend storage, local files, or both
+- accounts use app-owned UUIDs
+- documents use app-owned UUIDs
+- document APIs are account-scoped from bearer auth
+- document records carry app id, account id, name, JSON content, JSON byte size, created/modified timestamps, and a future `lockedAt` field
+- list APIs return metadata; full document APIs include content
 
-The right stance for now is probably:
+Still not clear yet:
 
-- keep persistence abstracted
-- still define a minimal document contract early enough to support realistic spikes
+- whether saved document revisions should be whole snapshots, patches, or both
+- how locked documents will behave once local PWA editing is implemented
+- whether duplicate/save-as should enforce name conflicts exactly like create/rename
+- where sharing metadata should live when read-only sharing is introduced later
 
-### 6. Tabs Are Mentioned, But Their Role Is Underspecified
+### 6. Tabs Are Document Metadata
 
-The notes say the app will have tab displays to jump to major sections, but the role of tabs is still fuzzy.
+Notebook tabs are now a document-model concept, not feature navigation and not Quill objects.
 
-Not clear yet:
+Current implementation:
 
-- whether tabs are notebook sections
-- whether tabs are editor tool areas
-- whether tabs are feature navigation
-- whether tabs coexist with a left-nav or replace it
+- tabs live in the `document-model` service
+- each tab owns one Quill Delta payload
+- the active tab determines which payload `EditorPage` is editing
+- tab metadata is persisted as part of the notebook document snapshot
+- bottom tabs in edit view are rendered by the app feature
+- tab add, select, rename, and reorder controls call document-model operations
+- Quill loads active-tab content from the model and writes user edits back to the active tab
 
-This matters because `modmod` uses tabs as a feature/subview mechanic, while this app may need tabs as part of the document workflow itself.
+This separates document structure from application navigation.
+Feature navigation can still exist separately later, but notebook tabs should be treated as part of the user's document.
 
 ### 7. Inline Editing Versus Side-Panel Editing Is Still Unsettled
 
@@ -258,17 +293,19 @@ Current preferred direction:
 
 ## Practical Near-Term Guidance
 
-With the post-POC cleanup complete, the safest MVP planning path seems to be:
+With the post-POC cleanup complete and the first account/document persistence
+slices underway, the safest MVP implementation path is:
 
 1. Treat the editor as the center of the app.
-2. Keep persistence behind services and avoid hardcoding a backend model.
+2. Keep persistence behind services and avoid coupling the document model directly to MongoDB.
 3. Keep the custom embed path as the leading editor-object implementation.
-4. Design the durable document model before broadening the app shell.
+4. Harden the first-pass document model before committing to a final durable notebook format.
 5. Build new substantial React presentation components as class components and use the shared component/domain helper layers created during cleanup.
+6. Use cross-feature UI services for deliberate workflow bridges such as document save prompting account login.
 
 ## Suggested Next Docs
 
-During MVP planning, this note should probably split into smaller topic docs such as:
+The broad architecture topic is now split into smaller topic docs. Use:
 
 - feature mechanics
 - build and asset flow

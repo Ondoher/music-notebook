@@ -76,10 +76,21 @@ state, callbacks, and presentation data through props.
 This keeps large feature components from accumulating modal subtrees and makes
 dialog behavior easier to test and reuse.
 
+Feature dialogs should render conditionally under the normal application React
+root through the owning feature's component host. Do not create detached React
+roots for ordinary feature dialogs. Detached React roots are reserved for Quill
+embeds and similar adapter boundaries where the host DOM is owned outside the
+main React tree.
+
 Grouped form controls should be built from shared components when practical.
-Use the local `Base*`/shared component layer for text fields, selects,
-checkboxes, radio groups, and helper text so labels, descriptions,
-localization, validation, and accessibility behavior stay consistent.
+Use the local shared component layer for text fields, selects, checkboxes,
+radio groups, and helper text so labels, descriptions, localization,
+validation, and accessibility behavior stay consistent.
+Components named `BaseXXXX` are implementation foundations for concrete
+components, not the preferred thing for feature screens to instantiate directly;
+see [UI Component Layer](../architecture/ui-component-layer.md#base-component-boundary).
+If a `BaseXXXX` component is actually useful as a concrete component, rename or
+promote it to a concrete shared name and remove thin feature wrappers.
 
 Multi-field controls such as key, chord, and scale inputs should own their
 field grouping explicitly.

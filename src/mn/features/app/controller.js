@@ -16,6 +16,7 @@ export default class AppController extends Service {
 	ready() {
 		this.view = this.registry.subscribe('app-view');
 		this.pages = this.registry.subscribe('app-pages');
+		this.mainMenu = this.registry.subscribe('main-menu');
 		this.url = this.registry.subscribe('url');
 		this.activePageId = null;
 		this.activePageComponent = null;
@@ -25,7 +26,16 @@ export default class AppController extends Service {
 		this.pages.listen('page-updated', this.onPageAvailable.bind(this));
 		this.url.listen('changed', this.onUrlChanged.bind(this));
 		this.registry.listen('ready', this.onRegistryReady.bind(this));
+		this.configureMainMenu();
 		this.reconcilePages();
+	}
+
+	configureMainMenu() {
+		this.mainMenu.addMainItem(100, 'document', 'app.menu.document');
+		this.mainMenu.addMainItem(200, 'insert', 'app.menu.insert');
+		this.mainMenu.addMainItem(300, 'format', 'app.menu.format');
+		this.mainMenu.addMainItem(400, 'view', 'app.menu.view');
+		this.mainMenu.addMainItem(600, 'help', 'app.menu.help');
 	}
 
 	onPagesUpdated(pages) {

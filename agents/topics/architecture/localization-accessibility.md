@@ -39,22 +39,54 @@ Useful pieces to borrow:
 - a localization service registered as `localize`
 - React context exposure for components
 - a small `LocaleString` component for rendered phrase keys
-
-Skip translated markdown for now because that path depends on server-side support.
+- localized markdown documents for longer help and guidance content
 
 The localization layer should support:
 
 - phrase keys
 - replacement values
 - plural categories through `Intl.PluralRules`
+- localized markdown lookup through `translateMarkdown`
 - locale/date helper methods where useful
 - missing-key warnings that are clear during development
 
 Current preferred behavior:
 
 - avoid hardcoded user-visible strings in reusable components
+- missing phrase keys should be loud in the console but should not throw and disrupt the application
+- `LocaleString` should output a visible key/fallback-like marker only as a development signal, not silently hide missing translations
 - use full-sentence phrase keys rather than assembling grammar from fragments
 - keep initial locale data small and expand it as UI surfaces become real
+
+## Localized Markdown
+
+Long-form help content should live in localized markdown files rather than phrase JSON.
+
+Current server content path:
+
+- `server/data/markdown/en_US/`
+
+Current server/client path:
+
+- server route: `GET /api/markdown/:name`
+- server feature: `server/features/markdown`
+- client model: `src/mn/models/markdown-model.js`
+- presentation component: `src/mn/components/Markdown.jsx`
+- dialog consumers: `InfoDialog` and `InfoTextInput`
+
+The markdown route infers the requested language from the `Accept-Language` header, normalizes it to a content folder name such as `en_US`, and falls back to `en_US` when a localized document is missing.
+
+Client presentation components may request static localized markdown through:
+
+- `localize.translateMarkdown(name, replacements)`
+
+This is a deliberate static-content exception to the usual REMVC flow.
+It is appropriate for help text because it is equivalent to resolving a long localized phrase.
+Do not use this path for feature state, user data, mutations, or account/document behavior.
+
+`translateMarkdown` loads markdown through the markdown model/service path and
+then applies localization replacement logic so long-form help can use the same
+field replacement semantics as phrase strings.
 
 ## Music Term Localization
 

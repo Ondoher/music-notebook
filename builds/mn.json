@@ -5,7 +5,7 @@
 	"index": "src/mn/index.js",
 	"spec": "src/mn/test.js",
 	"testDest": "tests/",
-	"router": "server/mn/index.js",
+	"router": "server/index.js",
 	"template": {
 		"source": "src/mn/templates/index.html",
 		"destination": "dist/mn/index.html"
@@ -38,5 +38,5 @@
 			"keepNest": true
 		}
 	],
-	"features": ["features/app", "features/player", "features/editor"]
+	"features": ["features/app", "features/player", "features/editor", "features/view-mode", "features/music-object", "features/table", "features/document", "features/document-format", "features/paragraph-format", "features/accounts"]
 }

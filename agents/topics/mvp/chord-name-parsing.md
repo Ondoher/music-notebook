@@ -302,7 +302,7 @@ minor
 
 When key quality is unspecified, Roman and numeric input should follow the standard behavior implied by the typed root and modifiers.
 
-When key quality is `major` or `minor`, unqualified numeric degree input can infer the default diatonic quality from that key mode.
+When key quality is `major` or `minor`, unqualified numeric degree input can infer the default diatonic quality from that key quality.
 
 This would allow the app to support both:
 

@@ -3,23 +3,25 @@ import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { MidiNumbers, Piano } from 'react-piano';
 import {
 	ACCIDENTAL_SYMBOLS,
-	NATURAL_PITCH_CLASSES,
 } from '../shared/const.js';
 import {
 	buildMusicXml,
 	getEffectivePayloadKey,
 	getMajorKeyLabelsByPitchClass,
+	getPayloadKeyFifths,
 	getStaffNotes,
-	normalizeKeyName,
-	normalizeStaffOctave,
 	noteToMidi,
 } from '../shared/music_helper.js';
+import { getKeyboardNoteRange } from '../shared/music-object-layout.js';
 import 'react-piano/dist/styles.css';
 
-const DEFAULT_FIRST_NOTE = 'c4';
-const DEFAULT_LAST_NOTE = 'b4';
 const DEFAULT_WIDTH = 420;
 const EMBED_HORIZONTAL_CHROME = 0;
+const KEYBOARD_KEY_WIDTH_TO_HEIGHT = 0.28;
+const STAFF_LAYOUT_WIDTH = 360;
+const STAFF_LAYOUT_HEIGHT = 260;
+const STAFF_LAYOUT_BASE_WIDTH = 220;
+const STAFF_LAYOUT_KEY_SIGNATURE_ACCIDENTAL_WIDTH = 24;
 
 /**
  * Renders a music embed payload using the shared keyboard or staff preview.
@@ -34,8 +36,8 @@ export default class MusicPreview extends Component {
 	 */
 	render() {
 		return this.props.payload.displayMode === 'staff'
-			? <StaffPreview payload={this.props.payload} />
-			: <KeyboardPreview payload={this.props.payload} />;
+			? <StaffPreview payload={this.props.payload} onNaturalHeight={this.props.onNaturalHeight} />
+			: <KeyboardPreview fitWidth={this.props.fitWidth} payload={this.props.payload} />;
 	}
 }
 
@@ -49,6 +51,7 @@ class StaffPreview extends Component {
 	containerRef = createRef();
 
 	cancelled = false;
+	renderSurface = null;
 
 	/**
 	 * Renders staff notation after mount.
@@ -79,6 +82,7 @@ class StaffPreview extends Component {
 	componentWillUnmount() {
 		this.cancelled = true;
 		this.containerRef.current?.replaceChildren();
+		this.removeRenderSurface();
 	}
 
 	/**
@@ -107,8 +111,10 @@ class StaffPreview extends Component {
 
 		this.cancelled = false;
 		container.replaceChildren();
+		this.removeRenderSurface();
 
-		const osmd = new OpenSheetMusicDisplay(container, {
+		const renderSurface = this.createRenderSurface(container);
+		const osmd = new OpenSheetMusicDisplay(renderSurface, {
 			autoResize: false,
 			backend: 'svg',
 			drawPartNames: false,
@@ -119,17 +125,86 @@ class StaffPreview extends Component {
 
 		osmd.load(this.getMusicXml()).then(() => {
 			if (this.cancelled) {
+				this.removeRenderSurface(renderSurface);
 				return;
 			}
 
 			osmd.zoom = 1.35;
 			osmd.render();
-			fitOsmdSvgToContent(container);
+			const bounds = fitOsmdSvgToGeneratedSize(renderSurface);
+			const svg = renderSurface.querySelector('svg');
+
+			if (svg) {
+				container.replaceChildren(svg);
+			}
+
+			this.removeRenderSurface(renderSurface);
+			this.reportNaturalHeight(bounds);
 		}).catch(() => {
+			this.removeRenderSurface(renderSurface);
+
 			if (!this.cancelled) {
 				container.textContent = '';
 			}
 		});
+	}
+
+	/**
+	 * Creates a fixed-size render target so OSMD layout is independent of the embed size.
+	 *
+	 * @param {HTMLDivElement} visibleContainer
+	 * @returns {HTMLDivElement}
+	 */
+	createRenderSurface(visibleContainer) {
+		const ownerDocument = visibleContainer.ownerDocument;
+		const renderSurface = ownerDocument.createElement('div');
+
+		renderSurface.style.position = 'fixed';
+		renderSurface.style.left = '-10000px';
+		renderSurface.style.top = '0';
+		renderSurface.style.width = `${getStaffLayoutWidth(this.props.payload)}px`;
+		renderSurface.style.height = `${STAFF_LAYOUT_HEIGHT}px`;
+		renderSurface.style.overflow = 'visible';
+		renderSurface.style.opacity = '0';
+		renderSurface.style.pointerEvents = 'none';
+
+		(ownerDocument.body || visibleContainer).appendChild(renderSurface);
+		this.renderSurface = renderSurface;
+
+		return renderSurface;
+	}
+
+	/**
+	 * Removes a temporary staff render surface.
+	 *
+	 * @param {HTMLDivElement} [renderSurface]
+	 * @returns {void}
+	 */
+	removeRenderSurface(renderSurface = this.renderSurface) {
+		renderSurface?.remove();
+
+		if (this.renderSurface === renderSurface) {
+			this.renderSurface = null;
+		}
+	}
+
+	/**
+	 * Reports the rendered staff height that matches the generated SVG aspect ratio.
+	 *
+	 * @param {{width: number, height: number} | null} bounds
+	 * @returns {void}
+	 */
+	reportNaturalHeight(bounds) {
+		const renderedWidth = this.containerRef.current?.getBoundingClientRect?.().width;
+		const width = Number.isFinite(renderedWidth) && renderedWidth > 0
+			? renderedWidth
+			: Number(this.props.payload.width);
+
+		if (!bounds || !Number.isFinite(width) || width <= 0 || bounds.width <= 0) {
+			return;
+		}
+
+		this.props.onNaturalHeight?.(Math.ceil(width * (bounds.height / bounds.width)));
 	}
 
 	/**
@@ -259,6 +334,21 @@ class KeyboardPreview extends Component {
 	 */
 	render() {
 		const model = this.getPreviewModel();
+		const naturalKeyCount = countNaturalMidiNumbers(model.firstNote, model.lastNote);
+		const previewWidth = getPreviewWidth(this.props.payload.width);
+		const previewHeight = getKeyboardPreviewHeight(model.firstNote, model.lastNote, previewWidth);
+		const pianoProps = {
+			activeNotes: [],
+			keyWidthToHeight: KEYBOARD_KEY_WIDTH_TO_HEIGHT,
+			noteRange: { first: model.firstNote, last: model.lastNote },
+			playNote: () => {},
+			renderNoteLabel: (noteProps) => this.renderNoteLabel(noteProps, model),
+			stopNote: () => {},
+		};
+
+		if (!this.props.fitWidth) {
+			pianoProps.width = previewWidth;
+		}
 
 		return (
 			<div
@@ -267,63 +357,245 @@ class KeyboardPreview extends Component {
 					? 'music-keyboard-embed-piano music-keyboard-embed-has-highlights'
 					: 'music-keyboard-embed-piano'}
 				aria-hidden="true"
+				style={this.props.fitWidth
+					? { aspectRatio: `${naturalKeyCount * KEYBOARD_KEY_WIDTH_TO_HEIGHT} / 1` }
+					: { height: `${previewHeight}px` }}
 			>
-				<Piano
-					activeNotes={[]}
-					keyWidthToHeight={0.28}
-					noteRange={{ first: model.firstNote, last: model.lastNote }}
-					playNote={() => {}}
-					renderNoteLabel={(noteProps) => this.renderNoteLabel(noteProps, model)}
-					stopNote={() => {}}
-					width={getPreviewWidth(this.props.payload.width)}
-				/>
+				<Piano {...pianoProps} />
 			</div>
 		);
 	}
 }
 
-function fitOsmdSvgToContent(container) {
+function getKeyboardPreviewHeight(firstNote, lastNote, width) {
+	const naturalKeyCount = countNaturalMidiNumbers(firstNote, lastNote);
+
+	return Math.ceil((width / naturalKeyCount) / KEYBOARD_KEY_WIDTH_TO_HEIGHT);
+}
+
+function countNaturalMidiNumbers(firstNote, lastNote) {
+	let count = 0;
+
+	for (let midiNumber = firstNote; midiNumber <= lastNote; midiNumber += 1) {
+		if (!MidiNumbers.getAttributes(midiNumber).isAccidental) {
+			count += 1;
+		}
+	}
+
+	return Math.max(count, 1);
+}
+
+function fitOsmdSvgToGeneratedSize(container) {
 	const svg = container.querySelector('svg');
 
 	if (!svg) {
-		return;
+		return null;
 	}
 
-	const bounds = Array.from(svg.querySelectorAll('path, line, polyline, polygon, circle, ellipse, text'))
-		.map((element) => getSvgElementBounds(element))
+	const bounds = getSvgVisibleBounds(svg);
+
+	if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+		return null;
+	}
+
+	svg.setAttribute('viewBox', `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);
+	svg.setAttribute('width', '100%');
+	svg.setAttribute('height', '100%');
+	svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+
+	return {
+		height: bounds.height,
+		width: bounds.width,
+	};
+}
+
+function getSvgVisibleBounds(svg) {
+	const renderedBounds = getSvgRenderedContentBounds(svg);
+
+	if (renderedBounds) {
+		return expandSvgBounds(renderedBounds, getSvgStrokePadding(svg));
+	}
+
+	return getSvgGeneratedBounds(svg);
+}
+
+function getStaffLayoutWidth(payload = {}) {
+	const accidentalWidth = Math.abs(getPayloadKeyFifths(payload)) * STAFF_LAYOUT_KEY_SIGNATURE_ACCIDENTAL_WIDTH;
+	const keySignatureWidth = STAFF_LAYOUT_BASE_WIDTH + accidentalWidth;
+
+	return Math.max(Number(payload.width) || 0, STAFF_LAYOUT_WIDTH, keySignatureWidth);
+}
+
+function getSvgRenderedContentBounds(svg) {
+	const screenMatrix = typeof svg.getScreenCTM === 'function' ? svg.getScreenCTM() : null;
+	const inverseMatrix = screenMatrix ? screenMatrix.inverse() : null;
+
+	if (!inverseMatrix) {
+		return null;
+	}
+
+	const clientBounds = Array.from(svg.querySelectorAll('path, line, rect, polyline, polygon, circle, ellipse, text, use'))
+		.map((element) => getSvgElementClientBounds(element))
 		.filter(Boolean)
 		.reduce((combinedBounds, bounds) => combineSvgBounds(combinedBounds, bounds), null);
 
-	if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
-		return;
-	}
-
-	const padding = 10;
-	const viewBox = [
-		bounds.x - padding,
-		bounds.y - padding,
-		bounds.width + (padding * 2),
-		bounds.height + (padding * 2),
-	].join(' ');
-
-	svg.setAttribute('viewBox', viewBox);
-	svg.removeAttribute('width');
-	svg.removeAttribute('height');
-	svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
-}
-
-function getSvgElementBounds(element) {
-	try {
-		const bounds = element.getBBox();
-
-		if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || bounds.width <= 0 || bounds.height <= 0) {
-			return null;
-		}
-
-		return bounds;
-	} catch {
+	if (!clientBounds) {
 		return null;
 	}
+
+	return clientBoundsToSvgBounds(svg, clientBounds, inverseMatrix);
+}
+
+function getSvgElementClientBounds(element) {
+	const bounds = element.getBoundingClientRect();
+
+	if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || bounds.width <= 0 || bounds.height <= 0) {
+		return null;
+	}
+
+	return {
+		x: bounds.x,
+		y: bounds.y,
+		width: bounds.width,
+		height: bounds.height,
+	};
+}
+
+function clientBoundsToSvgBounds(svg, bounds, inverseMatrix) {
+	const points = [
+		clientPointToSvgPoint(svg, bounds.x, bounds.y, inverseMatrix),
+		clientPointToSvgPoint(svg, bounds.x + bounds.width, bounds.y, inverseMatrix),
+		clientPointToSvgPoint(svg, bounds.x, bounds.y + bounds.height, inverseMatrix),
+		clientPointToSvgPoint(svg, bounds.x + bounds.width, bounds.y + bounds.height, inverseMatrix),
+	].filter(Boolean);
+
+	if (points.length !== 4) {
+		return null;
+	}
+
+	const xValues = points.map((point) => point.x);
+	const yValues = points.map((point) => point.y);
+	const x = Math.min(...xValues);
+	const y = Math.min(...yValues);
+	const right = Math.max(...xValues);
+	const bottom = Math.max(...yValues);
+
+	return {
+		x,
+		y,
+		width: right - x,
+		height: bottom - y,
+	};
+}
+
+function clientPointToSvgPoint(svg, x, y, inverseMatrix) {
+	if (typeof svg.createSVGPoint === 'function') {
+		const point = svg.createSVGPoint();
+		point.x = x;
+		point.y = y;
+
+		return point.matrixTransform(inverseMatrix);
+	}
+
+	if (typeof DOMPoint === 'function') {
+		return new DOMPoint(x, y).matrixTransform(inverseMatrix);
+	}
+
+	if (
+		typeof inverseMatrix.a === 'number'
+		&& typeof inverseMatrix.b === 'number'
+		&& typeof inverseMatrix.c === 'number'
+		&& typeof inverseMatrix.d === 'number'
+		&& typeof inverseMatrix.e === 'number'
+		&& typeof inverseMatrix.f === 'number'
+	) {
+		return {
+			x: (inverseMatrix.a * x) + (inverseMatrix.c * y) + inverseMatrix.e,
+			y: (inverseMatrix.b * x) + (inverseMatrix.d * y) + inverseMatrix.f,
+		};
+	}
+
+	return null;
+}
+
+function getSvgGeneratedBounds(svg) {
+	const viewBox = svg.viewBox?.baseVal;
+
+	if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+		return {
+			x: viewBox.x,
+			y: viewBox.y,
+			width: viewBox.width,
+			height: viewBox.height,
+		};
+	}
+
+	const width = parseSvgNumber(svg.getAttribute('width'));
+	const height = parseSvgNumber(svg.getAttribute('height'));
+
+	if (width > 0 && height > 0) {
+		return {
+			x: 0,
+			y: 0,
+			width,
+			height,
+		};
+	}
+
+	try {
+		const bounds = svg.getBBox();
+
+		if (bounds.width > 0 && bounds.height > 0) {
+			return {
+				x: bounds.x,
+				y: bounds.y,
+				width: bounds.width,
+				height: bounds.height,
+			};
+		}
+	} catch {
+		// Some SVG implementations do not expose root bounds.
+	}
+
+	return null;
+}
+
+function getSvgStrokePadding(svg) {
+	const strokeWidths = Array.from(svg.querySelectorAll('path, line, rect, polyline, polygon, circle, ellipse, text, use'))
+		.map((element) => getSvgElementStrokeWidth(element))
+		.filter((strokeWidth) => strokeWidth > 0);
+	const maxStrokeWidth = strokeWidths.length ? Math.max(...strokeWidths) : 0;
+
+	return maxStrokeWidth / 2;
+}
+
+function getSvgElementStrokeWidth(element) {
+	const attributeWidth = parseSvgNumber(element.getAttribute('stroke-width'));
+
+	if (attributeWidth > 0) {
+		return attributeWidth;
+	}
+
+	const styleWidth = parseSvgNumber(element.style?.strokeWidth);
+
+	if (styleWidth > 0) {
+		return styleWidth;
+	}
+
+	const computedWidth = typeof window !== 'undefined'
+		? parseSvgNumber(window.getComputedStyle(element).strokeWidth)
+		: 0;
+
+	return computedWidth;
+}
+
+function expandSvgBounds(bounds, padding) {
+	return {
+		x: bounds.x - padding,
+		y: bounds.y - padding,
+		width: bounds.width + (padding * 2),
+		height: bounds.height + (padding * 2),
+	};
 }
 
 function combineSvgBounds(firstBounds, secondBounds) {
@@ -342,6 +614,12 @@ function combineSvgBounds(firstBounds, secondBounds) {
 		width: right - x,
 		height: bottom - y,
 	};
+}
+
+function parseSvgNumber(value) {
+	const match = /^([0-9]+(?:\.[0-9]+)?)/.exec(String(value || '').trim());
+
+	return match ? Number(match[1]) : 0;
 }
 
 function isChordPayload(payload) {
@@ -444,76 +722,6 @@ function getKeyLabelsByMidi(firstNote, lastNote, displayKey = '') {
 	}
 
 	return labelsByMidi;
-}
-
-function getKeyboardNoteRange(midiNumbers = [], displayKey = '', staffOctave = 4) {
-	const keyStart = getDisplayKeyStartNote(displayKey, staffOctave);
-
-	if (!midiNumbers.length) {
-		return {
-			first: keyStart || noteToMidi(DEFAULT_FIRST_NOTE),
-			last: getMinimumOctaveLastNote(
-				keyStart || noteToMidi(DEFAULT_FIRST_NOTE),
-				keyStart || noteToMidi(DEFAULT_LAST_NOTE),
-			),
-		};
-	}
-
-	const firstNote = getNaturalKeyAtOrBefore(Math.min(...midiNumbers));
-	const lastNote = getMinimumOctaveLastNote(
-		firstNote,
-		getNaturalKeyAtOrAfter(Math.max(...midiNumbers)),
-	);
-
-	return {
-		first: firstNote,
-		last: lastNote,
-	};
-}
-
-function getDisplayKeyStartNote(displayKey, staffOctave = 4) {
-	const key = normalizeKeyName(displayKey);
-
-	if (!key) {
-		return null;
-	}
-
-	const keyMidiNumber = noteToMidi(`${key}${normalizeStaffOctave(staffOctave)}`);
-	return keyMidiNumber === null ? null : getNaturalKeyAtOrBefore(keyMidiNumber);
-}
-
-function getMinimumOctaveLastNote(firstNote, lastNote) {
-	const minimumLastNote = firstNote + 12;
-
-	if (lastNote >= minimumLastNote) {
-		return lastNote;
-	}
-
-	return getNaturalKeyAtOrAfter(minimumLastNote);
-}
-
-function getNaturalKeyAtOrBefore(midiNumber) {
-	let nextMidiNumber = midiNumber;
-
-	while (!isNaturalMidiNumber(nextMidiNumber)) {
-		nextMidiNumber -= 1;
-	}
-
-	return nextMidiNumber;
-}
-
-function getNaturalKeyAtOrAfter(midiNumber) {
-	let nextMidiNumber = midiNumber;
-
-	while (!isNaturalMidiNumber(nextMidiNumber)) {
-		nextMidiNumber += 1;
-	}
-
-	return nextMidiNumber;
-}
-
-function isNaturalMidiNumber(midiNumber) {
-	return NATURAL_PITCH_CLASSES.includes(midiNumber % 12);
 }
 
 function getSpelledLabelsByMidi(notes = []) {

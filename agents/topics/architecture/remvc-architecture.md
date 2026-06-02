@@ -34,9 +34,10 @@ Within that framing:
 
 - the registry is a centralized locator for service dependencies
 - the executor is responsible for initializing the application and determining which controller should receive initial control
-- models own state, data access, transport-facing behavior, or domain interaction
-- views organize information and direction for presentation
-- controllers manage feature flow and user-facing orchestration
+- models own durable or domain state, data access, transport-facing behavior, serialization, and domain rules
+- controllers manage feature flow, user-facing behavior, command handling, and orchestration between services, models, views, and presentation
+- views organize controller-provided information into presentation state, layout decisions, and renderable presentation structures
+- presentation renders the concrete UI through React and reports user gestures back through callbacks or controller-facing sessions
 
 The initial controller selected by the executor may be influenced by startup context such as configuration, route, URL, or similar runtime inputs.
 
@@ -114,6 +115,42 @@ This should be treated as:
 - useful review heuristic
 - an incremental cleanup target where existing code still bypasses the service layer
 
+## Model, Controller, View, And Presentation
+
+For this repo, the practical split should be read as four distinct domains:
+
+- model
+  - owns durable state, document state, serialization, transport-facing behavior, persistence-facing behavior, and domain normalization that should be reusable outside one screen
+- controller
+  - owns user-facing flow, command handling, feature startup wiring, controller-owned sessions, behavior decisions, and coordination between services and model operations
+- view
+  - owns presentation organization: what state is needed for rendering, how controller decisions become renderable structures, and which presentation components are mounted
+- presentation
+  - owns concrete React rendering: JSX, MUI controls, localized labels, DOM event handlers, and visual state that does not change application behavior
+
+The boundary is about responsibility, not file count.
+A small feature may have no separate view class yet, and a complex feature may have one controller plus multiple scoped controller-owned sessions.
+When a React component starts owning command decisions, service orchestration, or durable mutation rules, that is a sign that controller or model responsibilities have leaked into presentation.
+
+Controller-owned sessions are an acceptable way to keep presentation thin when a feature has repeated rendered instances.
+For example, an embedded object can attach a per-object session through the feature controller.
+The presentation can render session-provided actions and report gestures such as `performAction('edit')`, while the controller decides what the action means and which buttons should exist.
+
+## Quill Embed Exception
+
+Quill blots are a deliberate edge case in the normal separation.
+Quill owns their DOM lifecycle, so a custom blot may need to create DOM nodes, mount a React root, bridge app context, and translate Quill lifecycle calls into app events.
+
+That exception should stay narrow:
+
+- the blot adapts Quill lifecycle and Delta round-tripping
+- the feature controller owns commands, toolbar action lists, playback/edit routing, and durable behavior
+- a controller-owned embed session can provide per-embed state and actions to the React presentation
+- the React presentation renders the embed and reports gestures back to the session
+- reusable domain behavior, payload normalization, layout rules, and music-note generation should move out of the blot when they have more than one caller
+
+The current music-object path follows this pattern with `music-object-controller`, a controller-owned embed session, and the `keyboard-embed.js` Quill adapter.
+
 Future service documentation question:
 
 - investigate whether service-emitted events should be documented consistently
@@ -137,9 +174,9 @@ A useful way to think about that boundary is:
 - controller
   - determines user-facing flow, behavior, and direction
 - view
-  - organizes that information and translates it into presentation structure
+  - organizes that information and translates it into presentation structure, component choice, and render state
 - presentation
-  - is the concrete React rendering layer
+  - is the concrete React rendering layer and should delegate meaningful behavior back through callbacks, services, or controller-owned sessions
 
 This distinction matters because it helps separate:
 

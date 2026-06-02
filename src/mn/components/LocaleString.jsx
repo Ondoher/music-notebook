@@ -103,6 +103,7 @@ export default class LocaleString extends Component {
 		this.setupLocaleService();
 
 		if (!this.localize) {
+			console.error('LocaleString cannot render without a localize service.');
 			return '';
 		}
 
@@ -118,9 +119,16 @@ export default class LocaleString extends Component {
 			phrase = phrase.phrase;
 		}
 
-		return this.props.locale
-			? this.localize.t_locale(this.props.locale, phrase, replacements, cardinal)
-			: this.localize.t(phrase, replacements, cardinal);
+		const translation = this.props.locale
+			? this.localize.translateLocale(this.props.locale, phrase, replacements, cardinal)
+			: this.localize.translate(phrase, replacements, cardinal);
+
+		if (!translation && !this.props.hideEmpty) {
+			console.error(`Missing translation for phrase "${phrase}".`);
+			return String(phrase || '');
+		}
+
+		return translation;
 	}
 
 	/**
@@ -132,12 +140,11 @@ export default class LocaleString extends Component {
 		const {
 			className,
 			div = false,
-			fallback = '',
 			hideEmpty,
 			html,
 			id,
 		} = this.props;
-		const translation = this.getTranslation() || fallback;
+		const translation = this.getTranslation();
 
 		if (hideEmpty && !translation) {
 			return '';

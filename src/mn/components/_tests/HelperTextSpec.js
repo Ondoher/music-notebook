@@ -61,7 +61,7 @@ describe('HelperText', function() {
 				return 'en-US';
 			},
 			listen() {},
-			t(phrase) {
+			translate(phrase) {
 				return phrase === 'mn.helper' ? 'Localized helper' : '';
 			},
 			unlisten() {},

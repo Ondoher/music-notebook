@@ -15,9 +15,11 @@ type LocalizeService = {
 	/** Removes a localization event subscription. */
 	unlisten?: (eventName: string, listener: unknown) => void;
 	/** Translates a phrase in the active locale. */
-	t?: (phrase: string, replacements?: Record<string, LocalizedReplacementValue>, cardinal?: number) => string;
+	translate?: (phrase: string, replacements?: Record<string, LocalizedReplacementValue>, cardinal?: number) => string;
 	/** Translates a phrase in a specific locale. */
-	t_locale?: (locale: string, phrase: string, replacements?: Record<string, LocalizedReplacementValue>, cardinal?: number) => string;
+	translateLocale?: (locale: string, phrase: string, replacements?: Record<string, LocalizedReplacementValue>, cardinal?: number) => string;
+	/** Translates a localized markdown document in the active locale. */
+	translateMarkdown?: (name: string, replacements?: Record<string, LocalizedReplacementValue>) => Promise<string>;
 };
 
 /** Watched app data service shared across independent React roots. */
@@ -54,4 +56,43 @@ type MusicNotebookContextValue = {
 	locale: string;
 	/** Runtime service registry, when one is available. */
 	registry: RegistryService | null;
+};
+
+/** Paragraph formatting settings applied through the active editor surface. */
+type ParagraphFormatOverrideMap = {
+	alignment: boolean;
+	bold: boolean;
+	fontSize: boolean;
+	italic: boolean;
+	keepWithNext: boolean;
+	paddingAfter: boolean;
+	paddingBefore: boolean;
+	start: boolean;
+	underline: boolean;
+};
+
+/** Paragraph formatting settings applied through the active editor surface. */
+type ParagraphFormatSettings = {
+	/** Paragraph alignment, with left represented as the default unset Quill alignment. */
+	alignment: 'left' | 'center' | 'right' | 'justify';
+	/** Whether paragraph text is bold. */
+	bold: boolean;
+	/** Paragraph font size in pixels. */
+	fontSize: number;
+	/** Whether paragraph text is italicized. */
+	italic: boolean;
+	/** Whether the paragraph should stay on the same page as the following paragraph when paginated. */
+	keepWithNext: boolean;
+	/** Paragraph padding after, in CSS pixels. */
+	paddingAfter: number;
+	/** Paragraph padding before, in CSS pixels. */
+	paddingBefore: number;
+	/** How the paragraph starts relative to previous blocks or page boundaries. */
+	start: 'continuous' | 'full-line' | 'next-page';
+	/** Document-global paragraph style applied to the paragraph. */
+	styleId: string;
+	/** Which effective values are direct paragraph overrides rather than inherited values. */
+	overrides: ParagraphFormatOverrideMap;
+	/** Whether paragraph text is underlined. */
+	underline: boolean;
 };

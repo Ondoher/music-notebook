@@ -1,0 +1,252 @@
+.music-keyboard-embed {
+	display: inline-block;
+	float: none;
+	clear: none;
+	position: relative;
+	width: var(--music-embedded-layout-width, var(--music-embed-width, 456px));
+	height: var(--music-embedded-layout-height, var(--music-embed-height, auto));
+	box-sizing: border-box;
+	margin: 0 2px 2px;
+	border: 0;
+	border-radius: 0;
+	padding: 0;
+	overflow: hidden;
+	background: transparent;
+	font-size: 0;
+	line-height: 0;
+	vertical-align: top;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.music-keyboard-embed * {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.music-keyboard-embed ::selection {
+	background: transparent;
+	color: inherit;
+}
+
+.music-keyboard-embed--align-left,
+.music-keyboard-embed--align-center,
+.music-keyboard-embed--align-right {
+	float: none;
+	clear: none;
+}
+
+.music-keyboard-embed--align-left {
+	margin: 0 2px 2px;
+}
+
+.music-keyboard-embed--align-center {
+	margin: 0 2px 2px;
+}
+
+.music-keyboard-embed--align-right {
+	margin: 0 2px 2px;
+}
+
+.music-keyboard-embed--fit-table-cell {
+	display: inline-block;
+	float: none;
+	clear: none;
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	margin: 0;
+}
+
+.music-keyboard-embed--fit-table-cell .music-keyboard-embed-content,
+.music-keyboard-embed--fit-table-cell .music-keyboard-embed-piano,
+.music-keyboard-embed--fit-table-cell .music-staff-preview,
+.music-keyboard-embed--fit-table-cell .music-staff-osmd {
+	min-width: 0;
+	width: 100%;
+	max-width: 100%;
+}
+
+.ql-editor .ql-table-cell-inner.music-keyboard-embed-cell--fit-width,
+.ql-editor .table-up-cell-inner.music-keyboard-embed-cell--fit-width,
+.ql-editor .ql-table-cell.music-keyboard-embed-cell--fit-width,
+.ql-editor td.music-keyboard-embed-cell--fit-width,
+.ql-editor th.music-keyboard-embed-cell--fit-width {
+	width: 100%;
+}
+
+.music-keyboard-embed-content {
+	display: block;
+	width: var(--music-embed-width, 456px);
+	height: var(--music-embed-height, auto);
+	background: transparent;
+	font-size: 0;
+	line-height: 0;
+	overflow: hidden;
+	transform: scale(var(--music-embed-scale, 1));
+	transform-origin: top left;
+}
+
+.music-keyboard-embed--selected::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+	border-radius: inherit;
+	background: rgba(var(--mui-palette-primary-mainChannel) / 0.16);
+	pointer-events: none;
+}
+
+.music-keyboard-embed-content--selected {
+	background: rgba(var(--mui-palette-primary-mainChannel) / 0.06);
+}
+
+.music-keyboard-embed-content-has-caption > .music-keyboard-embed-piano,
+.music-keyboard-embed-content-has-caption > .music-staff-preview {
+	height: calc(var(--music-embed-height, 204px) - var(--music-embed-caption-height, 0px));
+}
+
+.music-embed-caption {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	height: var(--music-embed-caption-height, 26px);
+	max-height: var(--music-embed-caption-height, 26px);
+	padding: 4px 6px 6px;
+	color: var(--mn-document-color, currentColor);
+	font: 12px/1.3 var(--mn-font-notebook);
+	text-align: center;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.music-embed-resize-handle {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	z-index: 20;
+	width: 18px;
+	height: 18px;
+	box-sizing: border-box;
+	border: 0;
+	border-radius: 4px 0 0;
+	padding: 0;
+	background:
+		linear-gradient(135deg, transparent 0 48%, rgba(32, 36, 44, 0.72) 50% 54%, transparent 56%),
+		linear-gradient(135deg, transparent 0 64%, rgba(32, 36, 44, 0.72) 66% 70%, transparent 72%),
+		rgba(255, 254, 250, 0.84);
+	cursor: nwse-resize;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.music-keyboard-embed:hover .music-embed-resize-handle,
+.music-keyboard-embed:focus-within .music-embed-resize-handle {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.music-embed-resize-handle:focus-visible {
+	opacity: 1;
+	outline: 2px solid rgba(var(--mui-palette-primary-mainChannel) / 0.34);
+	outline-offset: 2px;
+}
+
+.music-embed-resize-label {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+.music-embed-toolbar {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	box-sizing: border-box;
+	border: 1px solid rgba(32, 36, 44, 0.16);
+	border-radius: 6px;
+	padding: 2px;
+	background: rgba(255, 255, 255, 0.94);
+	box-shadow: 0 2px 8px rgba(32, 36, 44, 0.12);
+	font-size: 0.875rem;
+	line-height: 1;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease;
+}
+
+.music-keyboard-edit-button,
+.music-keyboard-play-button,
+.music-keyboard-format-button {
+	width: 28px;
+	height: 28px;
+}
+
+.music-keyboard-play-button:disabled {
+	cursor: default;
+}
+
+.music-keyboard-embed:hover .music-embed-toolbar,
+.music-keyboard-embed:focus-within .music-embed-toolbar {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.music-keyboard-play-button[aria-pressed="true"] {
+	background: rgba(var(--mui-palette-primary-mainChannel) / 0.12);
+	color: var(--mui-palette-primary-main);
+}
+
+.music-embed-format-dialog__body {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 16px;
+	padding-top: 4px;
+}
+
+.music-embed-format-dialog__group {
+	display: grid;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.music-embed-format-dialog__group legend {
+	padding: 0;
+	color: var(--mui-palette-text-secondary);
+	font-size: 0.875rem;
+}
+
+.music-embed-format-dialog__button-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.music-embed-format-dialog__toggle.MuiIconButton-root {
+	width: 34px;
+	height: 34px;
+	border: 1px solid var(--mui-palette-divider);
+	border-radius: 4px;
+	color: var(--mui-palette-text-secondary);
+}
+
+.music-embed-format-dialog__toggle.MuiIconButton-root[aria-pressed="true"] {
+	border-color: rgba(var(--mui-palette-primary-mainChannel) / 0.5);
+	background: rgba(var(--mui-palette-primary-mainChannel) / 0.12);
+	color: var(--mui-palette-primary-main);
+}
+
+.music-embed-format-dialog__font-size {
+	max-width: 184px;
+}

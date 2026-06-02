@@ -15,9 +15,14 @@ export function getLocalizedText(localize, value, fallback = '') {
 			return objectFallback;
 		}
 
-		return localize?.t?.(phrase, replacements, cardinal) || objectFallback || phrase;
+		return localize?.translate?.(phrase, replacements, cardinal) || objectFallback || phrase;
 	}
 
 	const phrase = String(value);
-	return localize?.t?.(phrase) || fallback || phrase;
+
+	if (!phrase) {
+		return fallback;
+	}
+
+	return localize?.translate?.(phrase) || fallback || phrase;
 }

@@ -1,0 +1,14 @@
+.accounts-dialog__body {
+	display: grid;
+	gap: 1rem;
+	padding-top: 0.25rem;
+}
+
+.accounts-dialog__status {
+	margin-top: -0.35rem;
+}
+
+.accounts-dialog__confirmation {
+	margin: 0;
+	color: var(--text-medium);
+}

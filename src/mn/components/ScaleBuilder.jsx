@@ -26,10 +26,10 @@ export default class ScaleBuilder extends Component {
 	render() {
 		const {
 			initialKey = 'C',
-			initialMode = 'ionian',
-			initialScaleType = 'major',
+			initialKeyMode = 'major',
 			label = 'Scale',
 			selectedKey,
+			selectedKeyMode,
 			showKey = true,
 			size,
 		} = this.props;
@@ -39,13 +39,13 @@ export default class ScaleBuilder extends Component {
 				fieldClassName="mn-scale-builder-field"
 				helperClassName="mn-scale-builder-helper"
 				initialKey={initialKey}
-				initialMode={initialMode}
-				initialScaleType={initialScaleType}
+				initialKeyMode={initialKeyMode}
 				label={label}
 				labelClassName="mn-scale-builder-label"
 				onResultChange={this.handleResultChange}
 				rootClassName="mn-scale-builder"
 				selectedKey={selectedKey}
+				selectedKeyMode={selectedKeyMode}
 				showKey={showKey}
 				size={size}
 			/>

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Record the completed post-POC React cleanup that brought the POC-era React components in line with the repository React code standard before MVP implementation planning.
+Record the completed post-POC React cleanup that brought the POC-era React components in line with the repository React code standard before MVP implementation.
 
 The repository standard treats function components as extreme exceptions.
 Substantial components should be class components, especially when they own state, refs, lifecycle behavior, handlers, or multiple semantic regions.
@@ -11,7 +11,7 @@ Substantial components should be class components, especially when they own stat
 
 Post-POC React cleanup is complete.
 
-The remaining work is MVP implementation planning and feature work, not hook-to-class cleanup.
+The remaining work is MVP implementation feature work, not hook-to-class cleanup.
 Future React components should follow the standards in [React Code](README.md) and should be added with focused tests where behavior is nontrivial.
 
 ## Completed Inventory
@@ -22,7 +22,7 @@ Class-based or production-shaped enough for MVP planning:
 - `src/mn/features/app/components/AppShell.jsx`
 - `src/mn/features/editor/components/EditorPage.jsx`
 - `src/mn/components/LocaleString.jsx`
-- `src/mn/components/BaseTextInput.jsx`
+- `src/mn/components/TextInput.jsx`
 - `src/mn/components/BaseSelect.jsx`
 - `src/mn/components/BaseCheckbox.jsx`
 - `src/mn/components/BaseRadioButtons.jsx`
@@ -34,14 +34,14 @@ Class-based or production-shaped enough for MVP planning:
 - `src/mn/components/ChordText.jsx`
 - `src/mn/components/ChordInput.jsx`
 - `src/mn/components/ScaleInput.jsx`
-- `src/mn/components/MusicEmbedDialog.jsx`
+- `src/mn/features/music-object/components/MusicEmbedDialog.jsx`
 - `src/mn/components/MusicPreview.jsx`
 - `src/mn/components/Button.jsx`
 - `src/mn/common/MusicNotebookProvider.jsx`
 
 Recently converted:
 
-- `src/mn/features/editor/components/MusicEmbedView.jsx`
+- `src/mn/features/music-object/components/MusicEmbedView.jsx`
 
 `MusicEmbedView.jsx` is now a class component.
 It still owns dialog state, payload updates, playback control, and resize behavior, but those responsibilities are now organized as class state, lifecycle cleanup, and focused instance methods.
@@ -55,7 +55,7 @@ Final cleanup status:
 
 1. Document the class-component default in the React topic and keep function components only for true tiny stateless exceptions. Done.
 2. Convert the newly added base form controls first. Done:
-   - `BaseTextInput`
+   - `TextInput`
    - `BaseSelect`
    - `BaseCheckbox`
    - `BaseRadioButtons`
@@ -69,10 +69,10 @@ Final cleanup status:
    - `ProgressionBuilder`
    - `ScaleBuilder`
 7. Break larger renders into focused render methods with semantic names. Done for the cleanup target components; continue this pattern in future MVP components.
-8. Extract the music embed edit dialog into a dedicated dialog component before converting `MusicEmbedView`. Done as `src/mn/components/MusicEmbedDialog.jsx`.
+8. Extract the music embed edit dialog into a dedicated dialog component before converting `MusicEmbedView`. Done as `src/mn/features/music-object/components/MusicEmbedDialog.jsx`.
 9. Extract nested music embed subcomponents into feature-local or shared files before converting the large embed component. Done:
    - `MusicPreview`, `StaffPreview`, and `KeyboardPreview` are now extracted as class components in `src/mn/components/MusicPreview.jsx`.
-   - `MusicDisplayOptions` is now extracted as a class component in `src/mn/components/MusicDisplayOptions.jsx`.
+   - `MusicDisplayOptions` is now extracted as a class component in `src/mn/features/music-object/components/MusicDisplayOptions.jsx`.
    - shared music helper functions are now extracted to `src/mn/shared/music_helper.js`.
 10. Convert `MusicEmbedView` last, after dialog, preview, and display subcomponents are isolated. Done.
 11. Run `npm run test:ui` after each cleanup slice. Passed after `MusicEmbedView` conversion.
@@ -92,8 +92,8 @@ The difference is the input method used to specify the chord.
 The target shape is a unified chord input made from smaller class components:
 
 - `ChordText` handles the editable chord value, input-kind-specific validation, focus, blur, and raw text changes.
-- `ChordInput` owns the grouped chord editor state and combines chord text, input kind, key, key mode, inversion, and arpeggiation.
-- `KeyPicker` should become the single shared key-context picker, combining the key input with an optional major/minor mode selection.
+- `ChordInput` owns the grouped chord editor state and combines chord text, input kind, key, key quality, inversion, and arpeggiation.
+- `KeyPicker` should remain the shared key-context picker, combining the key input with key quality when the caller needs tonal context.
 - Existing chord-name, Roman numeral degree, and numeric degree entry become input kinds of the same editor rather than separate edit modes.
 - The current `ChordBuilder` and `ProgressionBuilder` should become thin compatibility wrappers or be removed once call sites use the unified editor.
 
@@ -101,10 +101,10 @@ The unified chord input should support these input kinds:
 
 - `chordName` resolves direct chord names such as `Cdim7`.
 - `romanDegree` resolves Roman numeral chord degrees such as `ii` or `V7`.
-- `numberDegree` resolves numeric degrees such as `2`, using the selected key mode to determine the default chord quality.
+- `numberDegree` resolves numeric degrees such as `2`, using the selected key quality to determine the default chord quality.
 
-Key and key mode are part of the combined editor context and should be edited through the shared key picker when mode selection is shown.
-Changing key or major/minor mode must immediately rebuild the resolved notes for input kinds affected by those fields, especially numeric chord degrees.
+Key and key quality are part of the combined editor context and should be edited through the shared key picker when key quality is shown.
+Changing key or key quality must immediately rebuild the resolved notes for input kinds affected by those fields, especially numeric chord degrees.
 Once this works reliably, the visible separate chord-degree edit mode can be removed from the dialog.
 
 Roman numeral input and direct chord-name input should behave the same where their quality notation overlaps.
@@ -125,7 +125,7 @@ Roman numeral capitalization is meaningful:
 
 - lowercase Roman numerals specify minor quality unless another quality marker overrides it
 - uppercase Roman numerals specify major quality unless another quality marker overrides it
-- numeric degrees specify the default diatonic quality for the selected key mode
+- numeric degrees specify the default diatonic quality for the selected key quality
 
 Example: in `C minor`, numeric `2` resolves to the diatonic diminished second-degree chord, while Roman `ii` remains an explicitly minor second-degree chord.
 

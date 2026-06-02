@@ -1,0 +1,125 @@
+.paragraph-format-dialog__body {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 16px;
+	padding-top: 4px;
+}
+
+.paragraph-format-dialog__font-size {
+	width: 100%;
+}
+
+.paragraph-format-dialog__spacing {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.paragraph-format-dialog__spacing-field {
+	width: 100%;
+}
+
+.paragraph-format-dialog__group {
+	display: grid;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.paragraph-format-dialog__group legend {
+	padding: 0;
+	color: var(--mui-palette-text-secondary);
+	font-size: 0.875rem;
+}
+
+.paragraph-format-dialog__button-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.paragraph-format-dialog__toggle.MuiIconButton-root {
+	width: 34px;
+	height: 34px;
+	border: 1px solid var(--mui-palette-divider);
+	border-radius: 4px;
+	color: var(--mui-palette-text-secondary);
+}
+
+.paragraph-format-dialog__toggle.MuiIconButton-root[aria-pressed="true"] {
+	border-color: rgba(var(--mui-palette-primary-mainChannel) / 0.5);
+	background: rgba(var(--mui-palette-primary-mainChannel) / 0.12);
+	color: var(--mui-palette-primary-main);
+}
+
+.ql-editor .ql-paragraph-align-left {
+	text-align: left;
+}
+
+.ql-editor .ql-paragraph-align-center {
+	text-align: center;
+}
+
+.ql-editor .ql-paragraph-align-right {
+	text-align: right;
+}
+
+.ql-editor .ql-paragraph-align-justify {
+	text-align: justify;
+}
+
+.ql-editor .ql-paragraph-bold-true {
+	font-weight: 700;
+}
+
+.ql-editor .ql-paragraph-bold-false {
+	font-weight: 400;
+}
+
+.ql-editor .ql-paragraph-italic-true {
+	font-style: italic;
+}
+
+.ql-editor .ql-paragraph-italic-false {
+	font-style: normal;
+}
+
+.ql-editor .ql-paragraph-keep-with-next-true {
+	break-after: avoid;
+	page-break-after: avoid;
+}
+
+.ql-editor .ql-paragraph-keep-with-next-false {
+	break-after: auto;
+	page-break-after: auto;
+}
+
+.ql-editor [style*="padding-top"],
+.ql-editor [style*="padding-bottom"] {
+	box-sizing: border-box;
+}
+
+.ql-editor .ql-paragraph-underline-true {
+	text-decoration-line: underline;
+}
+
+.ql-editor .ql-paragraph-underline-false {
+	text-decoration-line: none;
+}
+
+.ql-editor .ql-paragraph-start-continuous {
+	clear: none;
+	break-before: auto;
+	page-break-before: auto;
+}
+
+.ql-editor .ql-paragraph-start-full-line {
+	clear: both;
+}
+
+.ql-editor .ql-paragraph-start-next-page {
+	clear: both;
+	break-before: page;
+	page-break-before: always;
+}

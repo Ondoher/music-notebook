@@ -268,7 +268,8 @@ Likely first or early consumers:
 - tab delete confirmation dialog
 - help/about dialogs
 
-`MusicEmbedDialog` is the best first real consumer because it is already a shared dedicated dialog and currently represents the dialog extraction direction from the POC.
+`MusicEmbedDialog` is the best first real consumer because it is already a dedicated feature-owned dialog and currently represents the dialog extraction direction from the POC.
+Reusable controls used inside that dialog should stay in the shared component layer when they are useful outside the music-object feature.
 
 ## Testing Expectations
 

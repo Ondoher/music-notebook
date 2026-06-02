@@ -7,7 +7,7 @@ Capture the current architectural direction for `music-notebook` in a way that b
 - the practical, pattern-extracting style used in `modmod`
 - the scoped, decision-oriented synthesis style used in `poly-gc-react`
 
-This note is a foundation brief for the MVP planning phase. It should be read as:
+This note is a foundation brief for the MVP implementation phase. It should be read as:
 
 - a working architecture brief
 - a place to record preferred patterns
@@ -121,7 +121,7 @@ A useful boundary from both reference codebases is:
 
 ### 5. Completed Spike And Cleanup, Durable Learnings
 
-The first editor/embed spike and post-POC React cleanup have now wrapped successfully enough to move into MVP implementation planning.
+The first editor/embed spike and post-POC React cleanup have now wrapped successfully enough to move into MVP implementation.
 
 That leaves an important architectural rule:
 

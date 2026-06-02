@@ -8,7 +8,7 @@ describe('Translator', function() {
 			},
 		});
 
-		expect(translator.t('app.title')).toBe('Music Notebook');
+		expect(translator.translate('app.title')).toBe('Music Notebook');
 	});
 
 	it('replaces named values', function() {
@@ -18,7 +18,7 @@ describe('Translator', function() {
 			},
 		});
 
-		expect(translator.t('greeting', { name: 'Mira' })).toBe('Hello Mira');
+		expect(translator.translate('greeting', { name: 'Mira' })).toBe('Hello Mira');
 	});
 
 	it('uses plural forms from Intl plural rules', function() {
@@ -32,7 +32,17 @@ describe('Translator', function() {
 			},
 		});
 
-		expect(translator.t('objects', { count: 1 }, 1)).toBe('1 object');
-		expect(translator.t('objects', { count: 2 }, 2)).toBe('2 objects');
+		expect(translator.translate('objects', { count: 1 }, 1)).toBe('1 object');
+		expect(translator.translate('objects', { count: 2 }, 2)).toBe('2 objects');
+	});
+
+	it('reports and returns the key when a phrase key is missing', function() {
+		const translator = new Translator({
+			phrases: {},
+		});
+		spyOn(console, 'error');
+
+		expect(translator.translate('missing.phrase')).toBe('missing.phrase');
+		expect(console.error).toHaveBeenCalledWith('Missing translation for phrase "missing.phrase".');
 	});
 });

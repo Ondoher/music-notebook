@@ -202,6 +202,8 @@ Current shape for `music-notebook`:
 - `src/mn/test.js` explicitly imports concrete specs or local spec aggregators
 - `polylith test <app>` builds browser test output
 - Karma runs against the built output
+- server specs live beside server features/services and run through the same
+  project test script before the Karma browser lane
 
 The practical model is:
 
@@ -218,6 +220,24 @@ It is:
 - explicit spec imports
 - feature registration through Polylith
 - browser execution through Karma
+
+Current full verification command:
+
+```text
+npm run test:ui
+```
+
+Recent known-good result:
+
+```text
+307 SUCCESS
+```
+
+This result followed the current editor view registry, table context menu
+operations, table overflow reachability, and music-object table-cell sizing
+work. Known non-failing noise remains MUI Dialog `act(...)` warnings,
+React lifecycle/flushSync warnings around Quill/table/editor mount paths,
+module directive warnings, and occasional OSMD layout warnings.
 
 ## How Specs Enter The UI Test Build
 
@@ -374,9 +394,14 @@ Current tested areas include:
 - music object insertion through the editor toolbar
 - Quill Delta round-tripping for the custom embed payload
 - keyboard and staff display-mode payloads
-- resize persistence through `width` and `height`
+- width-driven resize persistence and legacy height payload compatibility
 - staff rendering options such as octave, enharmonic key spelling, and arpeggiated `MusicXML`
 - localized floating controls for playback and resize
+- editor interaction and editor view registry services
+- table row/column selection helpers, context menu filtering, context menu
+  operations, keyboard cell navigation, and edit-view table overflow handling
+- music-object sizing behavior inside table cells, including keyboard aspect
+  ratio preservation
 
 Important current convention:
 

@@ -12,4 +12,4 @@ type AppState = {
 	locale: string;
 };
 
-export default class App extends React.Component<AppProps, AppState> {}
+declare class App extends React.Component<AppProps, AppState> {}

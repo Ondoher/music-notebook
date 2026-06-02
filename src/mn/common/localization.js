@@ -86,22 +86,31 @@ export default class Localization {
 		this.fire?.('changeLocale', locale);
 	}
 
-	t(key, replacements, cardinal) {
+	translate(key, replacements, cardinal) {
 		if (!this.translator) {
 			console.error('No current translator');
 			return '';
 		}
 
-		return this.translator.t(key, replacements, cardinal);
+		return this.translator.translate(key, replacements, cardinal);
 	}
 
-	t_locale(locale, key, replacements, cardinal) {
+	translateLocale(locale, key, replacements, cardinal) {
 		if (!this.translators[locale]) {
 			console.warn('Attempt to switch to nonexistent locale', locale);
 			return '';
 		}
 
-		return this.translators[locale].t(key, replacements, cardinal);
+		return this.translators[locale].translate(key, replacements, cardinal);
+	}
+
+	replace(text, replacements = {}) {
+		if (!this.translator) {
+			console.error('No current translator');
+			return '';
+		}
+
+		return this.translator.replace(text, replacements);
 	}
 
 	getLocales() {

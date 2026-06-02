@@ -1,0 +1,24 @@
+{
+	"app": {
+		"id": "mn"
+	},
+	"accounts": {
+		"saltSeed": "music-notebook-local-dev-salt-seed",
+		"sessionTtlMS": 604800000,
+		"accessTokenTtlMS": 900000,
+		"sessionCookieName": "mn_account_session",
+		"sessionCookiePath": "/",
+		"sessionCookieSecure": false
+	},
+	"mongo": {
+		"uri": "mongodb://127.0.0.1:27017",
+		"db": "music_notebook_dev",
+		"connectTimeoutMS": 2000,
+		"serverSelectionTimeoutMS": 2000,
+		"collections": {
+			"accounts": "accounts",
+			"accountSessions": "account_sessions",
+			"documents": "documents"
+		}
+	}
+}

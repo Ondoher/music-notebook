@@ -1,5 +1,5 @@
 /// <reference path="../common/types.d.ts" />
-/// <reference path="./BaseDialog.d.ts" />
+/// <reference path="./types/BaseDialog.d.ts" />
 
 import React, { Component } from 'react';
 import MuiButton from '@mui/material/Button';
