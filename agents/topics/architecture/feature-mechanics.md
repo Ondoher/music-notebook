@@ -94,6 +94,12 @@ Current working rules are:
 - lifecycle methods such as `start` and `ready` are called directly by Polylith and do not need to be documented in the service `.d.ts` interface
 - service interfaces should include JSDoc comments
 - when the service implementation already has JSDoc, copy that documentation into the service interface where it still applies
+- do not pass service method references as callbacks across service boundaries
+- cross-service calls should go through the `Service` interface by invoking an
+  implemented method
+- when registering routed behavior, prefer a single implemented router method
+  such as `handleEditorEvent`, or register the name of the implemented method to
+  call, rather than passing the function itself
 - when a registry service is assigned to a class instance property, add a local JSDoc `@type` comment that points at the service-specific interface so IntelliSense can follow the dependency, for example:
 
   ```js

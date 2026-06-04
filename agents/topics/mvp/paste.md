@@ -255,13 +255,33 @@ MVP direction:
 - custom embeds must preserve structured payloads
 - object ids may need regeneration when pasted as duplicates
 
+Current implementation status:
+
+- keyboard music embeds now provide semantic copied HTML through the Quill blot
+  `html()` path instead of copying rendered React controls, resize labels,
+  guard text, and other non-document UI text
+- the music-object feature registers a Quill clipboard matcher through the
+  object-type registry so copied keyboard-embed HTML pastes back as one
+  structured embed Delta operation
+- editor-owned clipboard setup collects object-type clipboard matchers at Quill
+  construction time and can register later object-type matchers on the mounted
+  clipboard, deduped by selector and matcher name
+- this is an internal/app-created copy-paste exception, not a general rich
+  external paste policy
+
 Implementation path:
 
-1. Verify Quill internal copy/paste preserves the custom embed Delta payload.
+1. Continue verifying Quill internal copy/paste preserves the custom embed
+   Delta payload.
 2. On paste, normalize music-object payloads through the music-object feature.
 3. Regenerate object ids when the pasted embed is a duplicate in the same document.
 4. Keep payload shape compatible with the document-model generic object seam.
 5. Add UI tests for copy/paste duplication after the music-object persistence model is hardened.
+
+Recent verification:
+
+- keyboard embed tests cover copied semantic HTML and pasted music-object HTML
+  returning as one structured embed without rendered control text.
 
 ### Inline Chord Objects
 

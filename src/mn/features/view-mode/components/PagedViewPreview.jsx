@@ -182,17 +182,43 @@ export default class PagedViewPreview extends React.Component {
 				page-break-inside: avoid;
 			}
 
-			.mn-paged-preview-document table {
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-wrapper {
+				display: block;
+				width: auto;
+				min-width: 0;
+				max-width: 100%;
+				overflow: visible;
+			}
+
+			.mn-paged-preview-document table,
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table {
+				width: 100%;
+				max-width: 100%;
+				table-layout: fixed;
+				break-inside: auto;
+				page-break-inside: auto;
+			}
+
+			.mn-paged-preview-document tbody,
+			.mn-paged-preview-document thead {
+				break-inside: auto;
+				page-break-inside: auto;
+			}
+
+			.mn-paged-preview-document tr {
 				break-inside: avoid;
 				page-break-inside: avoid;
 			}
 
-			.mn-paged-preview-document .ql-table-wrapper {
-				display: inline-block;
-				width: max-content;
-				min-width: 100%;
-				max-width: none;
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-cell {
 				overflow: visible;
+			}
+
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-cell-inner {
+				display: block;
+				width: auto;
+				min-width: 0;
+				max-width: 100%;
 			}
 
 			.pagedjs_pages {

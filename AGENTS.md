@@ -54,6 +54,7 @@ Detailed architecture, testing, and POC guidance should live in the topic docs r
 - music-object embeds use Quill's regular inline embed behavior; do not change the embed mode casually because it breaks cursor behavior
 - music-object rendering is width-driven and natural-height: width is the primary scale input, captions render below the preview, and wrappers should not clip content with a fixed height
 - tables are the current MVP path for intentional side-by-side music layout; table support lives in the `table` feature, uses `quill-table-up`, and owns its selection, context menu, and row/column operation behavior
+- the cleanup goal for tables is not Quill agnosticism; `editor-surface` can expose Quill-aware readonly/controlled helpers, while table semantics such as cell/row/column meaning should live in the `table` feature
 - editor features can opt into editor DOM/Quill events through the `editor-interactions` service, and features can register named React views for `EditorPage` to mount through the `editor-views` service
 - playback is owned by the `player` feature through a registry service; editor components should use that service rather than importing player loadables directly
 - chord entry is moving toward one unified input that auto-detects direct chord names, Roman numeral degrees, and numeric degrees
@@ -69,13 +70,21 @@ Detailed architecture, testing, and POC guidance should live in the topic docs r
 
 ## Recent Verification Notes
 
-- `npm run test:ui -- --grep "TableController|TableContextMenu|EditorViewsService|dispatches editor context"` passed after the current editor view registry, table context menu operations, table overflow reachability, and music-object table-cell sizing work: `307 SUCCESS`
+- `npm run test:ui -- --grep ViewModeService` passed after the read-only paged-preview table CSS fix: `328 SUCCESS`
+- `npm run test:ui -- --grep TableController` passed after the current table context-menu split-table attempt: `330 SUCCESS`
+- the UI test loop can now run continuously with `npm run test:ui:watch`; it performs an initial `polylith test mn`, starts `polylith test mn -w`, and runs Karma in watch mode through `karma.watch.conf.cjs`
+- current logged watcher files are `.codex-logs/ui-test-build-watch.log` and `.codex-logs/ui-test-karma-watch.log`; latest observed watcher result after the selected-column right-click regression was `334 SUCCESS`
 - static search found no substantial hook-based JSX components under `src/mn` after cleanup
 - known non-failing noise includes MUI Dialog `act(...)` warnings, React lifecycle/flushSync warnings around Quill/table/editor mount paths, module directive warnings, and OSMD SkyBottomLineCalculator warnings
 - if behavior looks stale in the browser, restart the watcher; it has failed to pick up changed build specifications during recent work
 - current music-object layout direction: back out text flow/floating behavior and keep music embeds as large inline leaves, with tables for intentional side-by-side layout
 - current music-object rendering direction: keyboard previews compute their own host height from width/key ratio, staff previews scale their SVG naturally, and zeroed wrapper text metrics suppress Quill guard-text artifacts
-- current table direction: table row/column gutter selection, keyboard cell navigation, column resize, and selection-aware context-menu commands are implemented in the `table` feature; table paste, table pagination, and export fidelity remain open
+- current read-only paged-preview table status: large TableUp tables now render after stronger preview-only rules override the edit-view `.ql-table-wrapper` `inline-block` / `max-content` behavior; keep table pagination/export fidelity as open hardening work
+- current table direction: table row/column gutter selection, keyboard cell navigation, column resize, fit-to-width/distribute-columns arrangement commands, selected-column right-click context preservation, and selection-aware row/column/table context-menu commands are implemented; table paste, edit-view split-table, table pagination, and export fidelity remain open
+- current table cleanup direction: move remaining `EditorPage` dependencies in priority order through Quill-aware `editor-surface` access, table-owned insertion/navigation/TableSelection gate/focus behavior, generic wide-content layout contributions, table-owned CSS/assets, then a Quill contribution seam; details live in `agents/topics/architecture/temporary-cleanup.md`
+- current table cell-click focus status: click-in-cell means text editing, not table selection; the current behavior is a hybrid of native caret placement for text hits, Quill range fallback by TableUp cell blot for blank cell space, and a music-embed special case
+- current wide-layout direction: assume any feature can exceed page width; replace table-specific overflow scanning with a generic wide-content contribution API, using tables as the first contributor
+- current split-table command status: context menu items for splitting above/below the selected row exist, but manual browser testing shows the second half is lost or the operation otherwise does not produce two durable tables; do not continue patching this blindly without a deeper TableUp/Parchment strategy
 
 ## Read First
 

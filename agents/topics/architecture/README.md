@@ -15,6 +15,7 @@ This folder contains working architecture notes for `music-notebook`.
 - [Localization And Accessibility](localization-accessibility.md)
 - [Accessibility](accessibility.md)
 - [Screen Scanning UX](screen-scanning-ux.md)
+- [Temporary Architecture Cleanup Tracker](temporary-cleanup.md)
 
 ## Reading Order
 
@@ -43,6 +44,9 @@ Current high-value context:
 - read/view mode is a separate presentation path from Quill edit mode, with split view likely for layout-sensitive features
 - editor-local feature behavior should use narrow editor services where possible: `editor-interactions` for event opt-in and `editor-views` for feature-owned views mounted by `EditorPage`
 - table behavior now lives in the `table` feature; `EditorPage` supplies editor context but should not own table commands or table-specific UI
+- table cleanup should use Quill-aware editor seams rather than pretending to be editor-agnostic; `editor-surface` needs live helpers such as `getQuillModule(name)` so the table feature can own TableUp behavior while the editor still hosts Quill
+- table cell clicks are an established editing gesture, not a table-selection gesture; the current implementation uses native caret placement when possible, Quill range fallback for blank cell space, and a music-embed special case
+- wide editable content should be handled through a generic wide-content contribution model because any feature may exceed page width; tables are the first known contributor
 - accounts use UUIDs, deterministic username salts, durable `HttpOnly` login-session cookies, and short-lived in-memory bearer tokens
 - document APIs are authenticated, account-scoped, app-id-scoped, and backed by MongoDB
 - cross-feature UI launches should go through narrow UI services such as `account-ui`

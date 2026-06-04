@@ -14,6 +14,8 @@ describe('TableContextMenu', function() {
 		expect(itemIds).toEqual([
 			'insert-column-left',
 			'insert-column-right',
+			'fit-table-to-width',
+			'distribute-table-columns',
 			'delete-column',
 			'delete-table',
 		]);
@@ -30,6 +32,10 @@ describe('TableContextMenu', function() {
 		expect(itemIds).toEqual([
 			'insert-row-above',
 			'insert-row-below',
+			'split-table-above',
+			'split-table-below',
+			'fit-table-to-width',
+			'distribute-table-columns',
 			'delete-row',
 			'delete-table',
 		]);

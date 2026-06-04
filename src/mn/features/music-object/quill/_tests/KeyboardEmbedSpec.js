@@ -2,7 +2,12 @@ import Quill from 'quill';
 import React from 'react';
 import { act } from 'react';
 import { buildMusicXml, getPayloadKeyFifths, getStaffNotes } from '../../../../shared/music_helper.js';
-import { configureKeyboardEmbedContext, KEYBOARD_EMBED_BLOT, registerKeyboardEmbed } from '../keyboard-embed.js';
+import {
+	configureKeyboardEmbedContext,
+	getKeyboardEmbedClipboardMatchers,
+	KEYBOARD_EMBED_BLOT,
+	registerKeyboardEmbed,
+} from '../keyboard-embed.js';
 
 describe('KeyboardEmbed', function() {
 	let container;
@@ -75,6 +80,84 @@ describe('KeyboardEmbed', function() {
 		expect(embed.tagName).toBe('SPAN');
 		expect(embed.getAttribute('contenteditable')).toBe('false');
 		expect(embed.querySelector('.music-keyboard-embed-content')).toBeTruthy();
+	});
+
+	it('pastes copied music object HTML as one embed without rendered control text', function() {
+		const pasteContainer = document.createElement('div');
+		const embed = document.createElement('span');
+		const payload = {
+			caption: { template: '{{short}}' },
+			id: 'keyboard-paste-embed-spec',
+			label: 'Degree 3: F#m',
+			notes: ['F#4', 'A4', 'C#5'],
+		};
+
+		embed.className = 'music-keyboard-embed';
+		embed.dataset.keyboardPayload = JSON.stringify(payload);
+		embed.innerHTML = [
+			'<span>Play</span>',
+			'<span>Edit</span>',
+			'<span>Format</span>',
+			'<div class="music-embed-caption">Degree 3: F#m</div>',
+			'<button>Resize music object</button>',
+		].join('');
+		pasteContainer.appendChild(embed);
+
+		const clipboardQuill = new Quill(document.createElement('div'), {
+			modules: {
+				clipboard: {
+					matchers: getKeyboardEmbedClipboardMatchers(),
+				},
+			},
+		});
+		const delta = clipboardQuill.clipboard.convert({
+			html: pasteContainer.innerHTML,
+			text: pasteContainer.textContent,
+		});
+		const serializedDelta = JSON.stringify(delta.ops);
+
+		expect(delta.ops).toEqual([
+			{
+				insert: {
+					[KEYBOARD_EMBED_BLOT]: jasmine.objectContaining({
+						id: 'keyboard-paste-embed-spec',
+						label: 'Degree 3: F#m',
+					}),
+				},
+			},
+		]);
+		expect(serializedDelta).not.toContain('Play');
+		expect(serializedDelta).not.toContain('Edit');
+		expect(serializedDelta).not.toContain('Format');
+		expect(serializedDelta).not.toContain('Resize music object');
+	});
+
+	it('copies music object semantic HTML without rendered control text', function() {
+		act(() => {
+			quill.setContents([
+				{
+					insert: {
+						[KEYBOARD_EMBED_BLOT]: {
+							caption: { template: '{{short}}' },
+							id: 'keyboard-copy-embed-spec',
+							label: 'Degree 3: F#m',
+							notes: ['F#4', 'A4', 'C#5'],
+						},
+					},
+				},
+				{ insert: '\n' },
+			]);
+		});
+
+		const html = quill.getSemanticHTML(0, 1);
+
+		expect(html).toContain('music-keyboard-embed');
+		expect(html).toContain('keyboard-copy-embed-spec');
+		expect(html).not.toContain('Play');
+		expect(html).not.toContain('Edit');
+		expect(html).not.toContain('Format');
+		expect(html).not.toContain('Resize music object');
+		expect(html).not.toContain('class="music-embed-caption');
 	});
 
 	it('renders context-aware caption fields for chords and scales', function() {
@@ -415,15 +498,19 @@ describe('KeyboardEmbed', function() {
 			},
 			registry: {
 				subscribe(serviceName) {
-					if (serviceName !== 'icon-registry') {
-						return null;
+					if (serviceName === 'music-object-controller') {
+						return makeMusicObjectControllerMock();
 					}
 
-					return {
-						getIcon() {
-							return TestIcon;
-						},
-					};
+					if (serviceName === 'icon-registry') {
+						return {
+							getIcon() {
+								return TestIcon;
+							},
+						};
+					}
+
+					return null;
 				},
 			},
 		});
@@ -468,7 +555,15 @@ describe('KeyboardEmbed', function() {
 			locale,
 			registry: {
 				subscribe(serviceName) {
-					return serviceName === 'app-data' ? appData : localize;
+					if (serviceName === 'app-data') {
+						return appData;
+					}
+
+					if (serviceName === 'music-object-controller') {
+						return makeMusicObjectControllerMock();
+					}
+
+					return localize;
 				},
 			},
 		});
@@ -1754,6 +1849,27 @@ function dispatchPointerEvent(target, type, options = {}) {
 	}
 
 	target.dispatchEvent(event);
+}
+
+function makeMusicObjectControllerMock() {
+	return {
+		attachEmbed() {
+			return {
+				closeDialog() {},
+				detach() {},
+				getState() {
+					return {};
+				},
+				listen() {},
+				performAction() {
+					return false;
+				},
+				setHovered() {},
+				setSelected() {},
+				unlisten() {},
+			};
+		},
+	};
 }
 
 function makeAppDataMock(initialValues = {}) {

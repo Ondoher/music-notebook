@@ -4,7 +4,7 @@ import React, { Component } from 'react';
 import TextField from '@mui/material/TextField';
 
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 /**
  * Renders a localized MUI text field with helper text and accessible labeling.

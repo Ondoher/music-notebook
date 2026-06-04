@@ -13,29 +13,88 @@ function _mergeNamespaces(n, m) {
 	return Object.freeze(n);
 }
 
+/// <reference path="./types.d.ts" />
+
+/**
+ * Translates phrase keys for one locale.
+ *
+ * A translator owns one flattened phrase map, optional fallback phrases from
+ * the default locale, plural selection, and `%{name}` token replacement.
+ */
 class Translator {
+  /**
+   * Creates a translator for one locale.
+   *
+   * @param {TranslatorOptions} [options]
+   */
   constructor(options = {}) {
     const phrases = options.phrases || {};
+
+    /** @type {LocalizationFlatPhraseMap} */
     this.phrases = JSON.parse(JSON.stringify(phrases));
+    /** @type {LocalizationLocale} */
     this.locale = options.locale || 'en-US-u-ms-ussystem';
+    /** @type {string} */
     this.language = this.locale.split('-u-')[0];
+    /** @type {LocalizationFlatPhraseMap} */
     this.defaultPhrases = {};
   }
+
+  /**
+   * Gets the flattened phrase map owned by this translator.
+   *
+   * @returns {LocalizationFlatPhraseMap}
+   */
   getAll() {
     return this.phrases;
   }
+
+  /**
+   * Gets the translator locale identifier.
+   *
+   * @returns {LocalizationLocale}
+   */
   getLocale() {
     return this.locale;
   }
+
+  /**
+   * Gets the language portion of the locale identifier.
+   *
+   * @returns {string}
+   */
   getLanguage() {
     return this.language;
   }
+
+  /**
+   * Gets one raw phrase value without fallback or replacement.
+   *
+   * @param {string} key
+   * @returns {LocalizationPhraseValue | undefined}
+   */
   getPhrase(key) {
     return this.phrases[key];
   }
+
+  /**
+   * Gets the locale plural rule for a numeric cardinal value.
+   *
+   * @param {number} number
+   * @returns {LocalizationPluralRule}
+   */
   getPluralForm(number) {
     return new Intl.PluralRules(this.locale).select(number);
   }
+
+  /**
+   * Translates a phrase key and applies replacements.
+   *
+   * @param {string | undefined} key
+   * @param {LocalizationReplacementMap} [replacements]
+   * @param {number} [cardinal]
+   * @returns {string | number}
+   */
   translate(key, replacements = {}, cardinal = 0) {
     if (key === undefined) {
       console.error('Attempted to translate an undefined phrase key.');
@@ -57,6 +116,17 @@ class Translator {
     }
     return this.replace(text, replacements);
   }
+
+  /**
+   * Replaces `%{name}` tokens in translated text.
+   *
+   * Unknown replacement names are treated as nested phrase keys before
+   * falling back to an empty string.
+   *
+   * @param {string} text
+   * @param {LocalizationReplacementMap} [replacements]
+   * @returns {string}
+   */
   replace(text, replacements = {}) {
     const re = /%{(.*?)}/gs;
     const matches = [...text.matchAll(re)];
@@ -76,8 +146,24 @@ class Translator {
     }
     return text;
   }
+
+  /**
+   * Flattens nested phrase objects into dot-separated phrase keys.
+   *
+   * Objects that look like plural-rule maps are preserved as phrase values.
+   *
+   * @param {LocalizationPhraseMap} phrases
+   * @returns {LocalizationFlatPhraseMap}
+   */
   flattenPhrases(phrases) {
+    /** @type {LocalizationFlatPhraseMap} */
     const flat = {};
+
+    /**
+     * Checks whether an object should be treated as a plural phrase value.
+     *
+     * @type {TranslatorCardinalRuleCheck}
+     */
     function isCardinalRule(object) {
       const cardinalRuleKeys = ['zero', 'one', 'two', 'few', 'many', 'other'];
       const keys = Object.keys(object);
@@ -110,6 +196,14 @@ class Translator {
       }
       return false;
     }
+
+    /**
+     * Recursively copies nested phrase values into the flattened map.
+     *
+     * @param {LocalizationPhraseMap} nextPhrases
+     * @param {string} upperKey
+     * @returns {void}
+     */
     function flattenOne(nextPhrases, upperKey) {
       Object.keys(nextPhrases).forEach(key => {
         const value = nextPhrases[key];
@@ -124,14 +218,35 @@ class Translator {
     flattenOne(phrases, '');
     return flat;
   }
+
+  /**
+   * Replaces phrases in the current flattened phrase map.
+   *
+   * @param {LocalizationFlatPhraseMap} phrases
+   * @returns {void}
+   */
   replacePhrases(phrases) {
     Object.keys(phrases).forEach(key => {
       this.phrases[key] = phrases[key];
     });
   }
+
+  /**
+   * Adds nested or flattened phrases to the translator.
+   *
+   * @param {LocalizationPhraseMap} phrases
+   * @returns {void}
+   */
   extend(phrases) {
     this.replacePhrases(this.flattenPhrases(phrases));
   }
+
+  /**
+   * Uses another translator's phrase map as fallback phrases.
+   *
+   * @param {Translator | undefined | null} translator
+   * @returns {void}
+   */
   setDefault(translator) {
     this.defaultPhrases = translator?.phrases || {};
   }
@@ -33248,6 +33363,19 @@ const defaultMusicNotebookContext = {
 };
 const MusicNotebookContext = /*#__PURE__*/React$1.createContext(defaultMusicNotebookContext);
 
+/// <reference path="./types.d.ts" />
+
+/**
+ * Resolves a phrase-like value to plain localized text.
+ *
+ * Use this helper where a component needs a string for a label, helper text,
+ * or accessibility attribute instead of a rendered `LocaleString` element.
+ *
+ * @param {LocalizeService | null | undefined} localize - Localization service used to resolve phrase keys.
+ * @param {LocalizedTextResolverValue} value - Phrase key, phrase object, or empty value.
+ * @param {string} [fallback=''] - Text returned when the value or translation is unavailable.
+ * @returns {string}
+ */
 function getLocalizedText(localize, value, fallback = '') {
   if (value === undefined || value === null || value === false) {
     return fallback;
@@ -34644,17 +34772,51 @@ class Service {
   }
 }
 
+/// <reference path="./types.d.ts" />
+
+/**
+ * Stores phrase maps and translates phrase keys for the active locale.
+ *
+ * The `localize` service wraps this plain engine and supplies `fire` so locale
+ * changes can notify service listeners and React views.
+ */
 class Localization {
+  /** Initializes localization state with the default app locale. */
   constructor() {
+    /** @type {Record<LocalizationLocale, Translator>} */
     this.translators = {};
+    /** @type {LocalizationLocale} */
     this.locale = 'en-US-u-ms-ussystem';
+    /** @type {Translator | undefined} */
+    this.translator = undefined;
+    /** @type {LocalizationEventEmitter | undefined} */
+    this.fire = undefined;
   }
+
+  /**
+   * Gets the active locale identifier.
+   *
+   * @returns {LocalizationLocale}
+   */
   getLocale() {
     return this.locale;
   }
+
+  /**
+   * Gets the language portion of the active locale identifier.
+   *
+   * @returns {string}
+   */
   getLanguage() {
     return this.locale.split('-u')[0];
   }
+
+  /**
+   * Gets localized month names for the active language.
+   *
+   * @param {'long' | 'short' | 'narrow'} [format='long'] - Intl month display style.
+   * @returns {string[]}
+   */
   getMonthNames(format = 'long') {
     const locale = this.getLanguage();
     const formatter = new Intl.DateTimeFormat(locale, {
@@ -34667,12 +34829,24 @@ class Localization {
     });
     return months.map(date => formatter.format(date));
   }
+
+  /**
+   * Gets the date separator used by the active language.
+   *
+   * @returns {string | undefined}
+   */
   getDateSeparator() {
     const locale = this.getLanguage();
     const separators = ['/', '-', '.', '. '];
     const dateStr = new Intl.DateTimeFormat(locale).format(new Date());
     return separators.find(separator => dateStr.split(separator).length !== 1);
   }
+
+  /**
+   * Gets the date field order used by the active language.
+   *
+   * @returns {LocalizationDateOrder}
+   */
   getDateOrder() {
     const locale = this.getLanguage();
     const separator = this.getDateSeparator();
@@ -34687,6 +34861,14 @@ class Localization {
     order[parts.indexOf(21)] = 'date';
     return [order[0], order[1], order[2]];
   }
+
+  /**
+   * Adds a locale phrase map and activates it when it matches the active locale.
+   *
+   * @param {LocalizationLocale} locale
+   * @param {LocalizationPhraseMap} phrases
+   * @returns {void}
+   */
   add(locale, phrases) {
     this.translators[locale] = new Translator({
       phrases,
@@ -34697,6 +34879,14 @@ class Localization {
       this.translator = this.translators[locale];
     }
   }
+
+  /**
+   * Extends an existing locale with additional nested or flattened phrases.
+   *
+   * @param {LocalizationLocale} locale
+   * @param {LocalizationPhraseMap} phrases
+   * @returns {void}
+   */
   extend(locale, phrases) {
     if (!this.translators[locale]) {
       console.warn('Trying to extend phrases for nonexisting locale:', locale);
@@ -34705,9 +34895,23 @@ class Localization {
     this.translators[locale].extend(phrases);
     this.fire?.('updated');
   }
+
+  /**
+   * Checks whether a locale has loaded phrase data.
+   *
+   * @param {LocalizationLocale} locale
+   * @returns {boolean}
+   */
   hasLocale(locale) {
     return Boolean(this.translators[locale]);
   }
+
+  /**
+   * Switches the active locale and notifies listeners.
+   *
+   * @param {LocalizationLocale} locale
+   * @returns {void}
+   */
   switchLocale(locale) {
     if (!this.translators[locale]) {
       console.warn('Attempt to switch to nonexistent locale', locale);
@@ -34717,6 +34921,15 @@ class Localization {
     this.locale = locale;
     this.fire?.('changeLocale', locale);
   }
+
+  /**
+   * Translates a phrase key in the active locale.
+   *
+   * @param {string} key
+   * @param {LocalizationReplacementMap} [replacements]
+   * @param {number} [cardinal]
+   * @returns {string}
+   */
   translate(key, replacements, cardinal) {
     if (!this.translator) {
       console.error('No current translator');
@@ -34724,6 +34937,16 @@ class Localization {
     }
     return this.translator.translate(key, replacements, cardinal);
   }
+
+  /**
+   * Translates a phrase key in a specific locale.
+   *
+   * @param {LocalizationLocale} locale
+   * @param {string} key
+   * @param {LocalizationReplacementMap} [replacements]
+   * @param {number} [cardinal]
+   * @returns {string}
+   */
   translateLocale(locale, key, replacements, cardinal) {
     if (!this.translators[locale]) {
       console.warn('Attempt to switch to nonexistent locale', locale);
@@ -34731,6 +34954,14 @@ class Localization {
     }
     return this.translators[locale].translate(key, replacements, cardinal);
   }
+
+  /**
+   * Replaces `%{name}` tokens in arbitrary localized text.
+   *
+   * @param {string} text
+   * @param {LocalizationReplacementMap} [replacements]
+   * @returns {string}
+   */
   replace(text, replacements = {}) {
     if (!this.translator) {
       console.error('No current translator');
@@ -34738,13 +34969,35 @@ class Localization {
     }
     return this.translator.replace(text, replacements);
   }
+
+  /**
+   * Gets all loaded locale identifiers.
+   *
+   * @returns {LocalizationLocale[]}
+   */
   getLocales() {
     return Object.keys(this.translators);
   }
+
+  /**
+   * Gets the raw phrase value for the active locale.
+   *
+   * @param {string} key
+   * @returns {LocalizationPhraseValue | undefined}
+   */
   getPhrase(key) {
     const translator = this.translators[this.getLocale()];
     return translator.getPhrase(key);
   }
+
+  /**
+   * Finds phrase keys for a locale that match a regular expression.
+   *
+   * @param {LocalizationLocale} locale
+   * @param {RegExp} match
+   * @param {LocalizationFindKeyCallback} cb
+   * @returns {void}
+   */
   findKeys(locale, match, cb) {
     const translator = this.translators[locale];
     const phrases = translator.getAll();
@@ -34756,6 +35009,13 @@ class Localization {
       }
     });
   }
+
+  /**
+   * Replaces active-locale phrases and notifies listeners.
+   *
+   * @param {LocalizationFlatPhraseMap} phrases
+   * @returns {void}
+   */
   replacePhrases(phrases) {
     if (!this.translator) {
       console.error('No current translator');
@@ -34868,6 +35128,7 @@ var phrases = {
 	"music.display.staff": "Staff",
 	"music.embed_dialog.title": "Embed Music",
 	"music.embed_dialog.description": "From here you can decide the kind of music object to add to your document and specify the details of the embedded content.",
+	"music.object.error_loading": "Error loading object",
 	"music.format.alignment": "Alignment",
 	"music.format.alignment.center": "Center",
 	"music.format.alignment.left": "Left",
@@ -35120,7 +35381,7 @@ function createTestHarness() {
   return new TestHarness();
 }
 
-function makeLocalizeMock$e() {
+function makeLocalizeMock$f() {
   return {
     getLocale() {
       return 'en-US';
@@ -35208,7 +35469,7 @@ function getButtonByText$3(text) {
 describe('BaseDialog', function () {
   let harness;
   beforeEach(function () {
-    const localize = makeLocalizeMock$e();
+    const localize = makeLocalizeMock$f();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -36707,8 +36968,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // A few React string attributes have a different name.
@@ -36722,8 +36983,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are "enumerated" HTML attributes that accept "true" and "false".
@@ -36738,8 +36999,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are "enumerated" SVG attributes that accept "true" and "false".
@@ -36755,8 +37016,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are HTML boolean attributes.
@@ -36774,8 +37035,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are the few React props that we set as DOM properties
@@ -36797,8 +37058,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are HTML attributes that are "overloaded booleans": they behave like
@@ -36817,8 +37078,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are HTML attributes that must be positive numbers.
@@ -36836,8 +37097,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These are HTML attributes that must be numbers.
@@ -36850,8 +37111,8 @@ reservedProps.forEach(name => {
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 const CAMELIZE = /[\-\:]([a-z])/g;
 const capitalize$2 = token => token[1].toUpperCase();
@@ -36874,8 +37135,8 @@ const capitalize$2 = token => token[1].toUpperCase();
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // String SVG attributes with the xlink namespace.
@@ -36890,8 +37151,8 @@ const capitalize$2 = token => token[1].toUpperCase();
   // mustUseProperty
   attributeName, 'http://www.w3.org/1999/xlink', false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // String SVG attributes with the xml namespace.
@@ -36906,8 +37167,8 @@ const capitalize$2 = token => token[1].toUpperCase();
   // mustUseProperty
   attributeName, 'http://www.w3.org/XML/1998/namespace', false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These attribute exists both in HTML and SVG.
@@ -36922,8 +37183,8 @@ const capitalize$2 = token => token[1].toUpperCase();
   // attributeNamespace
   false,
   // sanitizeURL
-  false // removeEmptyString
-  );
+  false) // removeEmptyString
+;
 });
 
 // These attributes accept URLs. These must not allow javascript: URLS.
@@ -36933,8 +37194,8 @@ properties$3[xlinkHref] = new PropertyInfoRecord('xlinkHref', STRING$4, false,
 // mustUseProperty
 'xlink:href', 'http://www.w3.org/1999/xlink', true,
 // sanitizeURL
-false // removeEmptyString
-);
+false) // removeEmptyString
+;
 ['src', 'href', 'action', 'formAction'].forEach(attributeName => {
   properties$3[attributeName] = new PropertyInfoRecord(attributeName, STRING$4, false,
   // mustUseProperty
@@ -36944,8 +37205,8 @@ false // removeEmptyString
   // attributeNamespace
   true,
   // sanitizeURL
-  true // removeEmptyString
-  );
+  true) // removeEmptyString
+;
 });
 
 // 
@@ -38528,7 +38789,7 @@ class AlertDialog extends reactExports.Component {
   }
 }
 
-function makeLocalizeMock$d() {
+function makeLocalizeMock$e() {
   return {
     getLocale() {
       return 'en-US-u-ms-ussystem';
@@ -38552,7 +38813,7 @@ function getButtonByText$2(text) {
 describe('AlertDialog', function () {
   let harness;
   beforeEach(function () {
-    const localize = makeLocalizeMock$d();
+    const localize = makeLocalizeMock$e();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -38703,7 +38964,7 @@ class Button extends reactExports.Component {
   }
 }
 
-function makeLocalizeMock$c() {
+function makeLocalizeMock$d() {
   return {
     getLocale() {
       return 'en-US';
@@ -38725,7 +38986,7 @@ describe('Button', function () {
     harness = null;
   });
   it('renders a localized primary button and reports clicks', function () {
-    const localize = makeLocalizeMock$c();
+    const localize = makeLocalizeMock$d();
     let clickCount = 0;
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
@@ -50482,7 +50743,7 @@ function selectValue$2(select, value) {
   }));
 }
 
-function makeLocalizeMock$b(overrides = {}) {
+function makeLocalizeMock$c(overrides = {}) {
   return {
     getLocale() {
       return 'en-US-u-ms-ussystem';
@@ -50514,7 +50775,7 @@ describe('LocaleString', function () {
     harness = null;
   });
   it('renders a translated phrase from the localize service', function () {
-    const localize = makeLocalizeMock$b();
+    const localize = makeLocalizeMock$c();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -50524,7 +50785,7 @@ describe('LocaleString', function () {
     expect(result.container.textContent).toBe('Hello world');
   });
   it('uses the locale-specific translation path when locale is provided', function () {
-    const localize = makeLocalizeMock$b();
+    const localize = makeLocalizeMock$c();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -50535,7 +50796,7 @@ describe('LocaleString', function () {
     expect(result.container.textContent).toBe('es-ES:greeting');
   });
   it('parses html output when html is true', function () {
-    const localize = makeLocalizeMock$b();
+    const localize = makeLocalizeMock$c();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -50546,7 +50807,7 @@ describe('LocaleString', function () {
     expect(result.container.querySelector('strong').textContent).toBe('Hello html');
   });
   it('suppresses output when hideEmpty is true and translation is empty', function () {
-    const localize = makeLocalizeMock$b();
+    const localize = makeLocalizeMock$c();
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
     });
@@ -50558,7 +50819,7 @@ describe('LocaleString', function () {
     expect(result.container.children.length).toBe(0);
   });
   it('reports missing translations without disrupting rendering', function () {
-    const localize = makeLocalizeMock$b();
+    const localize = makeLocalizeMock$c();
     spyOn(console, 'error');
     harness = createTestHarness().withService('localize', localize).withContext({
       localize
@@ -50577,6 +50838,3127 @@ describe('LocaleString', function () {
     spyOn(console, 'error');
     expect(component.getTranslation()).toBe('');
     expect(console.error).toHaveBeenCalledWith('LocaleString cannot render without a localize service.');
+  });
+});
+
+var top$1 = 'top';
+var bottom$1 = 'bottom';
+var right$1 = 'right';
+var left$1 = 'left';
+var auto = 'auto';
+var basePlacements = [top$1, bottom$1, right$1, left$1];
+var start = 'start';
+var end = 'end';
+var clippingParents = 'clippingParents';
+var viewport = 'viewport';
+var popper = 'popper';
+var reference = 'reference';
+var variationPlacements = /*#__PURE__*/basePlacements.reduce(function (acc, placement) {
+  return acc.concat([placement + "-" + start, placement + "-" + end]);
+}, []);
+var placements = /*#__PURE__*/[].concat(basePlacements, [auto]).reduce(function (acc, placement) {
+  return acc.concat([placement, placement + "-" + start, placement + "-" + end]);
+}, []); // modifiers that need to read the DOM
+
+var beforeRead = 'beforeRead';
+var read$1 = 'read';
+var afterRead = 'afterRead'; // pure-logic modifiers
+
+var beforeMain = 'beforeMain';
+var main$1 = 'main';
+var afterMain = 'afterMain'; // modifier with the purpose to write to the DOM (or write into a framework state)
+
+var beforeWrite = 'beforeWrite';
+var write$1 = 'write';
+var afterWrite = 'afterWrite';
+var modifierPhases = [beforeRead, read$1, afterRead, beforeMain, main$1, afterMain, beforeWrite, write$1, afterWrite];
+
+function getNodeName(element) {
+  return element ? (element.nodeName || '').toLowerCase() : null;
+}
+
+function getWindow$1(node) {
+  if (node == null) {
+    return window;
+  }
+  if (node.toString() !== '[object Window]') {
+    var ownerDocument = node.ownerDocument;
+    return ownerDocument ? ownerDocument.defaultView || window : window;
+  }
+  return node;
+}
+
+function isElement$2(node) {
+  var OwnElement = getWindow$1(node).Element;
+  return node instanceof OwnElement || node instanceof Element;
+}
+function isHTMLElement$2(node) {
+  var OwnElement = getWindow$1(node).HTMLElement;
+  return node instanceof OwnElement || node instanceof HTMLElement;
+}
+function isShadowRoot(node) {
+  // IE 11 has no ShadowRoot
+  if (typeof ShadowRoot === 'undefined') {
+    return false;
+  }
+  var OwnElement = getWindow$1(node).ShadowRoot;
+  return node instanceof OwnElement || node instanceof ShadowRoot;
+}
+
+// and applies them to the HTMLElements such as popper and arrow
+
+function applyStyles(_ref) {
+  var state = _ref.state;
+  Object.keys(state.elements).forEach(function (name) {
+    var style = state.styles[name] || {};
+    var attributes = state.attributes[name] || {};
+    var element = state.elements[name]; // arrow is optional + virtual elements
+
+    if (!isHTMLElement$2(element) || !getNodeName(element)) {
+      return;
+    } // Flow doesn't support to extend this property, but it's the most
+    // effective way to apply styles to an HTMLElement
+    // $FlowFixMe[cannot-write]
+
+    Object.assign(element.style, style);
+    Object.keys(attributes).forEach(function (name) {
+      var value = attributes[name];
+      if (value === false) {
+        element.removeAttribute(name);
+      } else {
+        element.setAttribute(name, value === true ? '' : value);
+      }
+    });
+  });
+}
+function effect$2(_ref2) {
+  var state = _ref2.state;
+  var initialStyles = {
+    popper: {
+      position: state.options.strategy,
+      left: '0',
+      top: '0',
+      margin: '0'
+    },
+    arrow: {
+      position: 'absolute'
+    },
+    reference: {}
+  };
+  Object.assign(state.elements.popper.style, initialStyles.popper);
+  state.styles = initialStyles;
+  if (state.elements.arrow) {
+    Object.assign(state.elements.arrow.style, initialStyles.arrow);
+  }
+  return function () {
+    Object.keys(state.elements).forEach(function (name) {
+      var element = state.elements[name];
+      var attributes = state.attributes[name] || {};
+      var styleProperties = Object.keys(state.styles.hasOwnProperty(name) ? state.styles[name] : initialStyles[name]); // Set all values to an empty string to unset them
+
+      var style = styleProperties.reduce(function (style, property) {
+        style[property] = '';
+        return style;
+      }, {}); // arrow is optional + virtual elements
+
+      if (!isHTMLElement$2(element) || !getNodeName(element)) {
+        return;
+      }
+      Object.assign(element.style, style);
+      Object.keys(attributes).forEach(function (attribute) {
+        element.removeAttribute(attribute);
+      });
+    });
+  };
+} // eslint-disable-next-line import/no-unused-modules
+
+var applyStyles$1 = {
+  name: 'applyStyles',
+  enabled: true,
+  phase: 'write',
+  fn: applyStyles,
+  effect: effect$2,
+  requires: ['computeStyles']
+};
+
+function getBasePlacement(placement) {
+  return placement.split('-')[0];
+}
+
+var max$2 = Math.max;
+var min$1 = Math.min;
+var round$2 = Math.round;
+
+function getUAString() {
+  var uaData = navigator.userAgentData;
+  if (uaData != null && uaData.brands && Array.isArray(uaData.brands)) {
+    return uaData.brands.map(function (item) {
+      return item.brand + "/" + item.version;
+    }).join(' ');
+  }
+  return navigator.userAgent;
+}
+
+function isLayoutViewport() {
+  return !/^((?!chrome|android).)*safari/i.test(getUAString());
+}
+
+function getBoundingClientRect$1(element, includeScale, isFixedStrategy) {
+  if (includeScale === void 0) {
+    includeScale = false;
+  }
+  if (isFixedStrategy === void 0) {
+    isFixedStrategy = false;
+  }
+  var clientRect = element.getBoundingClientRect();
+  var scaleX = 1;
+  var scaleY = 1;
+  if (includeScale && isHTMLElement$2(element)) {
+    scaleX = element.offsetWidth > 0 ? round$2(clientRect.width) / element.offsetWidth || 1 : 1;
+    scaleY = element.offsetHeight > 0 ? round$2(clientRect.height) / element.offsetHeight || 1 : 1;
+  }
+  var _ref = isElement$2(element) ? getWindow$1(element) : window,
+    visualViewport = _ref.visualViewport;
+  var addVisualOffsets = !isLayoutViewport() && isFixedStrategy;
+  var x = (clientRect.left + (addVisualOffsets && visualViewport ? visualViewport.offsetLeft : 0)) / scaleX;
+  var y = (clientRect.top + (addVisualOffsets && visualViewport ? visualViewport.offsetTop : 0)) / scaleY;
+  var width = clientRect.width / scaleX;
+  var height = clientRect.height / scaleY;
+  return {
+    width: width,
+    height: height,
+    top: y,
+    right: x + width,
+    bottom: y + height,
+    left: x,
+    x: x,
+    y: y
+  };
+}
+
+// means it doesn't take into account transforms.
+
+function getLayoutRect(element) {
+  var clientRect = getBoundingClientRect$1(element); // Use the clientRect sizes if it's not been transformed.
+  // Fixes https://github.com/popperjs/popper-core/issues/1223
+
+  var width = element.offsetWidth;
+  var height = element.offsetHeight;
+  if (Math.abs(clientRect.width - width) <= 1) {
+    width = clientRect.width;
+  }
+  if (Math.abs(clientRect.height - height) <= 1) {
+    height = clientRect.height;
+  }
+  return {
+    x: element.offsetLeft,
+    y: element.offsetTop,
+    width: width,
+    height: height
+  };
+}
+
+function contains$3(parent, child) {
+  var rootNode = child.getRootNode && child.getRootNode(); // First, attempt with faster native method
+
+  if (parent.contains(child)) {
+    return true;
+  } // then fallback to custom implementation with Shadow DOM support
+  else if (rootNode && isShadowRoot(rootNode)) {
+    var next = child;
+    do {
+      if (next && parent.isSameNode(next)) {
+        return true;
+      } // $FlowFixMe[prop-missing]: need a better way to handle this...
+
+      next = next.parentNode || next.host;
+    } while (next);
+  } // Give up, the result is false
+
+  return false;
+}
+
+function getComputedStyle$1(element) {
+  return getWindow$1(element).getComputedStyle(element);
+}
+
+function isTableElement(element) {
+  return ['table', 'td', 'th'].indexOf(getNodeName(element)) >= 0;
+}
+
+function getDocumentElement(element) {
+  // $FlowFixMe[incompatible-return]: assume body is always available
+  return ((isElement$2(element) ? element.ownerDocument :
+  // $FlowFixMe[prop-missing]
+  element.document) || window.document).documentElement;
+}
+
+function getParentNode(element) {
+  if (getNodeName(element) === 'html') {
+    return element;
+  }
+  return (
+    // this is a quicker (but less type safe) way to save quite some bytes from the bundle
+    // $FlowFixMe[incompatible-return]
+    // $FlowFixMe[prop-missing]
+    element.assignedSlot ||
+    // step into the shadow DOM of the parent of a slotted node
+    element.parentNode || (
+    // DOM Element detected
+    isShadowRoot(element) ? element.host : null) ||
+    // ShadowRoot detected
+    // $FlowFixMe[incompatible-call]: HTMLElement is a Node
+    getDocumentElement(element) // fallback
+  );
+}
+
+function getTrueOffsetParent(element) {
+  if (!isHTMLElement$2(element) ||
+  // https://github.com/popperjs/popper-core/issues/837
+  getComputedStyle$1(element).position === 'fixed') {
+    return null;
+  }
+  return element.offsetParent;
+} // `.offsetParent` reports `null` for fixed elements, while absolute elements
+// return the containing block
+
+function getContainingBlock(element) {
+  var isFirefox = /firefox/i.test(getUAString());
+  var isIE = /Trident/i.test(getUAString());
+  if (isIE && isHTMLElement$2(element)) {
+    // In IE 9, 10 and 11 fixed elements containing block is always established by the viewport
+    var elementCss = getComputedStyle$1(element);
+    if (elementCss.position === 'fixed') {
+      return null;
+    }
+  }
+  var currentNode = getParentNode(element);
+  if (isShadowRoot(currentNode)) {
+    currentNode = currentNode.host;
+  }
+  while (isHTMLElement$2(currentNode) && ['html', 'body'].indexOf(getNodeName(currentNode)) < 0) {
+    var css = getComputedStyle$1(currentNode); // This is non-exhaustive but covers the most common CSS properties that
+    // create a containing block.
+    // https://developer.mozilla.org/en-US/docs/Web/CSS/Containing_block#identifying_the_containing_block
+
+    if (css.transform !== 'none' || css.perspective !== 'none' || css.contain === 'paint' || ['transform', 'perspective'].indexOf(css.willChange) !== -1 || isFirefox && css.willChange === 'filter' || isFirefox && css.filter && css.filter !== 'none') {
+      return currentNode;
+    } else {
+      currentNode = currentNode.parentNode;
+    }
+  }
+  return null;
+} // Gets the closest ancestor positioned element. Handles some edge cases,
+// such as table ancestors and cross browser bugs.
+
+function getOffsetParent(element) {
+  var window = getWindow$1(element);
+  var offsetParent = getTrueOffsetParent(element);
+  while (offsetParent && isTableElement(offsetParent) && getComputedStyle$1(offsetParent).position === 'static') {
+    offsetParent = getTrueOffsetParent(offsetParent);
+  }
+  if (offsetParent && (getNodeName(offsetParent) === 'html' || getNodeName(offsetParent) === 'body' && getComputedStyle$1(offsetParent).position === 'static')) {
+    return window;
+  }
+  return offsetParent || getContainingBlock(element) || window;
+}
+
+function getMainAxisFromPlacement(placement) {
+  return ['top', 'bottom'].indexOf(placement) >= 0 ? 'x' : 'y';
+}
+
+function within(min, value, max) {
+  return max$2(min, min$1(value, max));
+}
+function withinMaxClamp(min, value, max) {
+  var v = within(min, value, max);
+  return v > max ? max : v;
+}
+
+function getFreshSideObject() {
+  return {
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0
+  };
+}
+
+function mergePaddingObject(paddingObject) {
+  return Object.assign({}, getFreshSideObject(), paddingObject);
+}
+
+function expandToHashMap(value, keys) {
+  return keys.reduce(function (hashMap, key) {
+    hashMap[key] = value;
+    return hashMap;
+  }, {});
+}
+
+var toPaddingObject = function toPaddingObject(padding, state) {
+  padding = typeof padding === 'function' ? padding(Object.assign({}, state.rects, {
+    placement: state.placement
+  })) : padding;
+  return mergePaddingObject(typeof padding !== 'number' ? padding : expandToHashMap(padding, basePlacements));
+};
+function arrow(_ref) {
+  var _state$modifiersData$;
+  var state = _ref.state,
+    name = _ref.name,
+    options = _ref.options;
+  var arrowElement = state.elements.arrow;
+  var popperOffsets = state.modifiersData.popperOffsets;
+  var basePlacement = getBasePlacement(state.placement);
+  var axis = getMainAxisFromPlacement(basePlacement);
+  var isVertical = [left$1, right$1].indexOf(basePlacement) >= 0;
+  var len = isVertical ? 'height' : 'width';
+  if (!arrowElement || !popperOffsets) {
+    return;
+  }
+  var paddingObject = toPaddingObject(options.padding, state);
+  var arrowRect = getLayoutRect(arrowElement);
+  var minProp = axis === 'y' ? top$1 : left$1;
+  var maxProp = axis === 'y' ? bottom$1 : right$1;
+  var endDiff = state.rects.reference[len] + state.rects.reference[axis] - popperOffsets[axis] - state.rects.popper[len];
+  var startDiff = popperOffsets[axis] - state.rects.reference[axis];
+  var arrowOffsetParent = getOffsetParent(arrowElement);
+  var clientSize = arrowOffsetParent ? axis === 'y' ? arrowOffsetParent.clientHeight || 0 : arrowOffsetParent.clientWidth || 0 : 0;
+  var centerToReference = endDiff / 2 - startDiff / 2; // Make sure the arrow doesn't overflow the popper if the center point is
+  // outside of the popper bounds
+
+  var min = paddingObject[minProp];
+  var max = clientSize - arrowRect[len] - paddingObject[maxProp];
+  var center = clientSize / 2 - arrowRect[len] / 2 + centerToReference;
+  var offset = within(min, center, max); // Prevents breaking syntax highlighting...
+
+  var axisProp = axis;
+  state.modifiersData[name] = (_state$modifiersData$ = {}, _state$modifiersData$[axisProp] = offset, _state$modifiersData$.centerOffset = offset - center, _state$modifiersData$);
+}
+function effect$1(_ref2) {
+  var state = _ref2.state,
+    options = _ref2.options;
+  var _options$element = options.element,
+    arrowElement = _options$element === void 0 ? '[data-popper-arrow]' : _options$element;
+  if (arrowElement == null) {
+    return;
+  } // CSS selector
+
+  if (typeof arrowElement === 'string') {
+    arrowElement = state.elements.popper.querySelector(arrowElement);
+    if (!arrowElement) {
+      return;
+    }
+  }
+  if (!contains$3(state.elements.popper, arrowElement)) {
+    return;
+  }
+  state.elements.arrow = arrowElement;
+} // eslint-disable-next-line import/no-unused-modules
+
+var arrow$1 = {
+  name: 'arrow',
+  enabled: true,
+  phase: 'main',
+  fn: arrow,
+  effect: effect$1,
+  requires: ['popperOffsets'],
+  requiresIfExists: ['preventOverflow']
+};
+
+function getVariation(placement) {
+  return placement.split('-')[1];
+}
+
+var unsetSides = {
+  top: 'auto',
+  right: 'auto',
+  bottom: 'auto',
+  left: 'auto'
+}; // Round the offsets to the nearest suitable subpixel based on the DPR.
+// Zooming can change the DPR, but it seems to report a value that will
+// cleanly divide the values into the appropriate subpixels.
+
+function roundOffsetsByDPR(_ref, win) {
+  var x = _ref.x,
+    y = _ref.y;
+  var dpr = win.devicePixelRatio || 1;
+  return {
+    x: round$2(x * dpr) / dpr || 0,
+    y: round$2(y * dpr) / dpr || 0
+  };
+}
+function mapToStyles(_ref2) {
+  var _Object$assign2;
+  var popper = _ref2.popper,
+    popperRect = _ref2.popperRect,
+    placement = _ref2.placement,
+    variation = _ref2.variation,
+    offsets = _ref2.offsets,
+    position = _ref2.position,
+    gpuAcceleration = _ref2.gpuAcceleration,
+    adaptive = _ref2.adaptive,
+    roundOffsets = _ref2.roundOffsets,
+    isFixed = _ref2.isFixed;
+  var _offsets$x = offsets.x,
+    x = _offsets$x === void 0 ? 0 : _offsets$x,
+    _offsets$y = offsets.y,
+    y = _offsets$y === void 0 ? 0 : _offsets$y;
+  var _ref3 = typeof roundOffsets === 'function' ? roundOffsets({
+    x: x,
+    y: y
+  }) : {
+    x: x,
+    y: y
+  };
+  x = _ref3.x;
+  y = _ref3.y;
+  var hasX = offsets.hasOwnProperty('x');
+  var hasY = offsets.hasOwnProperty('y');
+  var sideX = left$1;
+  var sideY = top$1;
+  var win = window;
+  if (adaptive) {
+    var offsetParent = getOffsetParent(popper);
+    var heightProp = 'clientHeight';
+    var widthProp = 'clientWidth';
+    if (offsetParent === getWindow$1(popper)) {
+      offsetParent = getDocumentElement(popper);
+      if (getComputedStyle$1(offsetParent).position !== 'static' && position === 'absolute') {
+        heightProp = 'scrollHeight';
+        widthProp = 'scrollWidth';
+      }
+    } // $FlowFixMe[incompatible-cast]: force type refinement, we compare offsetParent with window above, but Flow doesn't detect it
+
+    offsetParent = offsetParent;
+    if (placement === top$1 || (placement === left$1 || placement === right$1) && variation === end) {
+      sideY = bottom$1;
+      var offsetY = isFixed && offsetParent === win && win.visualViewport ? win.visualViewport.height :
+      // $FlowFixMe[prop-missing]
+      offsetParent[heightProp];
+      y -= offsetY - popperRect.height;
+      y *= gpuAcceleration ? 1 : -1;
+    }
+    if (placement === left$1 || (placement === top$1 || placement === bottom$1) && variation === end) {
+      sideX = right$1;
+      var offsetX = isFixed && offsetParent === win && win.visualViewport ? win.visualViewport.width :
+      // $FlowFixMe[prop-missing]
+      offsetParent[widthProp];
+      x -= offsetX - popperRect.width;
+      x *= gpuAcceleration ? 1 : -1;
+    }
+  }
+  var commonStyles = Object.assign({
+    position: position
+  }, adaptive && unsetSides);
+  var _ref4 = roundOffsets === true ? roundOffsetsByDPR({
+    x: x,
+    y: y
+  }, getWindow$1(popper)) : {
+    x: x,
+    y: y
+  };
+  x = _ref4.x;
+  y = _ref4.y;
+  if (gpuAcceleration) {
+    var _Object$assign;
+    return Object.assign({}, commonStyles, (_Object$assign = {}, _Object$assign[sideY] = hasY ? '0' : '', _Object$assign[sideX] = hasX ? '0' : '', _Object$assign.transform = (win.devicePixelRatio || 1) <= 1 ? "translate(" + x + "px, " + y + "px)" : "translate3d(" + x + "px, " + y + "px, 0)", _Object$assign));
+  }
+  return Object.assign({}, commonStyles, (_Object$assign2 = {}, _Object$assign2[sideY] = hasY ? y + "px" : '', _Object$assign2[sideX] = hasX ? x + "px" : '', _Object$assign2.transform = '', _Object$assign2));
+}
+function computeStyles(_ref5) {
+  var state = _ref5.state,
+    options = _ref5.options;
+  var _options$gpuAccelerat = options.gpuAcceleration,
+    gpuAcceleration = _options$gpuAccelerat === void 0 ? true : _options$gpuAccelerat,
+    _options$adaptive = options.adaptive,
+    adaptive = _options$adaptive === void 0 ? true : _options$adaptive,
+    _options$roundOffsets = options.roundOffsets,
+    roundOffsets = _options$roundOffsets === void 0 ? true : _options$roundOffsets;
+  var commonStyles = {
+    placement: getBasePlacement(state.placement),
+    variation: getVariation(state.placement),
+    popper: state.elements.popper,
+    popperRect: state.rects.popper,
+    gpuAcceleration: gpuAcceleration,
+    isFixed: state.options.strategy === 'fixed'
+  };
+  if (state.modifiersData.popperOffsets != null) {
+    state.styles.popper = Object.assign({}, state.styles.popper, mapToStyles(Object.assign({}, commonStyles, {
+      offsets: state.modifiersData.popperOffsets,
+      position: state.options.strategy,
+      adaptive: adaptive,
+      roundOffsets: roundOffsets
+    })));
+  }
+  if (state.modifiersData.arrow != null) {
+    state.styles.arrow = Object.assign({}, state.styles.arrow, mapToStyles(Object.assign({}, commonStyles, {
+      offsets: state.modifiersData.arrow,
+      position: 'absolute',
+      adaptive: false,
+      roundOffsets: roundOffsets
+    })));
+  }
+  state.attributes.popper = Object.assign({}, state.attributes.popper, {
+    'data-popper-placement': state.placement
+  });
+} // eslint-disable-next-line import/no-unused-modules
+
+var computeStyles$1 = {
+  name: 'computeStyles',
+  enabled: true,
+  phase: 'beforeWrite',
+  fn: computeStyles,
+  data: {}
+};
+
+var passive = {
+  passive: true
+};
+function effect(_ref) {
+  var state = _ref.state,
+    instance = _ref.instance,
+    options = _ref.options;
+  var _options$scroll = options.scroll,
+    scroll = _options$scroll === void 0 ? true : _options$scroll,
+    _options$resize = options.resize,
+    resize = _options$resize === void 0 ? true : _options$resize;
+  var window = getWindow$1(state.elements.popper);
+  var scrollParents = [].concat(state.scrollParents.reference, state.scrollParents.popper);
+  if (scroll) {
+    scrollParents.forEach(function (scrollParent) {
+      scrollParent.addEventListener('scroll', instance.update, passive);
+    });
+  }
+  if (resize) {
+    window.addEventListener('resize', instance.update, passive);
+  }
+  return function () {
+    if (scroll) {
+      scrollParents.forEach(function (scrollParent) {
+        scrollParent.removeEventListener('scroll', instance.update, passive);
+      });
+    }
+    if (resize) {
+      window.removeEventListener('resize', instance.update, passive);
+    }
+  };
+} // eslint-disable-next-line import/no-unused-modules
+
+var eventListeners = {
+  name: 'eventListeners',
+  enabled: true,
+  phase: 'write',
+  fn: function fn() {},
+  effect: effect,
+  data: {}
+};
+
+var hash$1 = {
+  left: 'right',
+  right: 'left',
+  bottom: 'top',
+  top: 'bottom'
+};
+function getOppositePlacement(placement) {
+  return placement.replace(/left|right|bottom|top/g, function (matched) {
+    return hash$1[matched];
+  });
+}
+
+var hash = {
+  start: 'end',
+  end: 'start'
+};
+function getOppositeVariationPlacement(placement) {
+  return placement.replace(/start|end/g, function (matched) {
+    return hash[matched];
+  });
+}
+
+function getWindowScroll(node) {
+  var win = getWindow$1(node);
+  var scrollLeft = win.pageXOffset;
+  var scrollTop = win.pageYOffset;
+  return {
+    scrollLeft: scrollLeft,
+    scrollTop: scrollTop
+  };
+}
+
+function getWindowScrollBarX(element) {
+  // If <html> has a CSS width greater than the viewport, then this will be
+  // incorrect for RTL.
+  // Popper 1 is broken in this case and never had a bug report so let's assume
+  // it's not an issue. I don't think anyone ever specifies width on <html>
+  // anyway.
+  // Browsers where the left scrollbar doesn't cause an issue report `0` for
+  // this (e.g. Edge 2019, IE11, Safari)
+  return getBoundingClientRect$1(getDocumentElement(element)).left + getWindowScroll(element).scrollLeft;
+}
+
+function getViewportRect(element, strategy) {
+  var win = getWindow$1(element);
+  var html = getDocumentElement(element);
+  var visualViewport = win.visualViewport;
+  var width = html.clientWidth;
+  var height = html.clientHeight;
+  var x = 0;
+  var y = 0;
+  if (visualViewport) {
+    width = visualViewport.width;
+    height = visualViewport.height;
+    var layoutViewport = isLayoutViewport();
+    if (layoutViewport || !layoutViewport && strategy === 'fixed') {
+      x = visualViewport.offsetLeft;
+      y = visualViewport.offsetTop;
+    }
+  }
+  return {
+    width: width,
+    height: height,
+    x: x + getWindowScrollBarX(element),
+    y: y
+  };
+}
+
+// of the `<html>` and `<body>` rect bounds if horizontally scrollable
+
+function getDocumentRect(element) {
+  var _element$ownerDocumen;
+  var html = getDocumentElement(element);
+  var winScroll = getWindowScroll(element);
+  var body = (_element$ownerDocumen = element.ownerDocument) == null ? void 0 : _element$ownerDocumen.body;
+  var width = max$2(html.scrollWidth, html.clientWidth, body ? body.scrollWidth : 0, body ? body.clientWidth : 0);
+  var height = max$2(html.scrollHeight, html.clientHeight, body ? body.scrollHeight : 0, body ? body.clientHeight : 0);
+  var x = -winScroll.scrollLeft + getWindowScrollBarX(element);
+  var y = -winScroll.scrollTop;
+  if (getComputedStyle$1(body || html).direction === 'rtl') {
+    x += max$2(html.clientWidth, body ? body.clientWidth : 0) - width;
+  }
+  return {
+    width: width,
+    height: height,
+    x: x,
+    y: y
+  };
+}
+
+function isScrollParent(element) {
+  // Firefox wants us to check `-x` and `-y` variations as well
+  var _getComputedStyle = getComputedStyle$1(element),
+    overflow = _getComputedStyle.overflow,
+    overflowX = _getComputedStyle.overflowX,
+    overflowY = _getComputedStyle.overflowY;
+  return /auto|scroll|overlay|hidden/.test(overflow + overflowY + overflowX);
+}
+
+function getScrollParent(node) {
+  if (['html', 'body', '#document'].indexOf(getNodeName(node)) >= 0) {
+    // $FlowFixMe[incompatible-return]: assume body is always available
+    return node.ownerDocument.body;
+  }
+  if (isHTMLElement$2(node) && isScrollParent(node)) {
+    return node;
+  }
+  return getScrollParent(getParentNode(node));
+}
+
+/*
+given a DOM element, return the list of all scroll parents, up the list of ancesors
+until we get to the top window object. This list is what we attach scroll listeners
+to, because if any of these parent elements scroll, we'll need to re-calculate the
+reference element's position.
+*/
+
+function listScrollParents(element, list) {
+  var _element$ownerDocumen;
+  if (list === void 0) {
+    list = [];
+  }
+  var scrollParent = getScrollParent(element);
+  var isBody = scrollParent === ((_element$ownerDocumen = element.ownerDocument) == null ? void 0 : _element$ownerDocumen.body);
+  var win = getWindow$1(scrollParent);
+  var target = isBody ? [win].concat(win.visualViewport || [], isScrollParent(scrollParent) ? scrollParent : []) : scrollParent;
+  var updatedList = list.concat(target);
+  return isBody ? updatedList :
+  // $FlowFixMe[incompatible-call]: isBody tells us target will be an HTMLElement here
+  updatedList.concat(listScrollParents(getParentNode(target)));
+}
+
+function rectToClientRect(rect) {
+  return Object.assign({}, rect, {
+    left: rect.x,
+    top: rect.y,
+    right: rect.x + rect.width,
+    bottom: rect.y + rect.height
+  });
+}
+
+function getInnerBoundingClientRect(element, strategy) {
+  var rect = getBoundingClientRect$1(element, false, strategy === 'fixed');
+  rect.top = rect.top + element.clientTop;
+  rect.left = rect.left + element.clientLeft;
+  rect.bottom = rect.top + element.clientHeight;
+  rect.right = rect.left + element.clientWidth;
+  rect.width = element.clientWidth;
+  rect.height = element.clientHeight;
+  rect.x = rect.left;
+  rect.y = rect.top;
+  return rect;
+}
+function getClientRectFromMixedType(element, clippingParent, strategy) {
+  return clippingParent === viewport ? rectToClientRect(getViewportRect(element, strategy)) : isElement$2(clippingParent) ? getInnerBoundingClientRect(clippingParent, strategy) : rectToClientRect(getDocumentRect(getDocumentElement(element)));
+} // A "clipping parent" is an overflowable container with the characteristic of
+// clipping (or hiding) overflowing elements with a position different from
+// `initial`
+
+function getClippingParents(element) {
+  var clippingParents = listScrollParents(getParentNode(element));
+  var canEscapeClipping = ['absolute', 'fixed'].indexOf(getComputedStyle$1(element).position) >= 0;
+  var clipperElement = canEscapeClipping && isHTMLElement$2(element) ? getOffsetParent(element) : element;
+  if (!isElement$2(clipperElement)) {
+    return [];
+  } // $FlowFixMe[incompatible-return]: https://github.com/facebook/flow/issues/1414
+
+  return clippingParents.filter(function (clippingParent) {
+    return isElement$2(clippingParent) && contains$3(clippingParent, clipperElement) && getNodeName(clippingParent) !== 'body';
+  });
+} // Gets the maximum area that the element is visible in due to any number of
+// clipping parents
+
+function getClippingRect(element, boundary, rootBoundary, strategy) {
+  var mainClippingParents = boundary === 'clippingParents' ? getClippingParents(element) : [].concat(boundary);
+  var clippingParents = [].concat(mainClippingParents, [rootBoundary]);
+  var firstClippingParent = clippingParents[0];
+  var clippingRect = clippingParents.reduce(function (accRect, clippingParent) {
+    var rect = getClientRectFromMixedType(element, clippingParent, strategy);
+    accRect.top = max$2(rect.top, accRect.top);
+    accRect.right = min$1(rect.right, accRect.right);
+    accRect.bottom = min$1(rect.bottom, accRect.bottom);
+    accRect.left = max$2(rect.left, accRect.left);
+    return accRect;
+  }, getClientRectFromMixedType(element, firstClippingParent, strategy));
+  clippingRect.width = clippingRect.right - clippingRect.left;
+  clippingRect.height = clippingRect.bottom - clippingRect.top;
+  clippingRect.x = clippingRect.left;
+  clippingRect.y = clippingRect.top;
+  return clippingRect;
+}
+
+function computeOffsets(_ref) {
+  var reference = _ref.reference,
+    element = _ref.element,
+    placement = _ref.placement;
+  var basePlacement = placement ? getBasePlacement(placement) : null;
+  var variation = placement ? getVariation(placement) : null;
+  var commonX = reference.x + reference.width / 2 - element.width / 2;
+  var commonY = reference.y + reference.height / 2 - element.height / 2;
+  var offsets;
+  switch (basePlacement) {
+    case top$1:
+      offsets = {
+        x: commonX,
+        y: reference.y - element.height
+      };
+      break;
+    case bottom$1:
+      offsets = {
+        x: commonX,
+        y: reference.y + reference.height
+      };
+      break;
+    case right$1:
+      offsets = {
+        x: reference.x + reference.width,
+        y: commonY
+      };
+      break;
+    case left$1:
+      offsets = {
+        x: reference.x - element.width,
+        y: commonY
+      };
+      break;
+    default:
+      offsets = {
+        x: reference.x,
+        y: reference.y
+      };
+  }
+  var mainAxis = basePlacement ? getMainAxisFromPlacement(basePlacement) : null;
+  if (mainAxis != null) {
+    var len = mainAxis === 'y' ? 'height' : 'width';
+    switch (variation) {
+      case start:
+        offsets[mainAxis] = offsets[mainAxis] - (reference[len] / 2 - element[len] / 2);
+        break;
+      case end:
+        offsets[mainAxis] = offsets[mainAxis] + (reference[len] / 2 - element[len] / 2);
+        break;
+    }
+  }
+  return offsets;
+}
+
+function detectOverflow(state, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _options = options,
+    _options$placement = _options.placement,
+    placement = _options$placement === void 0 ? state.placement : _options$placement,
+    _options$strategy = _options.strategy,
+    strategy = _options$strategy === void 0 ? state.strategy : _options$strategy,
+    _options$boundary = _options.boundary,
+    boundary = _options$boundary === void 0 ? clippingParents : _options$boundary,
+    _options$rootBoundary = _options.rootBoundary,
+    rootBoundary = _options$rootBoundary === void 0 ? viewport : _options$rootBoundary,
+    _options$elementConte = _options.elementContext,
+    elementContext = _options$elementConte === void 0 ? popper : _options$elementConte,
+    _options$altBoundary = _options.altBoundary,
+    altBoundary = _options$altBoundary === void 0 ? false : _options$altBoundary,
+    _options$padding = _options.padding,
+    padding = _options$padding === void 0 ? 0 : _options$padding;
+  var paddingObject = mergePaddingObject(typeof padding !== 'number' ? padding : expandToHashMap(padding, basePlacements));
+  var altContext = elementContext === popper ? reference : popper;
+  var popperRect = state.rects.popper;
+  var element = state.elements[altBoundary ? altContext : elementContext];
+  var clippingClientRect = getClippingRect(isElement$2(element) ? element : element.contextElement || getDocumentElement(state.elements.popper), boundary, rootBoundary, strategy);
+  var referenceClientRect = getBoundingClientRect$1(state.elements.reference);
+  var popperOffsets = computeOffsets({
+    reference: referenceClientRect,
+    element: popperRect,
+    strategy: 'absolute',
+    placement: placement
+  });
+  var popperClientRect = rectToClientRect(Object.assign({}, popperRect, popperOffsets));
+  var elementClientRect = elementContext === popper ? popperClientRect : referenceClientRect; // positive = overflowing the clipping rect
+  // 0 or negative = within the clipping rect
+
+  var overflowOffsets = {
+    top: clippingClientRect.top - elementClientRect.top + paddingObject.top,
+    bottom: elementClientRect.bottom - clippingClientRect.bottom + paddingObject.bottom,
+    left: clippingClientRect.left - elementClientRect.left + paddingObject.left,
+    right: elementClientRect.right - clippingClientRect.right + paddingObject.right
+  };
+  var offsetData = state.modifiersData.offset; // Offsets can be applied only to the popper element
+
+  if (elementContext === popper && offsetData) {
+    var offset = offsetData[placement];
+    Object.keys(overflowOffsets).forEach(function (key) {
+      var multiply = [right$1, bottom$1].indexOf(key) >= 0 ? 1 : -1;
+      var axis = [top$1, bottom$1].indexOf(key) >= 0 ? 'y' : 'x';
+      overflowOffsets[key] += offset[axis] * multiply;
+    });
+  }
+  return overflowOffsets;
+}
+
+function computeAutoPlacement(state, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _options = options,
+    placement = _options.placement,
+    boundary = _options.boundary,
+    rootBoundary = _options.rootBoundary,
+    padding = _options.padding,
+    flipVariations = _options.flipVariations,
+    _options$allowedAutoP = _options.allowedAutoPlacements,
+    allowedAutoPlacements = _options$allowedAutoP === void 0 ? placements : _options$allowedAutoP;
+  var variation = getVariation(placement);
+  var placements$1 = variation ? flipVariations ? variationPlacements : variationPlacements.filter(function (placement) {
+    return getVariation(placement) === variation;
+  }) : basePlacements;
+  var allowedPlacements = placements$1.filter(function (placement) {
+    return allowedAutoPlacements.indexOf(placement) >= 0;
+  });
+  if (allowedPlacements.length === 0) {
+    allowedPlacements = placements$1;
+  } // $FlowFixMe[incompatible-type]: Flow seems to have problems with two array unions...
+
+  var overflows = allowedPlacements.reduce(function (acc, placement) {
+    acc[placement] = detectOverflow(state, {
+      placement: placement,
+      boundary: boundary,
+      rootBoundary: rootBoundary,
+      padding: padding
+    })[getBasePlacement(placement)];
+    return acc;
+  }, {});
+  return Object.keys(overflows).sort(function (a, b) {
+    return overflows[a] - overflows[b];
+  });
+}
+
+function getExpandedFallbackPlacements(placement) {
+  if (getBasePlacement(placement) === auto) {
+    return [];
+  }
+  var oppositePlacement = getOppositePlacement(placement);
+  return [getOppositeVariationPlacement(placement), oppositePlacement, getOppositeVariationPlacement(oppositePlacement)];
+}
+function flip$1(_ref) {
+  var state = _ref.state,
+    options = _ref.options,
+    name = _ref.name;
+  if (state.modifiersData[name]._skip) {
+    return;
+  }
+  var _options$mainAxis = options.mainAxis,
+    checkMainAxis = _options$mainAxis === void 0 ? true : _options$mainAxis,
+    _options$altAxis = options.altAxis,
+    checkAltAxis = _options$altAxis === void 0 ? true : _options$altAxis,
+    specifiedFallbackPlacements = options.fallbackPlacements,
+    padding = options.padding,
+    boundary = options.boundary,
+    rootBoundary = options.rootBoundary,
+    altBoundary = options.altBoundary,
+    _options$flipVariatio = options.flipVariations,
+    flipVariations = _options$flipVariatio === void 0 ? true : _options$flipVariatio,
+    allowedAutoPlacements = options.allowedAutoPlacements;
+  var preferredPlacement = state.options.placement;
+  var basePlacement = getBasePlacement(preferredPlacement);
+  var isBasePlacement = basePlacement === preferredPlacement;
+  var fallbackPlacements = specifiedFallbackPlacements || (isBasePlacement || !flipVariations ? [getOppositePlacement(preferredPlacement)] : getExpandedFallbackPlacements(preferredPlacement));
+  var placements = [preferredPlacement].concat(fallbackPlacements).reduce(function (acc, placement) {
+    return acc.concat(getBasePlacement(placement) === auto ? computeAutoPlacement(state, {
+      placement: placement,
+      boundary: boundary,
+      rootBoundary: rootBoundary,
+      padding: padding,
+      flipVariations: flipVariations,
+      allowedAutoPlacements: allowedAutoPlacements
+    }) : placement);
+  }, []);
+  var referenceRect = state.rects.reference;
+  var popperRect = state.rects.popper;
+  var checksMap = new Map();
+  var makeFallbackChecks = true;
+  var firstFittingPlacement = placements[0];
+  for (var i = 0; i < placements.length; i++) {
+    var placement = placements[i];
+    var _basePlacement = getBasePlacement(placement);
+    var isStartVariation = getVariation(placement) === start;
+    var isVertical = [top$1, bottom$1].indexOf(_basePlacement) >= 0;
+    var len = isVertical ? 'width' : 'height';
+    var overflow = detectOverflow(state, {
+      placement: placement,
+      boundary: boundary,
+      rootBoundary: rootBoundary,
+      altBoundary: altBoundary,
+      padding: padding
+    });
+    var mainVariationSide = isVertical ? isStartVariation ? right$1 : left$1 : isStartVariation ? bottom$1 : top$1;
+    if (referenceRect[len] > popperRect[len]) {
+      mainVariationSide = getOppositePlacement(mainVariationSide);
+    }
+    var altVariationSide = getOppositePlacement(mainVariationSide);
+    var checks = [];
+    if (checkMainAxis) {
+      checks.push(overflow[_basePlacement] <= 0);
+    }
+    if (checkAltAxis) {
+      checks.push(overflow[mainVariationSide] <= 0, overflow[altVariationSide] <= 0);
+    }
+    if (checks.every(function (check) {
+      return check;
+    })) {
+      firstFittingPlacement = placement;
+      makeFallbackChecks = false;
+      break;
+    }
+    checksMap.set(placement, checks);
+  }
+  if (makeFallbackChecks) {
+    // `2` may be desired in some cases – research later
+    var numberOfChecks = flipVariations ? 3 : 1;
+    var _loop = function _loop(_i) {
+      var fittingPlacement = placements.find(function (placement) {
+        var checks = checksMap.get(placement);
+        if (checks) {
+          return checks.slice(0, _i).every(function (check) {
+            return check;
+          });
+        }
+      });
+      if (fittingPlacement) {
+        firstFittingPlacement = fittingPlacement;
+        return "break";
+      }
+    };
+    for (var _i = numberOfChecks; _i > 0; _i--) {
+      var _ret = _loop(_i);
+      if (_ret === "break") break;
+    }
+  }
+  if (state.placement !== firstFittingPlacement) {
+    state.modifiersData[name]._skip = true;
+    state.placement = firstFittingPlacement;
+    state.reset = true;
+  }
+} // eslint-disable-next-line import/no-unused-modules
+
+var flip$2 = {
+  name: 'flip',
+  enabled: true,
+  phase: 'main',
+  fn: flip$1,
+  requiresIfExists: ['offset'],
+  data: {
+    _skip: false
+  }
+};
+
+function getSideOffsets(overflow, rect, preventedOffsets) {
+  if (preventedOffsets === void 0) {
+    preventedOffsets = {
+      x: 0,
+      y: 0
+    };
+  }
+  return {
+    top: overflow.top - rect.height - preventedOffsets.y,
+    right: overflow.right - rect.width + preventedOffsets.x,
+    bottom: overflow.bottom - rect.height + preventedOffsets.y,
+    left: overflow.left - rect.width - preventedOffsets.x
+  };
+}
+function isAnySideFullyClipped(overflow) {
+  return [top$1, right$1, bottom$1, left$1].some(function (side) {
+    return overflow[side] >= 0;
+  });
+}
+function hide(_ref) {
+  var state = _ref.state,
+    name = _ref.name;
+  var referenceRect = state.rects.reference;
+  var popperRect = state.rects.popper;
+  var preventedOffsets = state.modifiersData.preventOverflow;
+  var referenceOverflow = detectOverflow(state, {
+    elementContext: 'reference'
+  });
+  var popperAltOverflow = detectOverflow(state, {
+    altBoundary: true
+  });
+  var referenceClippingOffsets = getSideOffsets(referenceOverflow, referenceRect);
+  var popperEscapeOffsets = getSideOffsets(popperAltOverflow, popperRect, preventedOffsets);
+  var isReferenceHidden = isAnySideFullyClipped(referenceClippingOffsets);
+  var hasPopperEscaped = isAnySideFullyClipped(popperEscapeOffsets);
+  state.modifiersData[name] = {
+    referenceClippingOffsets: referenceClippingOffsets,
+    popperEscapeOffsets: popperEscapeOffsets,
+    isReferenceHidden: isReferenceHidden,
+    hasPopperEscaped: hasPopperEscaped
+  };
+  state.attributes.popper = Object.assign({}, state.attributes.popper, {
+    'data-popper-reference-hidden': isReferenceHidden,
+    'data-popper-escaped': hasPopperEscaped
+  });
+} // eslint-disable-next-line import/no-unused-modules
+
+var hide$1 = {
+  name: 'hide',
+  enabled: true,
+  phase: 'main',
+  requiresIfExists: ['preventOverflow'],
+  fn: hide
+};
+
+function distanceAndSkiddingToXY(placement, rects, offset) {
+  var basePlacement = getBasePlacement(placement);
+  var invertDistance = [left$1, top$1].indexOf(basePlacement) >= 0 ? -1 : 1;
+  var _ref = typeof offset === 'function' ? offset(Object.assign({}, rects, {
+      placement: placement
+    })) : offset,
+    skidding = _ref[0],
+    distance = _ref[1];
+  skidding = skidding || 0;
+  distance = (distance || 0) * invertDistance;
+  return [left$1, right$1].indexOf(basePlacement) >= 0 ? {
+    x: distance,
+    y: skidding
+  } : {
+    x: skidding,
+    y: distance
+  };
+}
+function offset$1(_ref2) {
+  var state = _ref2.state,
+    options = _ref2.options,
+    name = _ref2.name;
+  var _options$offset = options.offset,
+    offset = _options$offset === void 0 ? [0, 0] : _options$offset;
+  var data = placements.reduce(function (acc, placement) {
+    acc[placement] = distanceAndSkiddingToXY(placement, state.rects, offset);
+    return acc;
+  }, {});
+  var _data$state$placement = data[state.placement],
+    x = _data$state$placement.x,
+    y = _data$state$placement.y;
+  if (state.modifiersData.popperOffsets != null) {
+    state.modifiersData.popperOffsets.x += x;
+    state.modifiersData.popperOffsets.y += y;
+  }
+  state.modifiersData[name] = data;
+} // eslint-disable-next-line import/no-unused-modules
+
+var offset$2 = {
+  name: 'offset',
+  enabled: true,
+  phase: 'main',
+  requires: ['popperOffsets'],
+  fn: offset$1
+};
+
+function popperOffsets(_ref) {
+  var state = _ref.state,
+    name = _ref.name;
+  // Offsets are the actual position the popper needs to have to be
+  // properly positioned near its reference element
+  // This is the most basic placement, and will be adjusted by
+  // the modifiers in the next step
+  state.modifiersData[name] = computeOffsets({
+    reference: state.rects.reference,
+    element: state.rects.popper,
+    strategy: 'absolute',
+    placement: state.placement
+  });
+} // eslint-disable-next-line import/no-unused-modules
+
+var popperOffsets$1 = {
+  name: 'popperOffsets',
+  enabled: true,
+  phase: 'read',
+  fn: popperOffsets,
+  data: {}
+};
+
+function getAltAxis(axis) {
+  return axis === 'x' ? 'y' : 'x';
+}
+
+function preventOverflow(_ref) {
+  var state = _ref.state,
+    options = _ref.options,
+    name = _ref.name;
+  var _options$mainAxis = options.mainAxis,
+    checkMainAxis = _options$mainAxis === void 0 ? true : _options$mainAxis,
+    _options$altAxis = options.altAxis,
+    checkAltAxis = _options$altAxis === void 0 ? false : _options$altAxis,
+    boundary = options.boundary,
+    rootBoundary = options.rootBoundary,
+    altBoundary = options.altBoundary,
+    padding = options.padding,
+    _options$tether = options.tether,
+    tether = _options$tether === void 0 ? true : _options$tether,
+    _options$tetherOffset = options.tetherOffset,
+    tetherOffset = _options$tetherOffset === void 0 ? 0 : _options$tetherOffset;
+  var overflow = detectOverflow(state, {
+    boundary: boundary,
+    rootBoundary: rootBoundary,
+    padding: padding,
+    altBoundary: altBoundary
+  });
+  var basePlacement = getBasePlacement(state.placement);
+  var variation = getVariation(state.placement);
+  var isBasePlacement = !variation;
+  var mainAxis = getMainAxisFromPlacement(basePlacement);
+  var altAxis = getAltAxis(mainAxis);
+  var popperOffsets = state.modifiersData.popperOffsets;
+  var referenceRect = state.rects.reference;
+  var popperRect = state.rects.popper;
+  var tetherOffsetValue = typeof tetherOffset === 'function' ? tetherOffset(Object.assign({}, state.rects, {
+    placement: state.placement
+  })) : tetherOffset;
+  var normalizedTetherOffsetValue = typeof tetherOffsetValue === 'number' ? {
+    mainAxis: tetherOffsetValue,
+    altAxis: tetherOffsetValue
+  } : Object.assign({
+    mainAxis: 0,
+    altAxis: 0
+  }, tetherOffsetValue);
+  var offsetModifierState = state.modifiersData.offset ? state.modifiersData.offset[state.placement] : null;
+  var data = {
+    x: 0,
+    y: 0
+  };
+  if (!popperOffsets) {
+    return;
+  }
+  if (checkMainAxis) {
+    var _offsetModifierState$;
+    var mainSide = mainAxis === 'y' ? top$1 : left$1;
+    var altSide = mainAxis === 'y' ? bottom$1 : right$1;
+    var len = mainAxis === 'y' ? 'height' : 'width';
+    var offset = popperOffsets[mainAxis];
+    var min = offset + overflow[mainSide];
+    var max = offset - overflow[altSide];
+    var additive = tether ? -popperRect[len] / 2 : 0;
+    var minLen = variation === start ? referenceRect[len] : popperRect[len];
+    var maxLen = variation === start ? -popperRect[len] : -referenceRect[len]; // We need to include the arrow in the calculation so the arrow doesn't go
+    // outside the reference bounds
+
+    var arrowElement = state.elements.arrow;
+    var arrowRect = tether && arrowElement ? getLayoutRect(arrowElement) : {
+      width: 0,
+      height: 0
+    };
+    var arrowPaddingObject = state.modifiersData['arrow#persistent'] ? state.modifiersData['arrow#persistent'].padding : getFreshSideObject();
+    var arrowPaddingMin = arrowPaddingObject[mainSide];
+    var arrowPaddingMax = arrowPaddingObject[altSide]; // If the reference length is smaller than the arrow length, we don't want
+    // to include its full size in the calculation. If the reference is small
+    // and near the edge of a boundary, the popper can overflow even if the
+    // reference is not overflowing as well (e.g. virtual elements with no
+    // width or height)
+
+    var arrowLen = within(0, referenceRect[len], arrowRect[len]);
+    var minOffset = isBasePlacement ? referenceRect[len] / 2 - additive - arrowLen - arrowPaddingMin - normalizedTetherOffsetValue.mainAxis : minLen - arrowLen - arrowPaddingMin - normalizedTetherOffsetValue.mainAxis;
+    var maxOffset = isBasePlacement ? -referenceRect[len] / 2 + additive + arrowLen + arrowPaddingMax + normalizedTetherOffsetValue.mainAxis : maxLen + arrowLen + arrowPaddingMax + normalizedTetherOffsetValue.mainAxis;
+    var arrowOffsetParent = state.elements.arrow && getOffsetParent(state.elements.arrow);
+    var clientOffset = arrowOffsetParent ? mainAxis === 'y' ? arrowOffsetParent.clientTop || 0 : arrowOffsetParent.clientLeft || 0 : 0;
+    var offsetModifierValue = (_offsetModifierState$ = offsetModifierState == null ? void 0 : offsetModifierState[mainAxis]) != null ? _offsetModifierState$ : 0;
+    var tetherMin = offset + minOffset - offsetModifierValue - clientOffset;
+    var tetherMax = offset + maxOffset - offsetModifierValue;
+    var preventedOffset = within(tether ? min$1(min, tetherMin) : min, offset, tether ? max$2(max, tetherMax) : max);
+    popperOffsets[mainAxis] = preventedOffset;
+    data[mainAxis] = preventedOffset - offset;
+  }
+  if (checkAltAxis) {
+    var _offsetModifierState$2;
+    var _mainSide = mainAxis === 'x' ? top$1 : left$1;
+    var _altSide = mainAxis === 'x' ? bottom$1 : right$1;
+    var _offset = popperOffsets[altAxis];
+    var _len = altAxis === 'y' ? 'height' : 'width';
+    var _min = _offset + overflow[_mainSide];
+    var _max = _offset - overflow[_altSide];
+    var isOriginSide = [top$1, left$1].indexOf(basePlacement) !== -1;
+    var _offsetModifierValue = (_offsetModifierState$2 = offsetModifierState == null ? void 0 : offsetModifierState[altAxis]) != null ? _offsetModifierState$2 : 0;
+    var _tetherMin = isOriginSide ? _min : _offset - referenceRect[_len] - popperRect[_len] - _offsetModifierValue + normalizedTetherOffsetValue.altAxis;
+    var _tetherMax = isOriginSide ? _offset + referenceRect[_len] + popperRect[_len] - _offsetModifierValue - normalizedTetherOffsetValue.altAxis : _max;
+    var _preventedOffset = tether && isOriginSide ? withinMaxClamp(_tetherMin, _offset, _tetherMax) : within(tether ? _tetherMin : _min, _offset, tether ? _tetherMax : _max);
+    popperOffsets[altAxis] = _preventedOffset;
+    data[altAxis] = _preventedOffset - _offset;
+  }
+  state.modifiersData[name] = data;
+} // eslint-disable-next-line import/no-unused-modules
+
+var preventOverflow$1 = {
+  name: 'preventOverflow',
+  enabled: true,
+  phase: 'main',
+  fn: preventOverflow,
+  requiresIfExists: ['offset']
+};
+
+function getHTMLElementScroll(element) {
+  return {
+    scrollLeft: element.scrollLeft,
+    scrollTop: element.scrollTop
+  };
+}
+
+function getNodeScroll(node) {
+  if (node === getWindow$1(node) || !isHTMLElement$2(node)) {
+    return getWindowScroll(node);
+  } else {
+    return getHTMLElementScroll(node);
+  }
+}
+
+function isElementScaled(element) {
+  var rect = element.getBoundingClientRect();
+  var scaleX = round$2(rect.width) / element.offsetWidth || 1;
+  var scaleY = round$2(rect.height) / element.offsetHeight || 1;
+  return scaleX !== 1 || scaleY !== 1;
+} // Returns the composite rect of an element relative to its offsetParent.
+// Composite means it takes into account transforms as well as layout.
+
+function getCompositeRect(elementOrVirtualElement, offsetParent, isFixed) {
+  if (isFixed === void 0) {
+    isFixed = false;
+  }
+  var isOffsetParentAnElement = isHTMLElement$2(offsetParent);
+  var offsetParentIsScaled = isHTMLElement$2(offsetParent) && isElementScaled(offsetParent);
+  var documentElement = getDocumentElement(offsetParent);
+  var rect = getBoundingClientRect$1(elementOrVirtualElement, offsetParentIsScaled, isFixed);
+  var scroll = {
+    scrollLeft: 0,
+    scrollTop: 0
+  };
+  var offsets = {
+    x: 0,
+    y: 0
+  };
+  if (isOffsetParentAnElement || !isOffsetParentAnElement && !isFixed) {
+    if (getNodeName(offsetParent) !== 'body' ||
+    // https://github.com/popperjs/popper-core/issues/1078
+    isScrollParent(documentElement)) {
+      scroll = getNodeScroll(offsetParent);
+    }
+    if (isHTMLElement$2(offsetParent)) {
+      offsets = getBoundingClientRect$1(offsetParent, true);
+      offsets.x += offsetParent.clientLeft;
+      offsets.y += offsetParent.clientTop;
+    } else if (documentElement) {
+      offsets.x = getWindowScrollBarX(documentElement);
+    }
+  }
+  return {
+    x: rect.left + scroll.scrollLeft - offsets.x,
+    y: rect.top + scroll.scrollTop - offsets.y,
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+function order$1(modifiers) {
+  var map = new Map();
+  var visited = new Set();
+  var result = [];
+  modifiers.forEach(function (modifier) {
+    map.set(modifier.name, modifier);
+  }); // On visiting object, check for its dependencies and visit them recursively
+
+  function sort(modifier) {
+    visited.add(modifier.name);
+    var requires = [].concat(modifier.requires || [], modifier.requiresIfExists || []);
+    requires.forEach(function (dep) {
+      if (!visited.has(dep)) {
+        var depModifier = map.get(dep);
+        if (depModifier) {
+          sort(depModifier);
+        }
+      }
+    });
+    result.push(modifier);
+  }
+  modifiers.forEach(function (modifier) {
+    if (!visited.has(modifier.name)) {
+      // check for visited object
+      sort(modifier);
+    }
+  });
+  return result;
+}
+function orderModifiers(modifiers) {
+  // order based on dependencies
+  var orderedModifiers = order$1(modifiers); // order based on phase
+
+  return modifierPhases.reduce(function (acc, phase) {
+    return acc.concat(orderedModifiers.filter(function (modifier) {
+      return modifier.phase === phase;
+    }));
+  }, []);
+}
+
+function debounce$1(fn) {
+  var pending;
+  return function () {
+    if (!pending) {
+      pending = new Promise(function (resolve) {
+        Promise.resolve().then(function () {
+          pending = undefined;
+          resolve(fn());
+        });
+      });
+    }
+    return pending;
+  };
+}
+
+function mergeByName(modifiers) {
+  var merged = modifiers.reduce(function (merged, current) {
+    var existing = merged[current.name];
+    merged[current.name] = existing ? Object.assign({}, existing, current, {
+      options: Object.assign({}, existing.options, current.options),
+      data: Object.assign({}, existing.data, current.data)
+    }) : current;
+    return merged;
+  }, {}); // IE11 does not support Object.values
+
+  return Object.keys(merged).map(function (key) {
+    return merged[key];
+  });
+}
+
+var DEFAULT_OPTIONS = {
+  placement: 'bottom',
+  modifiers: [],
+  strategy: 'absolute'
+};
+function areValidElements() {
+  for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+    args[_key] = arguments[_key];
+  }
+  return !args.some(function (element) {
+    return !(element && typeof element.getBoundingClientRect === 'function');
+  });
+}
+function popperGenerator(generatorOptions) {
+  if (generatorOptions === void 0) {
+    generatorOptions = {};
+  }
+  var _generatorOptions = generatorOptions,
+    _generatorOptions$def = _generatorOptions.defaultModifiers,
+    defaultModifiers = _generatorOptions$def === void 0 ? [] : _generatorOptions$def,
+    _generatorOptions$def2 = _generatorOptions.defaultOptions,
+    defaultOptions = _generatorOptions$def2 === void 0 ? DEFAULT_OPTIONS : _generatorOptions$def2;
+  return function createPopper(reference, popper, options) {
+    if (options === void 0) {
+      options = defaultOptions;
+    }
+    var state = {
+      placement: 'bottom',
+      orderedModifiers: [],
+      options: Object.assign({}, DEFAULT_OPTIONS, defaultOptions),
+      modifiersData: {},
+      elements: {
+        reference: reference,
+        popper: popper
+      },
+      attributes: {},
+      styles: {}
+    };
+    var effectCleanupFns = [];
+    var isDestroyed = false;
+    var instance = {
+      state: state,
+      setOptions: function setOptions(setOptionsAction) {
+        var options = typeof setOptionsAction === 'function' ? setOptionsAction(state.options) : setOptionsAction;
+        cleanupModifierEffects();
+        state.options = Object.assign({}, defaultOptions, state.options, options);
+        state.scrollParents = {
+          reference: isElement$2(reference) ? listScrollParents(reference) : reference.contextElement ? listScrollParents(reference.contextElement) : [],
+          popper: listScrollParents(popper)
+        }; // Orders the modifiers based on their dependencies and `phase`
+        // properties
+
+        var orderedModifiers = orderModifiers(mergeByName([].concat(defaultModifiers, state.options.modifiers))); // Strip out disabled modifiers
+
+        state.orderedModifiers = orderedModifiers.filter(function (m) {
+          return m.enabled;
+        });
+        runModifierEffects();
+        return instance.update();
+      },
+      // Sync update – it will always be executed, even if not necessary. This
+      // is useful for low frequency updates where sync behavior simplifies the
+      // logic.
+      // For high frequency updates (e.g. `resize` and `scroll` events), always
+      // prefer the async Popper#update method
+      forceUpdate: function forceUpdate() {
+        if (isDestroyed) {
+          return;
+        }
+        var _state$elements = state.elements,
+          reference = _state$elements.reference,
+          popper = _state$elements.popper; // Don't proceed if `reference` or `popper` are not valid elements
+        // anymore
+
+        if (!areValidElements(reference, popper)) {
+          return;
+        } // Store the reference and popper rects to be read by modifiers
+
+        state.rects = {
+          reference: getCompositeRect(reference, getOffsetParent(popper), state.options.strategy === 'fixed'),
+          popper: getLayoutRect(popper)
+        }; // Modifiers have the ability to reset the current update cycle. The
+        // most common use case for this is the `flip` modifier changing the
+        // placement, which then needs to re-run all the modifiers, because the
+        // logic was previously ran for the previous placement and is therefore
+        // stale/incorrect
+
+        state.reset = false;
+        state.placement = state.options.placement; // On each update cycle, the `modifiersData` property for each modifier
+        // is filled with the initial data specified by the modifier. This means
+        // it doesn't persist and is fresh on each update.
+        // To ensure persistent data, use `${name}#persistent`
+
+        state.orderedModifiers.forEach(function (modifier) {
+          return state.modifiersData[modifier.name] = Object.assign({}, modifier.data);
+        });
+        for (var index = 0; index < state.orderedModifiers.length; index++) {
+          if (state.reset === true) {
+            state.reset = false;
+            index = -1;
+            continue;
+          }
+          var _state$orderedModifie = state.orderedModifiers[index],
+            fn = _state$orderedModifie.fn,
+            _state$orderedModifie2 = _state$orderedModifie.options,
+            _options = _state$orderedModifie2 === void 0 ? {} : _state$orderedModifie2,
+            name = _state$orderedModifie.name;
+          if (typeof fn === 'function') {
+            state = fn({
+              state: state,
+              options: _options,
+              name: name,
+              instance: instance
+            }) || state;
+          }
+        }
+      },
+      // Async and optimistically optimized update – it will not be executed if
+      // not necessary (debounced to run at most once-per-tick)
+      update: debounce$1(function () {
+        return new Promise(function (resolve) {
+          instance.forceUpdate();
+          resolve(state);
+        });
+      }),
+      destroy: function destroy() {
+        cleanupModifierEffects();
+        isDestroyed = true;
+      }
+    };
+    if (!areValidElements(reference, popper)) {
+      return instance;
+    }
+    instance.setOptions(options).then(function (state) {
+      if (!isDestroyed && options.onFirstUpdate) {
+        options.onFirstUpdate(state);
+      }
+    }); // Modifiers have the ability to execute arbitrary code before the first
+    // update cycle runs. They will be executed in the same order as the update
+    // cycle. This is useful when a modifier adds some persistent data that
+    // other modifiers need to use, but the modifier is run after the dependent
+    // one.
+
+    function runModifierEffects() {
+      state.orderedModifiers.forEach(function (_ref) {
+        var name = _ref.name,
+          _ref$options = _ref.options,
+          options = _ref$options === void 0 ? {} : _ref$options,
+          effect = _ref.effect;
+        if (typeof effect === 'function') {
+          var cleanupFn = effect({
+            state: state,
+            name: name,
+            instance: instance,
+            options: options
+          });
+          var noopFn = function noopFn() {};
+          effectCleanupFns.push(cleanupFn || noopFn);
+        }
+      });
+    }
+    function cleanupModifierEffects() {
+      effectCleanupFns.forEach(function (fn) {
+        return fn();
+      });
+      effectCleanupFns = [];
+    }
+    return instance;
+  };
+}
+
+var defaultModifiers = [eventListeners, popperOffsets$1, computeStyles$1, applyStyles$1, offset$2, flip$2, preventOverflow$1, arrow$1, hide$1];
+var createPopper = /*#__PURE__*/popperGenerator({
+  defaultModifiers: defaultModifiers
+}); // eslint-disable-next-line import/no-unused-modules
+
+function getPopperUtilityClass(slot) {
+  return generateUtilityClass('MuiPopper', slot);
+}
+generateUtilityClasses('MuiPopper', ['root']);
+
+function flipPlacement(placement, direction) {
+  if (direction === 'ltr') {
+    return placement;
+  }
+  switch (placement) {
+    case 'bottom-end':
+      return 'bottom-start';
+    case 'bottom-start':
+      return 'bottom-end';
+    case 'top-end':
+      return 'top-start';
+    case 'top-start':
+      return 'top-end';
+    default:
+      return placement;
+  }
+}
+function resolveAnchorEl(anchorEl) {
+  return typeof anchorEl === 'function' ? anchorEl() : anchorEl;
+}
+function isHTMLElement$1(element) {
+  return element.nodeType !== undefined;
+}
+function isVirtualElement(element) {
+  return !isHTMLElement$1(element);
+}
+const useUtilityClasses$f = ownerState => {
+  const {
+    classes
+  } = ownerState;
+  const slots = {
+    root: ['root']
+  };
+  return composeClasses(slots, getPopperUtilityClass, classes);
+};
+const defaultPopperOptions = {};
+const PopperTooltip = /*#__PURE__*/reactExports.forwardRef(function PopperTooltip(props, forwardedRef) {
+  const {
+    anchorEl,
+    children,
+    direction,
+    disablePortal,
+    modifiers,
+    open,
+    placement: initialPlacement,
+    popperOptions,
+    popperRef: popperRefProp,
+    slotProps = {},
+    slots = {},
+    TransitionProps,
+    // @ts-ignore internal logic
+    ownerState: ownerStateProp,
+    // prevent from spreading to DOM, it can come from the parent component e.g. Select.
+    ...other
+  } = props;
+  const tooltipRef = reactExports.useRef(null);
+  const ownRef = useForkRef(tooltipRef, forwardedRef);
+  const popperRef = reactExports.useRef(null);
+  const handlePopperRef = useForkRef(popperRef, popperRefProp);
+  const handlePopperRefRef = reactExports.useRef(handlePopperRef);
+  useEnhancedEffect$1(() => {
+    handlePopperRefRef.current = handlePopperRef;
+  }, [handlePopperRef]);
+  reactExports.useImperativeHandle(popperRefProp, () => popperRef.current, []);
+  const rtlPlacement = flipPlacement(initialPlacement, direction);
+  /**
+   * placement initialized from prop but can change during lifetime if modifiers.flip.
+   * modifiers.flip is essentially a flip for controlled/uncontrolled behavior
+   */
+  const [placement, setPlacement] = reactExports.useState(rtlPlacement);
+  const [resolvedAnchorElement, setResolvedAnchorElement] = reactExports.useState(resolveAnchorEl(anchorEl));
+  reactExports.useEffect(() => {
+    if (popperRef.current) {
+      popperRef.current.forceUpdate();
+    }
+  });
+  reactExports.useEffect(() => {
+    if (anchorEl) {
+      setResolvedAnchorElement(resolveAnchorEl(anchorEl));
+    }
+  }, [anchorEl]);
+  useEnhancedEffect$1(() => {
+    if (!resolvedAnchorElement || !open) {
+      return undefined;
+    }
+    const handlePopperUpdate = data => {
+      setPlacement(data.placement);
+    };
+    if (process.env.NODE_ENV !== 'production') {
+      if (resolvedAnchorElement && isHTMLElement$1(resolvedAnchorElement) && resolvedAnchorElement.nodeType === 1) {
+        const box = resolvedAnchorElement.getBoundingClientRect();
+        if (isLayoutSupported() && box.top === 0 && box.left === 0 && box.right === 0 && box.bottom === 0) {
+          console.warn(['MUI: The `anchorEl` prop provided to the component is invalid.', 'The anchor element should be part of the document layout.', "Make sure the element is present in the document or that it's not display none."].join('\n'));
+        }
+      }
+    }
+    let popperModifiers = [{
+      name: 'preventOverflow',
+      options: {
+        altBoundary: disablePortal
+      }
+    }, {
+      name: 'flip',
+      options: {
+        altBoundary: disablePortal
+      }
+    }, {
+      name: 'onUpdate',
+      enabled: true,
+      phase: 'afterWrite',
+      fn: ({
+        state
+      }) => {
+        handlePopperUpdate(state);
+      }
+    }];
+    if (modifiers != null) {
+      popperModifiers = popperModifiers.concat(modifiers);
+    }
+    if (popperOptions && popperOptions.modifiers != null) {
+      popperModifiers = popperModifiers.concat(popperOptions.modifiers);
+    }
+    const popper = createPopper(resolvedAnchorElement, tooltipRef.current, {
+      placement: rtlPlacement,
+      ...popperOptions,
+      modifiers: popperModifiers
+    });
+    handlePopperRefRef.current(popper);
+    const popperElement = tooltipRef.current;
+    return () => {
+      // popper.destroy() clears all inline positioning via the applyStyles
+      // modifier cleanup, which causes the element to jump to its static
+      // position. Snapshot and restore only the positioning properties so the
+      // element stays in place during the destroy/recreate gap (prevents scroll
+      // jumps when a child focuses between the two).
+      // https://github.com/mui/mui-x/issues/21839
+      if (popperElement) {
+        const {
+          style
+        } = popperElement;
+        const position = style.position;
+        const top = style.top;
+        const left = style.left;
+        const transform = style.transform;
+        popper.destroy();
+        style.position = position;
+        style.top = top;
+        style.left = left;
+        style.transform = transform;
+      } else {
+        popper.destroy();
+      }
+      handlePopperRefRef.current(null);
+    };
+  }, [resolvedAnchorElement, disablePortal, modifiers, open, popperOptions, rtlPlacement]);
+  const childProps = {
+    placement: placement
+  };
+  if (TransitionProps !== null) {
+    childProps.TransitionProps = TransitionProps;
+  }
+  const classes = useUtilityClasses$f(props);
+  const Root = slots.root ?? 'div';
+  const rootProps = useSlotProps({
+    elementType: Root,
+    externalSlotProps: slotProps.root,
+    externalForwardedProps: other,
+    additionalProps: {
+      role: 'tooltip',
+      ref: ownRef
+    },
+    ownerState: props,
+    className: classes.root
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsx(Root, {
+    ...rootProps,
+    children: typeof children === 'function' ? children(childProps) : children
+  });
+});
+
+/**
+ * @ignore - internal component.
+ */
+const Popper$2 = /*#__PURE__*/reactExports.forwardRef(function Popper(props, forwardedRef) {
+  const {
+    anchorEl,
+    children,
+    container: containerProp,
+    direction = 'ltr',
+    disablePortal = false,
+    keepMounted = false,
+    modifiers,
+    open,
+    placement = 'bottom',
+    popperOptions = defaultPopperOptions,
+    popperRef,
+    style,
+    transition = false,
+    slotProps = {},
+    slots = {},
+    ...other
+  } = props;
+  const [exited, setExited] = reactExports.useState(true);
+  const handleEnter = () => {
+    setExited(false);
+  };
+  const handleExited = () => {
+    setExited(true);
+  };
+  if (!keepMounted && !open && (!transition || exited)) {
+    return null;
+  }
+
+  // If the container prop is provided, use that
+  // If the anchorEl prop is provided, use its parent body element as the container
+  // If neither are provided let the Modal take care of choosing the container
+  let container;
+  if (containerProp) {
+    container = containerProp;
+  } else if (anchorEl) {
+    const resolvedAnchorEl = resolveAnchorEl(anchorEl);
+    container = resolvedAnchorEl && isHTMLElement$1(resolvedAnchorEl) ? ownerDocument(resolvedAnchorEl).body : ownerDocument(null).body;
+  }
+  const display = !open && keepMounted && (!transition || exited) ? 'none' : undefined;
+  const transitionProps = transition ? {
+    in: open,
+    onEnter: handleEnter,
+    onExited: handleExited
+  } : undefined;
+  return /*#__PURE__*/jsxRuntimeExports.jsx(Portal$1, {
+    disablePortal: disablePortal,
+    container: container,
+    children: /*#__PURE__*/jsxRuntimeExports.jsx(PopperTooltip, {
+      anchorEl: anchorEl,
+      direction: direction,
+      disablePortal: disablePortal,
+      modifiers: modifiers,
+      ref: forwardedRef,
+      open: transition ? !exited : open,
+      placement: placement,
+      popperOptions: popperOptions,
+      popperRef: popperRef,
+      slotProps: slotProps,
+      slots: slots,
+      ...other,
+      style: {
+        // Prevents scroll issue, waiting for Popper.js to add this style once initiated.
+        position: 'fixed',
+        // Fix Popper.js display issue
+        top: 0,
+        left: 0,
+        display,
+        ...style
+      },
+      TransitionProps: transitionProps,
+      children: children
+    })
+  });
+});
+process.env.NODE_ENV !== "production" ? Popper$2.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * An HTML element, [virtualElement](https://popper.js.org/docs/v2/virtual-elements/),
+   * or a function that returns either.
+   * It's used to set the position of the popper.
+   * The return value will passed as the reference object of the Popper instance.
+   */
+  anchorEl: chainPropTypes(PropTypes.oneOfType([HTMLElementType, PropTypes.object, PropTypes.func]), props => {
+    if (props.open) {
+      const resolvedAnchorEl = resolveAnchorEl(props.anchorEl);
+      if (resolvedAnchorEl && isHTMLElement$1(resolvedAnchorEl) && resolvedAnchorEl.nodeType === 1) {
+        const box = resolvedAnchorEl.getBoundingClientRect();
+        if (process.env.NODE_ENV !== 'production') {
+          if (isLayoutSupported() && box.top === 0 && box.left === 0 && box.right === 0 && box.bottom === 0) {
+            return new Error(['MUI: The `anchorEl` prop provided to the component is invalid.', 'The anchor element should be part of the document layout.', "Make sure the element is present in the document or that it's not display none."].join('\n'));
+          }
+        }
+      } else if (!resolvedAnchorEl || typeof resolvedAnchorEl.getBoundingClientRect !== 'function' || isVirtualElement(resolvedAnchorEl) && resolvedAnchorEl.contextElement != null && resolvedAnchorEl.contextElement.nodeType !== 1) {
+        return new Error(['MUI: The `anchorEl` prop provided to the component is invalid.', 'It should be an HTML element instance or a virtualElement ', '(https://popper.js.org/docs/v2/virtual-elements/).'].join('\n'));
+      }
+    }
+    return null;
+  }),
+  /**
+   * Popper render function or node.
+   */
+  children: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.node, PropTypes.func]),
+  /**
+   * An HTML element or function that returns one.
+   * The `container` will have the portal children appended to it.
+   *
+   * You can also provide a callback, which is called in a React layout effect.
+   * This lets you set the container from a ref, and also makes server-side rendering possible.
+   *
+   * By default, it uses the body of the top-level document object,
+   * so it's simply `document.body` most of the time.
+   */
+  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
+  /**
+   * Direction of the text.
+   * @default 'ltr'
+   */
+  direction: PropTypes.oneOf(['ltr', 'rtl']),
+  /**
+   * The `children` will be under the DOM hierarchy of the parent component.
+   * @default false
+   */
+  disablePortal: PropTypes.bool,
+  /**
+   * Always keep the children in the DOM.
+   * This prop can be useful in SEO situation or
+   * when you want to maximize the responsiveness of the Popper.
+   * @default false
+   */
+  keepMounted: PropTypes.bool,
+  /**
+   * Popper.js is based on a "plugin-like" architecture,
+   * most of its features are fully encapsulated "modifiers".
+   *
+   * A modifier is a function that is called each time Popper.js needs to
+   * compute the position of the popper.
+   * For this reason, modifiers should be very performant to avoid bottlenecks.
+   * To learn how to create a modifier, [read the modifiers documentation](https://popper.js.org/docs/v2/modifiers/).
+   */
+  modifiers: PropTypes.arrayOf(PropTypes.shape({
+    data: PropTypes.object,
+    effect: PropTypes.func,
+    enabled: PropTypes.bool,
+    fn: PropTypes.func,
+    name: PropTypes.any,
+    options: PropTypes.object,
+    phase: PropTypes.oneOf(['afterMain', 'afterRead', 'afterWrite', 'beforeMain', 'beforeRead', 'beforeWrite', 'main', 'read', 'write']),
+    requires: PropTypes.arrayOf(PropTypes.string),
+    requiresIfExists: PropTypes.arrayOf(PropTypes.string)
+  })),
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool.isRequired,
+  /**
+   * Popper placement.
+   * @default 'bottom'
+   */
+  placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
+  /**
+   * Options provided to the [`Popper.js`](https://popper.js.org/docs/v2/constructors/#options) instance.
+   * @default {}
+   */
+  popperOptions: PropTypes.shape({
+    modifiers: PropTypes.array,
+    onFirstUpdate: PropTypes.func,
+    placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
+    strategy: PropTypes.oneOf(['absolute', 'fixed'])
+  }),
+  /**
+   * A ref that points to the used popper instance.
+   */
+  popperRef: refType$1,
+  /**
+   * The props used for each slot inside the Popper.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside the Popper.
+   * Either a string to use a HTML element or a component.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    root: PropTypes.elementType
+  }),
+  /**
+   * Help supporting a react-transition-group/Transition component.
+   * @default false
+   */
+  transition: PropTypes.bool
+} : void 0;
+var BasePopper = Popper$2;
+
+const PopperRoot = styled$1(BasePopper, {
+  name: 'MuiPopper',
+  slot: 'Root'
+})({});
+
+/**
+ *
+ * Demos:
+ *
+ * - [Autocomplete](https://mui.com/material-ui/react-autocomplete/)
+ * - [Menu](https://mui.com/material-ui/react-menu/)
+ * - [Popper](https://mui.com/material-ui/react-popper/)
+ *
+ * API:
+ *
+ * - [Popper API](https://mui.com/material-ui/api/popper/)
+ */
+const Popper = /*#__PURE__*/reactExports.forwardRef(function Popper(inProps, ref) {
+  const isRtl = useRtl();
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiPopper'
+  });
+  const {
+    anchorEl,
+    component,
+    container,
+    disablePortal,
+    keepMounted,
+    modifiers,
+    open,
+    placement,
+    popperOptions,
+    popperRef,
+    transition,
+    slots,
+    slotProps,
+    ...other
+  } = props;
+  const otherProps = {
+    anchorEl,
+    container,
+    disablePortal,
+    keepMounted,
+    modifiers,
+    open,
+    placement,
+    popperOptions,
+    popperRef,
+    transition,
+    ...other
+  };
+  return /*#__PURE__*/jsxRuntimeExports.jsx(PopperRoot, {
+    as: component,
+    direction: isRtl ? 'rtl' : 'ltr',
+    slots: slots,
+    slotProps: slotProps,
+    ...otherProps,
+    ref: ref
+  });
+});
+process.env.NODE_ENV !== "production" ? Popper.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * An HTML element, [virtualElement](https://popper.js.org/docs/v2/virtual-elements/),
+   * or a function that returns either.
+   * It's used to set the position of the popper.
+   * The return value will passed as the reference object of the Popper instance.
+   */
+  anchorEl: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.object, PropTypes.func]),
+  /**
+   * Popper render function or node.
+   */
+  children: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.node, PropTypes.func]),
+  /**
+   * The component used for the root node.
+   * Either a string to use a HTML element or a component.
+   */
+  component: PropTypes.elementType,
+  /**
+   * An HTML element or function that returns one.
+   * The `container` will have the portal children appended to it.
+   *
+   * You can also provide a callback, which is called in a React layout effect.
+   * This lets you set the container from a ref, and also makes server-side rendering possible.
+   *
+   * By default, it uses the body of the top-level document object,
+   * so it's simply `document.body` most of the time.
+   */
+  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
+  /**
+   * The `children` will be under the DOM hierarchy of the parent component.
+   * @default false
+   */
+  disablePortal: PropTypes.bool,
+  /**
+   * Always keep the children in the DOM.
+   * This prop can be useful in SEO situation or
+   * when you want to maximize the responsiveness of the Popper.
+   * @default false
+   */
+  keepMounted: PropTypes.bool,
+  /**
+   * Popper.js is based on a "plugin-like" architecture,
+   * most of its features are fully encapsulated "modifiers".
+   *
+   * A modifier is a function that is called each time Popper.js needs to
+   * compute the position of the popper.
+   * For this reason, modifiers should be very performant to avoid bottlenecks.
+   * To learn how to create a modifier, [read the modifiers documentation](https://popper.js.org/docs/v2/modifiers/).
+   */
+  modifiers: PropTypes.arrayOf(PropTypes.shape({
+    data: PropTypes.object,
+    effect: PropTypes.func,
+    enabled: PropTypes.bool,
+    fn: PropTypes.func,
+    name: PropTypes.any,
+    options: PropTypes.object,
+    phase: PropTypes.oneOf(['afterMain', 'afterRead', 'afterWrite', 'beforeMain', 'beforeRead', 'beforeWrite', 'main', 'read', 'write']),
+    requires: PropTypes.arrayOf(PropTypes.string),
+    requiresIfExists: PropTypes.arrayOf(PropTypes.string)
+  })),
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool.isRequired,
+  /**
+   * Popper placement.
+   * @default 'bottom'
+   */
+  placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
+  /**
+   * Options provided to the [`Popper.js`](https://popper.js.org/docs/v2/constructors/#options) instance.
+   * @default {}
+   */
+  popperOptions: PropTypes.shape({
+    modifiers: PropTypes.array,
+    onFirstUpdate: PropTypes.func,
+    placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
+    strategy: PropTypes.oneOf(['absolute', 'fixed'])
+  }),
+  /**
+   * A ref that points to the used popper instance.
+   */
+  popperRef: refType$1,
+  /**
+   * The props used for each slot inside the Popper.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside the Popper.
+   * Either a string to use a HTML element or a component.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    root: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Help supporting a react-transition-group/Transition component.
+   * @default false
+   */
+  transition: PropTypes.bool
+} : void 0;
+var Popper$1 = Popper;
+
+function getTooltipUtilityClass(slot) {
+  return generateUtilityClass('MuiTooltip', slot);
+}
+const tooltipClasses = generateUtilityClasses('MuiTooltip', ['popper', 'popperInteractive', 'popperArrow', 'popperClose', 'tooltip', 'tooltipArrow', 'touch', 'tooltipPlacementLeft', 'tooltipPlacementRight', 'tooltipPlacementTop', 'tooltipPlacementBottom', 'arrow']);
+var tooltipClasses$1 = tooltipClasses;
+
+function round$1(value) {
+  return Math.round(value * 1e5) / 1e5;
+}
+const useUtilityClasses$e = ownerState => {
+  const {
+    classes,
+    disableInteractive,
+    arrow,
+    touch,
+    placement
+  } = ownerState;
+  const slots = {
+    popper: ['popper', !disableInteractive && 'popperInteractive', arrow && 'popperArrow'],
+    tooltip: ['tooltip', arrow && 'tooltipArrow', touch && 'touch', `tooltipPlacement${capitalize$3(placement.split('-')[0])}`],
+    arrow: ['arrow']
+  };
+  return composeClasses(slots, getTooltipUtilityClass, classes);
+};
+const TooltipPopper = styled$1(Popper$1, {
+  name: 'MuiTooltip',
+  slot: 'Popper',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.popper, !ownerState.disableInteractive && styles.popperInteractive, ownerState.arrow && styles.popperArrow, !ownerState.open && styles.popperClose];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  zIndex: (theme.vars || theme).zIndex.tooltip,
+  pointerEvents: 'none',
+  variants: [{
+    props: ({
+      ownerState,
+      open
+    }) => open && !ownerState.disableInteractive,
+    style: {
+      pointerEvents: 'auto'
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.arrow,
+    style: {
+      [`&[data-popper-placement*="bottom"] .${tooltipClasses$1.arrow}`]: {
+        top: 0,
+        marginTop: '-0.71em',
+        '&::before': {
+          transformOrigin: '0 100%'
+        }
+      },
+      [`&[data-popper-placement*="top"] .${tooltipClasses$1.arrow}`]: {
+        bottom: 0,
+        marginBottom: '-0.71em',
+        '&::before': {
+          transformOrigin: '100% 0'
+        }
+      },
+      [`&[data-popper-placement*="right"] .${tooltipClasses$1.arrow}`]: {
+        height: '1em',
+        width: '0.71em',
+        insetInlineStart: 0,
+        marginInlineStart: '-0.71em',
+        '&::before': {
+          transformOrigin: '100% 100%'
+        }
+      },
+      [`&[data-popper-placement*="left"] .${tooltipClasses$1.arrow}`]: {
+        height: '1em',
+        width: '0.71em',
+        insetInlineEnd: 0,
+        marginInlineEnd: '-0.71em',
+        '&::before': {
+          transformOrigin: '0 0'
+        }
+      }
+    }
+  }]
+})));
+const TooltipTooltip = styled$1('div', {
+  name: 'MuiTooltip',
+  slot: 'Tooltip',
+  overridesResolver: (props, styles) => {
+    const {
+      ownerState
+    } = props;
+    return [styles.tooltip, ownerState.touch && styles.touch, ownerState.arrow && styles.tooltipArrow, styles[`tooltipPlacement${capitalize$3(ownerState.placement.split('-')[0])}`]];
+  }
+})(memoTheme$1(({
+  theme
+}) => ({
+  backgroundColor: theme.vars ? theme.vars.palette.Tooltip.bg : theme.alpha(theme.palette.grey[700], 0.92),
+  borderRadius: (theme.vars || theme).shape.borderRadius,
+  color: (theme.vars || theme).palette.common.white,
+  fontFamily: theme.typography.fontFamily,
+  padding: '4px 8px',
+  fontSize: theme.typography.pxToRem(11),
+  maxWidth: 300,
+  margin: 2,
+  wordWrap: 'break-word',
+  fontWeight: theme.typography.fontWeightMedium,
+  [`.${tooltipClasses$1.popper}[data-popper-placement*="left"] &`]: {
+    transformOrigin: 'right center',
+    marginInlineEnd: '14px'
+  },
+  [`.${tooltipClasses$1.popper}[data-popper-placement*="right"] &`]: {
+    transformOrigin: 'left center',
+    marginInlineStart: '14px'
+  },
+  [`.${tooltipClasses$1.popper}[data-popper-placement*="top"] &`]: {
+    transformOrigin: 'center bottom',
+    marginBottom: '14px'
+  },
+  [`.${tooltipClasses$1.popper}[data-popper-placement*="bottom"] &`]: {
+    transformOrigin: 'center top',
+    marginTop: '14px'
+  },
+  variants: [{
+    props: ({
+      ownerState
+    }) => ownerState.arrow,
+    style: {
+      position: 'relative',
+      marginBlock: 0
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.touch,
+    style: {
+      padding: '8px 16px',
+      fontSize: theme.typography.pxToRem(14),
+      lineHeight: `${round$1(16 / 14)}em`,
+      fontWeight: theme.typography.fontWeightRegular
+    }
+  }, {
+    props: ({
+      ownerState
+    }) => ownerState.touch,
+    style: {
+      [`.${tooltipClasses$1.popper}[data-popper-placement*="left"] &`]: {
+        marginInlineEnd: '24px'
+      },
+      [`.${tooltipClasses$1.popper}[data-popper-placement*="right"] &`]: {
+        marginInlineStart: '24px'
+      },
+      [`.${tooltipClasses$1.popper}[data-popper-placement*="top"] &`]: {
+        marginBottom: '24px'
+      },
+      [`.${tooltipClasses$1.popper}[data-popper-placement*="bottom"] &`]: {
+        marginTop: '24px'
+      }
+    }
+  }]
+})));
+const TooltipArrow = styled$1('span', {
+  name: 'MuiTooltip',
+  slot: 'Arrow'
+})(memoTheme$1(({
+  theme
+}) => ({
+  overflow: 'hidden',
+  position: 'absolute',
+  width: '1em',
+  height: '0.71em' /* = width / sqrt(2) = (length of the hypotenuse) */,
+  boxSizing: 'border-box',
+  color: theme.vars ? theme.vars.palette.Tooltip.bg : theme.alpha(theme.palette.grey[700], 0.9),
+  '&::before': {
+    content: '""',
+    margin: 'auto',
+    display: 'block',
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'currentColor',
+    transform: 'rotate(45deg)'
+  }
+})));
+let hystersisOpen = false;
+const hystersisTimer = new Timeout();
+let cursorPosition = {
+  x: 0,
+  y: 0
+};
+function composeEventHandler(handler, eventHandler) {
+  return (event, ...params) => {
+    if (eventHandler) {
+      eventHandler(event, ...params);
+    }
+    handler(event, ...params);
+  };
+}
+const Tooltip$1 = /*#__PURE__*/reactExports.forwardRef(function Tooltip(inProps, ref) {
+  const props = useDefaultProps({
+    props: inProps,
+    name: 'MuiTooltip'
+  });
+  const {
+    arrow = false,
+    children: childrenProp,
+    classes: classesProp,
+    describeChild = false,
+    disableFocusListener = false,
+    disableHoverListener = false,
+    disableInteractive: disableInteractiveProp = false,
+    disableTouchListener = false,
+    enterDelay = 100,
+    enterNextDelay = 0,
+    enterTouchDelay = 700,
+    followCursor = false,
+    id: idProp,
+    leaveDelay = 0,
+    leaveTouchDelay = 1500,
+    onClose,
+    onOpen,
+    open: openProp,
+    placement = 'bottom',
+    slotProps = {},
+    slots = {},
+    title,
+    ...other
+  } = props;
+
+  // to prevent runtime errors, developers will need to provide a child as a React element anyway.
+  const children = /*#__PURE__*/reactExports.isValidElement(childrenProp) ? childrenProp : /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+    children: childrenProp
+  });
+  const theme = useTheme();
+  const [childNode, setChildNode] = reactExports.useState();
+  const [arrowRef, setArrowRef] = reactExports.useState(null);
+  const ignoreNonTouchEvents = reactExports.useRef(false);
+  const disableInteractive = disableInteractiveProp || followCursor;
+  const closeTimer = useTimeout();
+  const enterTimer = useTimeout();
+  const leaveTimer = useTimeout();
+  const touchTimer = useTimeout();
+  const [openState, setOpenState] = useControlled({
+    controlled: openProp,
+    default: false,
+    name: 'Tooltip',
+    state: 'open'
+  });
+  let open = openState;
+  if (process.env.NODE_ENV !== 'production') {
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- process.env never changes
+    const {
+      current: isControlled
+    } = reactExports.useRef(openProp !== undefined);
+
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- process.env never changes
+    reactExports.useEffect(() => {
+      if (childNode && childNode.disabled && !isControlled && title !== '' && childNode.tagName.toLowerCase() === 'button') {
+        console.warn(['MUI: You are providing a disabled `button` child to the Tooltip component.', 'A disabled element does not fire events.', "Tooltip needs to listen to the child element's events to display the title.", '', 'Add a simple wrapper element, such as a `span`.'].join('\n'));
+      }
+    }, [title, childNode, isControlled]);
+  }
+  const id = useId(idProp);
+  const prevUserSelect = reactExports.useRef();
+  const stopTouchInteraction = useEventCallback(() => {
+    if (prevUserSelect.current !== undefined) {
+      document.body.style.WebkitUserSelect = prevUserSelect.current;
+      prevUserSelect.current = undefined;
+    }
+    touchTimer.clear();
+  });
+  reactExports.useEffect(() => stopTouchInteraction, [stopTouchInteraction]);
+  const handleOpen = event => {
+    hystersisTimer.clear();
+    hystersisOpen = true;
+
+    // The mouseover event will trigger for every nested element in the tooltip.
+    // We can skip rerendering when the tooltip is already open.
+    // We are using the mouseover event instead of the mouseenter event to fix a hide/show issue.
+    setOpenState(true);
+    if (onOpen && !open) {
+      onOpen(event);
+    }
+  };
+  const handleClose = useEventCallback(
+  /**
+   * @param {React.SyntheticEvent | Event} event
+   */
+  event => {
+    hystersisTimer.start(800 + leaveDelay, () => {
+      hystersisOpen = false;
+    });
+    setOpenState(false);
+    if (onClose && open) {
+      onClose(event);
+    }
+    closeTimer.start(theme.transitions.duration.shortest, () => {
+      ignoreNonTouchEvents.current = false;
+    });
+  });
+  const handleMouseOver = event => {
+    if (ignoreNonTouchEvents.current && event.type !== 'touchstart') {
+      return;
+    }
+
+    // Remove the title ahead of time.
+    // We don't want to wait for the next render commit.
+    // We would risk displaying two tooltips at the same time (native + this one).
+    if (childNode) {
+      childNode.removeAttribute('title');
+    }
+    enterTimer.clear();
+    leaveTimer.clear();
+    if (enterDelay || hystersisOpen && enterNextDelay) {
+      enterTimer.start(hystersisOpen ? enterNextDelay : enterDelay, () => {
+        handleOpen(event);
+      });
+    } else {
+      handleOpen(event);
+    }
+  };
+  const handleMouseLeave = event => {
+    enterTimer.clear();
+    leaveTimer.start(leaveDelay, () => {
+      handleClose(event);
+    });
+  };
+  const [, setChildIsFocusVisible] = reactExports.useState(false);
+  const handleBlur = event => {
+    // Needed for https://github.com/mui/material-ui/issues/45373
+    const target = event?.target ?? childNode;
+    if (!target || target.disabled || !isFocusVisible(target)) {
+      setChildIsFocusVisible(false);
+
+      // InputBase can call onBlur() without an event when the input becomes disabled.
+      // Tooltip must not assume an event object exists.
+      const closeEvent = event ?? new Event('blur');
+
+      // `new Event('blur')` has `target/currentTarget === null`, but Tooltip's close logic
+      // (and user callbacks like onClose) may expect them to reference the anchor element.
+      if (!event && target) {
+        Object.defineProperty(closeEvent, 'target', {
+          value: target
+        });
+        Object.defineProperty(closeEvent, 'currentTarget', {
+          value: target
+        });
+      }
+      handleMouseLeave(closeEvent);
+    }
+  };
+  const handleFocus = event => {
+    // Workaround for https://github.com/facebook/react/issues/7769
+    // The autoFocus of React might trigger the event before the componentDidMount.
+    // We need to account for this eventuality.
+    if (!childNode) {
+      setChildNode(event.currentTarget);
+    }
+    if (isFocusVisible(event.target)) {
+      // Workaround for https://github.com/facebook/react/issues/9142.
+      // React does not fire blur when a focused element becomes disabled.
+      const handleNativeBlur = blurEvent => {
+        if (blurEvent.target.disabled) {
+          handleBlur(blurEvent);
+        }
+        blurEvent.target.removeEventListener('blur', handleNativeBlur);
+      };
+      event.target.addEventListener('blur', handleNativeBlur);
+      setChildIsFocusVisible(true);
+      handleMouseOver(event);
+    }
+  };
+  const detectTouchStart = event => {
+    ignoreNonTouchEvents.current = true;
+    const childrenProps = children.props;
+    if (childrenProps.onTouchStart) {
+      childrenProps.onTouchStart(event);
+    }
+  };
+  const handleTouchStart = event => {
+    detectTouchStart(event);
+    leaveTimer.clear();
+    closeTimer.clear();
+    stopTouchInteraction();
+    prevUserSelect.current = document.body.style.WebkitUserSelect;
+    // Prevent iOS text selection on long-tap.
+    document.body.style.WebkitUserSelect = 'none';
+    touchTimer.start(enterTouchDelay, () => {
+      document.body.style.WebkitUserSelect = prevUserSelect.current;
+      handleMouseOver(event);
+    });
+  };
+  const handleTouchEnd = event => {
+    if (children.props.onTouchEnd) {
+      children.props.onTouchEnd(event);
+    }
+    stopTouchInteraction();
+    leaveTimer.start(leaveTouchDelay, () => {
+      handleClose(event);
+    });
+  };
+  reactExports.useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    /**
+     * @param {KeyboardEvent} nativeEvent
+     */
+    function handleKeyDown(nativeEvent) {
+      if (nativeEvent.key === 'Escape') {
+        handleClose(nativeEvent);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleClose, open]);
+  const handleRef = useForkRef(getReactElementRef(children), setChildNode, ref);
+
+  // There is no point in displaying an empty tooltip.
+  // So we exclude all falsy values, except 0, which is valid.
+  if (!title && title !== 0) {
+    open = false;
+  }
+  const popperRef = reactExports.useRef();
+  const handleMouseMove = event => {
+    const childrenProps = children.props;
+    if (childrenProps.onMouseMove) {
+      childrenProps.onMouseMove(event);
+    }
+    cursorPosition = {
+      x: event.clientX,
+      y: event.clientY
+    };
+    if (popperRef.current) {
+      popperRef.current.update();
+    }
+  };
+  const nameOrDescProps = {};
+  const titleIsString = typeof title === 'string';
+  if (describeChild) {
+    nameOrDescProps.title = !open && titleIsString && !disableHoverListener ? title : null;
+    nameOrDescProps['aria-describedby'] = open ? id : null;
+  } else {
+    nameOrDescProps['aria-label'] = titleIsString ? title : null;
+    nameOrDescProps['aria-labelledby'] = open && !titleIsString ? id : null;
+  }
+  const childrenProps = {
+    ...nameOrDescProps,
+    ...other,
+    ...children.props,
+    className: clsx(other.className, children.props.className),
+    onTouchStart: detectTouchStart,
+    ref: handleRef,
+    ...(followCursor ? {
+      onMouseMove: handleMouseMove
+    } : {})
+  };
+  if (process.env.NODE_ENV !== 'production') {
+    childrenProps['data-mui-internal-clone-element'] = true;
+
+    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- process.env never changes
+    reactExports.useEffect(() => {
+      if (childNode && !childNode.getAttribute('data-mui-internal-clone-element')) {
+        console.error(['MUI: The `children` component of the Tooltip is not forwarding its props correctly.', 'Please make sure that props are spread on the same element that the ref is applied to.'].join('\n'));
+      }
+    }, [childNode]);
+  }
+  const interactiveWrapperListeners = {};
+  if (!disableTouchListener) {
+    childrenProps.onTouchStart = handleTouchStart;
+    childrenProps.onTouchEnd = handleTouchEnd;
+  }
+  if (!disableHoverListener) {
+    childrenProps.onMouseOver = composeEventHandler(handleMouseOver, childrenProps.onMouseOver);
+    childrenProps.onMouseLeave = composeEventHandler(handleMouseLeave, childrenProps.onMouseLeave);
+    if (!disableInteractive) {
+      interactiveWrapperListeners.onMouseOver = handleMouseOver;
+      interactiveWrapperListeners.onMouseLeave = handleMouseLeave;
+    }
+  }
+  if (!disableFocusListener) {
+    childrenProps.onFocus = composeEventHandler(handleFocus, childrenProps.onFocus);
+    childrenProps.onBlur = composeEventHandler(handleBlur, childrenProps.onBlur);
+    if (!disableInteractive) {
+      interactiveWrapperListeners.onFocus = handleFocus;
+      interactiveWrapperListeners.onBlur = handleBlur;
+    }
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    if (children.props.title) {
+      console.error(['MUI: You have provided a `title` prop to the child of <Tooltip />.', `Remove this title prop \`${children.props.title}\` or the Tooltip component.`].join('\n'));
+    }
+  }
+  const ownerState = {
+    ...props,
+    arrow,
+    disableInteractive,
+    placement,
+    touch: ignoreNonTouchEvents.current
+  };
+  const resolvedPopperProps = typeof slotProps.popper === 'function' ? slotProps.popper(ownerState) : slotProps.popper;
+  const popperOptions = reactExports.useMemo(() => {
+    let tooltipModifiers = [{
+      name: 'arrow',
+      enabled: Boolean(arrowRef),
+      options: {
+        element: arrowRef,
+        padding: 4
+      }
+    }];
+    if (resolvedPopperProps?.popperOptions?.modifiers) {
+      tooltipModifiers = tooltipModifiers.concat(resolvedPopperProps.popperOptions.modifiers);
+    }
+    return {
+      ...resolvedPopperProps?.popperOptions,
+      modifiers: tooltipModifiers
+    };
+  }, [arrowRef, resolvedPopperProps?.popperOptions]);
+  const classes = useUtilityClasses$e(ownerState);
+  const externalForwardedProps = {
+    slots,
+    slotProps: {
+      arrow: slotProps.arrow,
+      popper: resolvedPopperProps,
+      tooltip: slotProps.tooltip,
+      transition: slotProps.transition
+    }
+  };
+  const [PopperSlot, popperSlotProps] = useSlot('popper', {
+    elementType: TooltipPopper,
+    externalForwardedProps,
+    ownerState,
+    className: classes.popper
+  });
+  const [TransitionSlot, transitionSlotProps] = useSlot('transition', {
+    elementType: Grow$1,
+    externalForwardedProps,
+    ownerState
+  });
+  const [TooltipSlot, tooltipSlotProps] = useSlot('tooltip', {
+    elementType: TooltipTooltip,
+    className: classes.tooltip,
+    externalForwardedProps,
+    ownerState
+  });
+  const [ArrowSlot, arrowSlotProps] = useSlot('arrow', {
+    elementType: TooltipArrow,
+    className: classes.arrow,
+    externalForwardedProps,
+    ownerState,
+    ref: setArrowRef
+  });
+  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
+    children: [/*#__PURE__*/reactExports.cloneElement(children, childrenProps), /*#__PURE__*/jsxRuntimeExports.jsx(PopperSlot, {
+      as: Popper$1,
+      placement: placement,
+      anchorEl: followCursor ? {
+        getBoundingClientRect: () => ({
+          top: cursorPosition.y,
+          left: cursorPosition.x,
+          right: cursorPosition.x,
+          bottom: cursorPosition.y,
+          width: 0,
+          height: 0
+        })
+      } : childNode,
+      popperRef: popperRef,
+      open: childNode ? open : false,
+      id: id,
+      transition: true,
+      ...interactiveWrapperListeners,
+      ...popperSlotProps,
+      popperOptions: popperOptions,
+      children: ({
+        TransitionProps: TransitionPropsInner
+      }) => /*#__PURE__*/jsxRuntimeExports.jsx(TransitionSlot, {
+        timeout: theme.transitions.duration.shorter,
+        ...TransitionPropsInner,
+        ...transitionSlotProps,
+        children: /*#__PURE__*/jsxRuntimeExports.jsxs(TooltipSlot, {
+          ...tooltipSlotProps,
+          children: [title, arrow ? /*#__PURE__*/jsxRuntimeExports.jsx(ArrowSlot, {
+            ...arrowSlotProps
+          }) : null]
+        })
+      })
+    })]
+  });
+});
+process.env.NODE_ENV !== "production" ? Tooltip$1.propTypes /* remove-proptypes */ = {
+  // ┌────────────────────────────── Warning ──────────────────────────────┐
+  // │ These PropTypes are generated from the TypeScript type definitions. │
+  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
+  // └─────────────────────────────────────────────────────────────────────┘
+  /**
+   * If `true`, adds an arrow to the tooltip.
+   * @default false
+   */
+  arrow: PropTypes.bool,
+  /**
+   * Tooltip reference element.
+   */
+  children: elementAcceptingRef$1.isRequired,
+  /**
+   * Override or extend the styles applied to the component.
+   */
+  classes: PropTypes.object,
+  /**
+   * @ignore
+   */
+  className: PropTypes.string,
+  /**
+   * Set to `true` if the `title` acts as an accessible description.
+   * By default the `title` acts as an accessible label for the child.
+   * @default false
+   */
+  describeChild: PropTypes.bool,
+  /**
+   * Do not respond to focus-visible events.
+   * @default false
+   */
+  disableFocusListener: PropTypes.bool,
+  /**
+   * Do not respond to hover events.
+   * @default false
+   */
+  disableHoverListener: PropTypes.bool,
+  /**
+   * Makes a tooltip not interactive, i.e. it will close when the user
+   * hovers over the tooltip before the `leaveDelay` is expired.
+   * @default false
+   */
+  disableInteractive: PropTypes.bool,
+  /**
+   * Do not respond to long press touch events.
+   * @default false
+   */
+  disableTouchListener: PropTypes.bool,
+  /**
+   * The number of milliseconds to wait before showing the tooltip.
+   * This prop won't impact the enter touch delay (`enterTouchDelay`).
+   * @default 100
+   */
+  enterDelay: PropTypes.number,
+  /**
+   * The number of milliseconds to wait before showing the tooltip when one was already recently opened.
+   * @default 0
+   */
+  enterNextDelay: PropTypes.number,
+  /**
+   * The number of milliseconds a user must touch the element before showing the tooltip.
+   * @default 700
+   */
+  enterTouchDelay: PropTypes.number,
+  /**
+   * If `true`, the tooltip follow the cursor over the wrapped element.
+   * @default false
+   */
+  followCursor: PropTypes.bool,
+  /**
+   * This prop is used to help implement the accessibility logic.
+   * If you don't provide this prop. It falls back to a randomly generated id.
+   */
+  id: PropTypes.string,
+  /**
+   * The number of milliseconds to wait before hiding the tooltip.
+   * This prop won't impact the leave touch delay (`leaveTouchDelay`).
+   * @default 0
+   */
+  leaveDelay: PropTypes.number,
+  /**
+   * The number of milliseconds after the user stops touching an element before hiding the tooltip.
+   * @default 1500
+   */
+  leaveTouchDelay: PropTypes.number,
+  /**
+   * Callback fired when the component requests to be closed.
+   *
+   * @param {React.SyntheticEvent} event The event source of the callback.
+   */
+  onClose: PropTypes.func,
+  /**
+   * Callback fired when the component requests to be open.
+   *
+   * @param {React.SyntheticEvent} event The event source of the callback.
+   */
+  onOpen: PropTypes.func,
+  /**
+   * If `true`, the component is shown.
+   */
+  open: PropTypes.bool,
+  /**
+   * Tooltip placement.
+   * @default 'bottom'
+   */
+  placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
+  /**
+   * The props used for each slot inside.
+   * @default {}
+   */
+  slotProps: PropTypes.shape({
+    arrow: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    popper: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    tooltip: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+    transition: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
+  }),
+  /**
+   * The components used for each slot inside.
+   * @default {}
+   */
+  slots: PropTypes.shape({
+    arrow: PropTypes.elementType,
+    popper: PropTypes.elementType,
+    tooltip: PropTypes.elementType,
+    transition: PropTypes.elementType
+  }),
+  /**
+   * The system prop that allows defining system overrides as well as additional CSS styles.
+   */
+  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
+  /**
+   * Tooltip title. Zero-length titles string, undefined, null and false are never displayed.
+   */
+  title: PropTypes.node
+} : void 0;
+var Tooltip$2 = Tooltip$1;
+
+/**
+ * Renders a MUI tooltip whose visible and accessible text comes from localization.
+ *
+ * @extends {Component<LocalizedTooltipProps>}
+ */
+class LocalizedTooltip extends reactExports.Component {
+  static contextType = MusicNotebookContext;
+
+  /**
+   * Initializes refresh state for locale updates.
+   *
+   * @param {LocalizedTooltipProps} props
+   */
+  constructor(props) {
+    super(props);
+    this.state = {
+      updated: 0
+    };
+  }
+
+  /**
+   * Gets the typed Music Notebook context value.
+   *
+   * @returns {MusicNotebookContextValue}
+   */
+  getMusicNotebookContext() {
+    return /** @type {MusicNotebookContextValue} */this.context;
+  }
+
+  /**
+   * Handles locale service changes.
+   *
+   * @param {string} locale
+   * @returns {void}
+   */
+  newLocale(locale) {
+    if (locale !== this.locale) {
+      this.setState({
+        locale
+      });
+    }
+  }
+
+  /**
+   * Forces a refresh when translation content updates.
+   *
+   * @returns {void}
+   */
+  updated() {
+    this.setState({
+      updated: this.state.updated + 1
+    });
+  }
+
+  /**
+   * Lazily connects to the localization service.
+   *
+   * @returns {void}
+   */
+  setupLocaleService() {
+    if (this.localize) {
+      return;
+    }
+    const context = this.getMusicNotebookContext();
+    this.registry = context.registry;
+    this.localize = context.localize || this.registry?.subscribe?.('localize');
+    if (!this.localize) {
+      return;
+    }
+    this.localeListener = this.localize.listen?.('changeLocale', this.newLocale.bind(this));
+    this.updatedListener = this.localize.listen?.('updated', this.updated.bind(this));
+    this.locale = this.localize.getLocale?.();
+  }
+
+  /**
+   * Removes localization service listeners before unmount.
+   *
+   * @returns {void}
+   */
+  componentWillUnmount() {
+    if (this.localize && this.localeListener) {
+      this.localize.unlisten('changeLocale', this.localeListener);
+    }
+    if (this.localize && this.updatedListener) {
+      this.localize.unlisten('updated', this.updatedListener);
+    }
+  }
+
+  /**
+   * Resolves the current translated tooltip string.
+   *
+   * @returns {string}
+   */
+  getTranslation() {
+    this.setupLocaleService();
+    if (!this.localize) {
+      console.error('LocalizedTooltip cannot render without a localize service.');
+      return '';
+    }
+    let {
+      phrase,
+      replacements,
+      cardinal
+    } = this.props;
+    if (typeof phrase === 'object') {
+      replacements = phrase.replacements;
+      cardinal = phrase.cardinal;
+      phrase = phrase.phrase;
+    }
+    const translation = this.props.locale ? this.localize.translateLocale(this.props.locale, phrase, replacements, cardinal) : this.localize.translate(phrase, replacements, cardinal);
+    if (!translation && !this.props.hideEmpty) {
+      console.error(`Missing translation for phrase "${phrase}".`);
+      return String(phrase || '');
+    }
+    return translation;
+  }
+
+  /**
+   * Applies the localized label to the child element when requested.
+   *
+   * @param {string} translation
+   * @returns {React.ReactElement}
+   */
+  getChild(translation) {
+    const {
+      children,
+      labelChild = false
+    } = this.props;
+    if (!labelChild || ! /*#__PURE__*/reactExports.isValidElement(children)) {
+      return children;
+    }
+    return /*#__PURE__*/reactExports.cloneElement(children, {
+      'aria-label': translation
+    });
+  }
+
+  /**
+   * Renders the localized tooltip around the supplied child.
+   *
+   * @returns {React.ReactElement}
+   */
+  render() {
+    const {
+      children,
+      describeChild = true,
+      hideEmpty,
+      labelChild,
+      locale,
+      phrase,
+      replacements,
+      cardinal,
+      ...tooltipProps
+    } = this.props;
+    const translation = this.getTranslation();
+    if (hideEmpty && !translation) {
+      return children;
+    }
+    return /*#__PURE__*/React$1.createElement(Tooltip$2, _extends$1({}, tooltipProps, {
+      title: translation,
+      describeChild: describeChild
+    }), this.getChild(translation));
+  }
+}
+
+function makeLocalizeMock$b(overrides = {}) {
+  return {
+    getLocale() {
+      return 'en-US-u-ms-ussystem';
+    },
+    listen() {},
+    translate(phrase) {
+      if (phrase === 'tooltip.greeting') {
+        return 'Hello tooltip';
+      }
+      return '';
+    },
+    translateLocale(locale, phrase) {
+      return `${locale}:${phrase}`;
+    },
+    unlisten() {},
+    ...overrides
+  };
+}
+describe('LocalizedTooltip', function () {
+  let harness;
+  afterEach(function () {
+    harness?.unmount();
+    harness = null;
+  });
+  it('applies translated tooltip text to the child accessible label', function () {
+    const localize = makeLocalizeMock$b();
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(LocalizedTooltip, {
+      phrase: 'tooltip.greeting',
+      labelChild: true,
+      children: /*#__PURE__*/React$1.createElement("span", {
+        className: "tooltip-target",
+        tabIndex: 0
+      })
+    });
+    const target = result.container.querySelector('.tooltip-target');
+    expect(target.getAttribute('aria-label')).toBe('Hello tooltip');
   });
 });
 
@@ -52585,7 +55967,7 @@ const overridesResolver = (props, styles) => {
   } = props;
   return [styles.root, styles[`position${capitalize$3(ownerState.position)}`], ownerState.disablePointerEvents === true && styles.disablePointerEvents, styles[ownerState.variant]];
 };
-const useUtilityClasses$f = ownerState => {
+const useUtilityClasses$d = ownerState => {
   const {
     classes,
     disablePointerEvents,
@@ -52678,7 +56060,7 @@ const InputAdornment = /*#__PURE__*/reactExports.forwardRef(function InputAdornm
     position,
     variant
   };
-  const classes = useUtilityClasses$f(ownerState);
+  const classes = useUtilityClasses$d(ownerState);
   return /*#__PURE__*/jsxRuntimeExports.jsx(FormControlContext$1.Provider, {
     value: null,
     children: /*#__PURE__*/jsxRuntimeExports.jsx(InputAdornmentRoot, {
@@ -52997,7 +56379,7 @@ function getRadioUtilityClass(slot) {
 const radioClasses = generateUtilityClasses('MuiRadio', ['root', 'checked', 'disabled', 'colorPrimary', 'colorSecondary', 'sizeSmall']);
 var radioClasses$1 = radioClasses;
 
-const useUtilityClasses$e = ownerState => {
+const useUtilityClasses$c = ownerState => {
   const {
     classes,
     color,
@@ -53122,7 +56504,7 @@ const Radio = /*#__PURE__*/reactExports.forwardRef(function Radio(inProps, ref) 
     color,
     size
   };
-  const classes = useUtilityClasses$e(ownerState);
+  const classes = useUtilityClasses$c(ownerState);
   const radioGroup = useRadioGroup();
   let checked = checkedProp;
   const onChange = createChainedFunction(onChangeProp, radioGroup && radioGroup.onChange);
@@ -53279,7 +56661,7 @@ function getFormGroupUtilityClass(slot) {
 }
 generateUtilityClasses('MuiFormGroup', ['root', 'row', 'error']);
 
-const useUtilityClasses$d = ownerState => {
+const useUtilityClasses$b = ownerState => {
   const {
     classes,
     row,
@@ -53337,7 +56719,7 @@ const FormGroup = /*#__PURE__*/reactExports.forwardRef(function FormGroup(inProp
     row,
     error: fcs.error
   };
-  const classes = useUtilityClasses$d(ownerState);
+  const classes = useUtilityClasses$b(ownerState);
   return /*#__PURE__*/jsxRuntimeExports.jsx(FormGroupRoot, {
     className: clsx(classes.root, className),
     ownerState: ownerState,
@@ -53379,7 +56761,7 @@ function getRadioGroupUtilityClass(slot) {
 }
 generateUtilityClasses('MuiRadioGroup', ['root', 'row', 'error']);
 
-const useUtilityClasses$c = props => {
+const useUtilityClasses$a = props => {
   const {
     classes,
     row,
@@ -53404,7 +56786,7 @@ const RadioGroup = /*#__PURE__*/reactExports.forwardRef(function RadioGroup(prop
     ...other
   } = props;
   const rootRef = reactExports.useRef(null);
-  const classes = useUtilityClasses$c(props);
+  const classes = useUtilityClasses$a(props);
   const [value, setValueState] = useControlled({
     controlled: valueProp,
     default: defaultValue,
@@ -53754,2920 +57136,6 @@ var AddIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
 var RemoveIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
   d: "M19 13H5v-2h14z"
 }), 'Remove');
-
-var top$1 = 'top';
-var bottom$1 = 'bottom';
-var right$1 = 'right';
-var left$1 = 'left';
-var auto = 'auto';
-var basePlacements = [top$1, bottom$1, right$1, left$1];
-var start = 'start';
-var end = 'end';
-var clippingParents = 'clippingParents';
-var viewport = 'viewport';
-var popper = 'popper';
-var reference = 'reference';
-var variationPlacements = /*#__PURE__*/basePlacements.reduce(function (acc, placement) {
-  return acc.concat([placement + "-" + start, placement + "-" + end]);
-}, []);
-var placements = /*#__PURE__*/[].concat(basePlacements, [auto]).reduce(function (acc, placement) {
-  return acc.concat([placement, placement + "-" + start, placement + "-" + end]);
-}, []); // modifiers that need to read the DOM
-
-var beforeRead = 'beforeRead';
-var read$1 = 'read';
-var afterRead = 'afterRead'; // pure-logic modifiers
-
-var beforeMain = 'beforeMain';
-var main$1 = 'main';
-var afterMain = 'afterMain'; // modifier with the purpose to write to the DOM (or write into a framework state)
-
-var beforeWrite = 'beforeWrite';
-var write$1 = 'write';
-var afterWrite = 'afterWrite';
-var modifierPhases = [beforeRead, read$1, afterRead, beforeMain, main$1, afterMain, beforeWrite, write$1, afterWrite];
-
-function getNodeName(element) {
-  return element ? (element.nodeName || '').toLowerCase() : null;
-}
-
-function getWindow$1(node) {
-  if (node == null) {
-    return window;
-  }
-  if (node.toString() !== '[object Window]') {
-    var ownerDocument = node.ownerDocument;
-    return ownerDocument ? ownerDocument.defaultView || window : window;
-  }
-  return node;
-}
-
-function isElement$2(node) {
-  var OwnElement = getWindow$1(node).Element;
-  return node instanceof OwnElement || node instanceof Element;
-}
-function isHTMLElement$2(node) {
-  var OwnElement = getWindow$1(node).HTMLElement;
-  return node instanceof OwnElement || node instanceof HTMLElement;
-}
-function isShadowRoot(node) {
-  // IE 11 has no ShadowRoot
-  if (typeof ShadowRoot === 'undefined') {
-    return false;
-  }
-  var OwnElement = getWindow$1(node).ShadowRoot;
-  return node instanceof OwnElement || node instanceof ShadowRoot;
-}
-
-// and applies them to the HTMLElements such as popper and arrow
-
-function applyStyles(_ref) {
-  var state = _ref.state;
-  Object.keys(state.elements).forEach(function (name) {
-    var style = state.styles[name] || {};
-    var attributes = state.attributes[name] || {};
-    var element = state.elements[name]; // arrow is optional + virtual elements
-
-    if (!isHTMLElement$2(element) || !getNodeName(element)) {
-      return;
-    } // Flow doesn't support to extend this property, but it's the most
-    // effective way to apply styles to an HTMLElement
-    // $FlowFixMe[cannot-write]
-
-    Object.assign(element.style, style);
-    Object.keys(attributes).forEach(function (name) {
-      var value = attributes[name];
-      if (value === false) {
-        element.removeAttribute(name);
-      } else {
-        element.setAttribute(name, value === true ? '' : value);
-      }
-    });
-  });
-}
-function effect$2(_ref2) {
-  var state = _ref2.state;
-  var initialStyles = {
-    popper: {
-      position: state.options.strategy,
-      left: '0',
-      top: '0',
-      margin: '0'
-    },
-    arrow: {
-      position: 'absolute'
-    },
-    reference: {}
-  };
-  Object.assign(state.elements.popper.style, initialStyles.popper);
-  state.styles = initialStyles;
-  if (state.elements.arrow) {
-    Object.assign(state.elements.arrow.style, initialStyles.arrow);
-  }
-  return function () {
-    Object.keys(state.elements).forEach(function (name) {
-      var element = state.elements[name];
-      var attributes = state.attributes[name] || {};
-      var styleProperties = Object.keys(state.styles.hasOwnProperty(name) ? state.styles[name] : initialStyles[name]); // Set all values to an empty string to unset them
-
-      var style = styleProperties.reduce(function (style, property) {
-        style[property] = '';
-        return style;
-      }, {}); // arrow is optional + virtual elements
-
-      if (!isHTMLElement$2(element) || !getNodeName(element)) {
-        return;
-      }
-      Object.assign(element.style, style);
-      Object.keys(attributes).forEach(function (attribute) {
-        element.removeAttribute(attribute);
-      });
-    });
-  };
-} // eslint-disable-next-line import/no-unused-modules
-
-var applyStyles$1 = {
-  name: 'applyStyles',
-  enabled: true,
-  phase: 'write',
-  fn: applyStyles,
-  effect: effect$2,
-  requires: ['computeStyles']
-};
-
-function getBasePlacement(placement) {
-  return placement.split('-')[0];
-}
-
-var max$2 = Math.max;
-var min$1 = Math.min;
-var round$2 = Math.round;
-
-function getUAString() {
-  var uaData = navigator.userAgentData;
-  if (uaData != null && uaData.brands && Array.isArray(uaData.brands)) {
-    return uaData.brands.map(function (item) {
-      return item.brand + "/" + item.version;
-    }).join(' ');
-  }
-  return navigator.userAgent;
-}
-
-function isLayoutViewport() {
-  return !/^((?!chrome|android).)*safari/i.test(getUAString());
-}
-
-function getBoundingClientRect$1(element, includeScale, isFixedStrategy) {
-  if (includeScale === void 0) {
-    includeScale = false;
-  }
-  if (isFixedStrategy === void 0) {
-    isFixedStrategy = false;
-  }
-  var clientRect = element.getBoundingClientRect();
-  var scaleX = 1;
-  var scaleY = 1;
-  if (includeScale && isHTMLElement$2(element)) {
-    scaleX = element.offsetWidth > 0 ? round$2(clientRect.width) / element.offsetWidth || 1 : 1;
-    scaleY = element.offsetHeight > 0 ? round$2(clientRect.height) / element.offsetHeight || 1 : 1;
-  }
-  var _ref = isElement$2(element) ? getWindow$1(element) : window,
-    visualViewport = _ref.visualViewport;
-  var addVisualOffsets = !isLayoutViewport() && isFixedStrategy;
-  var x = (clientRect.left + (addVisualOffsets && visualViewport ? visualViewport.offsetLeft : 0)) / scaleX;
-  var y = (clientRect.top + (addVisualOffsets && visualViewport ? visualViewport.offsetTop : 0)) / scaleY;
-  var width = clientRect.width / scaleX;
-  var height = clientRect.height / scaleY;
-  return {
-    width: width,
-    height: height,
-    top: y,
-    right: x + width,
-    bottom: y + height,
-    left: x,
-    x: x,
-    y: y
-  };
-}
-
-// means it doesn't take into account transforms.
-
-function getLayoutRect(element) {
-  var clientRect = getBoundingClientRect$1(element); // Use the clientRect sizes if it's not been transformed.
-  // Fixes https://github.com/popperjs/popper-core/issues/1223
-
-  var width = element.offsetWidth;
-  var height = element.offsetHeight;
-  if (Math.abs(clientRect.width - width) <= 1) {
-    width = clientRect.width;
-  }
-  if (Math.abs(clientRect.height - height) <= 1) {
-    height = clientRect.height;
-  }
-  return {
-    x: element.offsetLeft,
-    y: element.offsetTop,
-    width: width,
-    height: height
-  };
-}
-
-function contains$3(parent, child) {
-  var rootNode = child.getRootNode && child.getRootNode(); // First, attempt with faster native method
-
-  if (parent.contains(child)) {
-    return true;
-  } // then fallback to custom implementation with Shadow DOM support
-  else if (rootNode && isShadowRoot(rootNode)) {
-    var next = child;
-    do {
-      if (next && parent.isSameNode(next)) {
-        return true;
-      } // $FlowFixMe[prop-missing]: need a better way to handle this...
-
-      next = next.parentNode || next.host;
-    } while (next);
-  } // Give up, the result is false
-
-  return false;
-}
-
-function getComputedStyle$1(element) {
-  return getWindow$1(element).getComputedStyle(element);
-}
-
-function isTableElement(element) {
-  return ['table', 'td', 'th'].indexOf(getNodeName(element)) >= 0;
-}
-
-function getDocumentElement(element) {
-  // $FlowFixMe[incompatible-return]: assume body is always available
-  return ((isElement$2(element) ? element.ownerDocument :
-  // $FlowFixMe[prop-missing]
-  element.document) || window.document).documentElement;
-}
-
-function getParentNode(element) {
-  if (getNodeName(element) === 'html') {
-    return element;
-  }
-  return (
-    // this is a quicker (but less type safe) way to save quite some bytes from the bundle
-    // $FlowFixMe[incompatible-return]
-    // $FlowFixMe[prop-missing]
-    element.assignedSlot ||
-    // step into the shadow DOM of the parent of a slotted node
-    element.parentNode || (
-    // DOM Element detected
-    isShadowRoot(element) ? element.host : null) ||
-    // ShadowRoot detected
-    // $FlowFixMe[incompatible-call]: HTMLElement is a Node
-    getDocumentElement(element) // fallback
-  );
-}
-
-function getTrueOffsetParent(element) {
-  if (!isHTMLElement$2(element) ||
-  // https://github.com/popperjs/popper-core/issues/837
-  getComputedStyle$1(element).position === 'fixed') {
-    return null;
-  }
-  return element.offsetParent;
-} // `.offsetParent` reports `null` for fixed elements, while absolute elements
-// return the containing block
-
-function getContainingBlock(element) {
-  var isFirefox = /firefox/i.test(getUAString());
-  var isIE = /Trident/i.test(getUAString());
-  if (isIE && isHTMLElement$2(element)) {
-    // In IE 9, 10 and 11 fixed elements containing block is always established by the viewport
-    var elementCss = getComputedStyle$1(element);
-    if (elementCss.position === 'fixed') {
-      return null;
-    }
-  }
-  var currentNode = getParentNode(element);
-  if (isShadowRoot(currentNode)) {
-    currentNode = currentNode.host;
-  }
-  while (isHTMLElement$2(currentNode) && ['html', 'body'].indexOf(getNodeName(currentNode)) < 0) {
-    var css = getComputedStyle$1(currentNode); // This is non-exhaustive but covers the most common CSS properties that
-    // create a containing block.
-    // https://developer.mozilla.org/en-US/docs/Web/CSS/Containing_block#identifying_the_containing_block
-
-    if (css.transform !== 'none' || css.perspective !== 'none' || css.contain === 'paint' || ['transform', 'perspective'].indexOf(css.willChange) !== -1 || isFirefox && css.willChange === 'filter' || isFirefox && css.filter && css.filter !== 'none') {
-      return currentNode;
-    } else {
-      currentNode = currentNode.parentNode;
-    }
-  }
-  return null;
-} // Gets the closest ancestor positioned element. Handles some edge cases,
-// such as table ancestors and cross browser bugs.
-
-function getOffsetParent(element) {
-  var window = getWindow$1(element);
-  var offsetParent = getTrueOffsetParent(element);
-  while (offsetParent && isTableElement(offsetParent) && getComputedStyle$1(offsetParent).position === 'static') {
-    offsetParent = getTrueOffsetParent(offsetParent);
-  }
-  if (offsetParent && (getNodeName(offsetParent) === 'html' || getNodeName(offsetParent) === 'body' && getComputedStyle$1(offsetParent).position === 'static')) {
-    return window;
-  }
-  return offsetParent || getContainingBlock(element) || window;
-}
-
-function getMainAxisFromPlacement(placement) {
-  return ['top', 'bottom'].indexOf(placement) >= 0 ? 'x' : 'y';
-}
-
-function within(min, value, max) {
-  return max$2(min, min$1(value, max));
-}
-function withinMaxClamp(min, value, max) {
-  var v = within(min, value, max);
-  return v > max ? max : v;
-}
-
-function getFreshSideObject() {
-  return {
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0
-  };
-}
-
-function mergePaddingObject(paddingObject) {
-  return Object.assign({}, getFreshSideObject(), paddingObject);
-}
-
-function expandToHashMap(value, keys) {
-  return keys.reduce(function (hashMap, key) {
-    hashMap[key] = value;
-    return hashMap;
-  }, {});
-}
-
-var toPaddingObject = function toPaddingObject(padding, state) {
-  padding = typeof padding === 'function' ? padding(Object.assign({}, state.rects, {
-    placement: state.placement
-  })) : padding;
-  return mergePaddingObject(typeof padding !== 'number' ? padding : expandToHashMap(padding, basePlacements));
-};
-function arrow(_ref) {
-  var _state$modifiersData$;
-  var state = _ref.state,
-    name = _ref.name,
-    options = _ref.options;
-  var arrowElement = state.elements.arrow;
-  var popperOffsets = state.modifiersData.popperOffsets;
-  var basePlacement = getBasePlacement(state.placement);
-  var axis = getMainAxisFromPlacement(basePlacement);
-  var isVertical = [left$1, right$1].indexOf(basePlacement) >= 0;
-  var len = isVertical ? 'height' : 'width';
-  if (!arrowElement || !popperOffsets) {
-    return;
-  }
-  var paddingObject = toPaddingObject(options.padding, state);
-  var arrowRect = getLayoutRect(arrowElement);
-  var minProp = axis === 'y' ? top$1 : left$1;
-  var maxProp = axis === 'y' ? bottom$1 : right$1;
-  var endDiff = state.rects.reference[len] + state.rects.reference[axis] - popperOffsets[axis] - state.rects.popper[len];
-  var startDiff = popperOffsets[axis] - state.rects.reference[axis];
-  var arrowOffsetParent = getOffsetParent(arrowElement);
-  var clientSize = arrowOffsetParent ? axis === 'y' ? arrowOffsetParent.clientHeight || 0 : arrowOffsetParent.clientWidth || 0 : 0;
-  var centerToReference = endDiff / 2 - startDiff / 2; // Make sure the arrow doesn't overflow the popper if the center point is
-  // outside of the popper bounds
-
-  var min = paddingObject[minProp];
-  var max = clientSize - arrowRect[len] - paddingObject[maxProp];
-  var center = clientSize / 2 - arrowRect[len] / 2 + centerToReference;
-  var offset = within(min, center, max); // Prevents breaking syntax highlighting...
-
-  var axisProp = axis;
-  state.modifiersData[name] = (_state$modifiersData$ = {}, _state$modifiersData$[axisProp] = offset, _state$modifiersData$.centerOffset = offset - center, _state$modifiersData$);
-}
-function effect$1(_ref2) {
-  var state = _ref2.state,
-    options = _ref2.options;
-  var _options$element = options.element,
-    arrowElement = _options$element === void 0 ? '[data-popper-arrow]' : _options$element;
-  if (arrowElement == null) {
-    return;
-  } // CSS selector
-
-  if (typeof arrowElement === 'string') {
-    arrowElement = state.elements.popper.querySelector(arrowElement);
-    if (!arrowElement) {
-      return;
-    }
-  }
-  if (!contains$3(state.elements.popper, arrowElement)) {
-    return;
-  }
-  state.elements.arrow = arrowElement;
-} // eslint-disable-next-line import/no-unused-modules
-
-var arrow$1 = {
-  name: 'arrow',
-  enabled: true,
-  phase: 'main',
-  fn: arrow,
-  effect: effect$1,
-  requires: ['popperOffsets'],
-  requiresIfExists: ['preventOverflow']
-};
-
-function getVariation(placement) {
-  return placement.split('-')[1];
-}
-
-var unsetSides = {
-  top: 'auto',
-  right: 'auto',
-  bottom: 'auto',
-  left: 'auto'
-}; // Round the offsets to the nearest suitable subpixel based on the DPR.
-// Zooming can change the DPR, but it seems to report a value that will
-// cleanly divide the values into the appropriate subpixels.
-
-function roundOffsetsByDPR(_ref, win) {
-  var x = _ref.x,
-    y = _ref.y;
-  var dpr = win.devicePixelRatio || 1;
-  return {
-    x: round$2(x * dpr) / dpr || 0,
-    y: round$2(y * dpr) / dpr || 0
-  };
-}
-function mapToStyles(_ref2) {
-  var _Object$assign2;
-  var popper = _ref2.popper,
-    popperRect = _ref2.popperRect,
-    placement = _ref2.placement,
-    variation = _ref2.variation,
-    offsets = _ref2.offsets,
-    position = _ref2.position,
-    gpuAcceleration = _ref2.gpuAcceleration,
-    adaptive = _ref2.adaptive,
-    roundOffsets = _ref2.roundOffsets,
-    isFixed = _ref2.isFixed;
-  var _offsets$x = offsets.x,
-    x = _offsets$x === void 0 ? 0 : _offsets$x,
-    _offsets$y = offsets.y,
-    y = _offsets$y === void 0 ? 0 : _offsets$y;
-  var _ref3 = typeof roundOffsets === 'function' ? roundOffsets({
-    x: x,
-    y: y
-  }) : {
-    x: x,
-    y: y
-  };
-  x = _ref3.x;
-  y = _ref3.y;
-  var hasX = offsets.hasOwnProperty('x');
-  var hasY = offsets.hasOwnProperty('y');
-  var sideX = left$1;
-  var sideY = top$1;
-  var win = window;
-  if (adaptive) {
-    var offsetParent = getOffsetParent(popper);
-    var heightProp = 'clientHeight';
-    var widthProp = 'clientWidth';
-    if (offsetParent === getWindow$1(popper)) {
-      offsetParent = getDocumentElement(popper);
-      if (getComputedStyle$1(offsetParent).position !== 'static' && position === 'absolute') {
-        heightProp = 'scrollHeight';
-        widthProp = 'scrollWidth';
-      }
-    } // $FlowFixMe[incompatible-cast]: force type refinement, we compare offsetParent with window above, but Flow doesn't detect it
-
-    offsetParent = offsetParent;
-    if (placement === top$1 || (placement === left$1 || placement === right$1) && variation === end) {
-      sideY = bottom$1;
-      var offsetY = isFixed && offsetParent === win && win.visualViewport ? win.visualViewport.height :
-      // $FlowFixMe[prop-missing]
-      offsetParent[heightProp];
-      y -= offsetY - popperRect.height;
-      y *= gpuAcceleration ? 1 : -1;
-    }
-    if (placement === left$1 || (placement === top$1 || placement === bottom$1) && variation === end) {
-      sideX = right$1;
-      var offsetX = isFixed && offsetParent === win && win.visualViewport ? win.visualViewport.width :
-      // $FlowFixMe[prop-missing]
-      offsetParent[widthProp];
-      x -= offsetX - popperRect.width;
-      x *= gpuAcceleration ? 1 : -1;
-    }
-  }
-  var commonStyles = Object.assign({
-    position: position
-  }, adaptive && unsetSides);
-  var _ref4 = roundOffsets === true ? roundOffsetsByDPR({
-    x: x,
-    y: y
-  }, getWindow$1(popper)) : {
-    x: x,
-    y: y
-  };
-  x = _ref4.x;
-  y = _ref4.y;
-  if (gpuAcceleration) {
-    var _Object$assign;
-    return Object.assign({}, commonStyles, (_Object$assign = {}, _Object$assign[sideY] = hasY ? '0' : '', _Object$assign[sideX] = hasX ? '0' : '', _Object$assign.transform = (win.devicePixelRatio || 1) <= 1 ? "translate(" + x + "px, " + y + "px)" : "translate3d(" + x + "px, " + y + "px, 0)", _Object$assign));
-  }
-  return Object.assign({}, commonStyles, (_Object$assign2 = {}, _Object$assign2[sideY] = hasY ? y + "px" : '', _Object$assign2[sideX] = hasX ? x + "px" : '', _Object$assign2.transform = '', _Object$assign2));
-}
-function computeStyles(_ref5) {
-  var state = _ref5.state,
-    options = _ref5.options;
-  var _options$gpuAccelerat = options.gpuAcceleration,
-    gpuAcceleration = _options$gpuAccelerat === void 0 ? true : _options$gpuAccelerat,
-    _options$adaptive = options.adaptive,
-    adaptive = _options$adaptive === void 0 ? true : _options$adaptive,
-    _options$roundOffsets = options.roundOffsets,
-    roundOffsets = _options$roundOffsets === void 0 ? true : _options$roundOffsets;
-  var commonStyles = {
-    placement: getBasePlacement(state.placement),
-    variation: getVariation(state.placement),
-    popper: state.elements.popper,
-    popperRect: state.rects.popper,
-    gpuAcceleration: gpuAcceleration,
-    isFixed: state.options.strategy === 'fixed'
-  };
-  if (state.modifiersData.popperOffsets != null) {
-    state.styles.popper = Object.assign({}, state.styles.popper, mapToStyles(Object.assign({}, commonStyles, {
-      offsets: state.modifiersData.popperOffsets,
-      position: state.options.strategy,
-      adaptive: adaptive,
-      roundOffsets: roundOffsets
-    })));
-  }
-  if (state.modifiersData.arrow != null) {
-    state.styles.arrow = Object.assign({}, state.styles.arrow, mapToStyles(Object.assign({}, commonStyles, {
-      offsets: state.modifiersData.arrow,
-      position: 'absolute',
-      adaptive: false,
-      roundOffsets: roundOffsets
-    })));
-  }
-  state.attributes.popper = Object.assign({}, state.attributes.popper, {
-    'data-popper-placement': state.placement
-  });
-} // eslint-disable-next-line import/no-unused-modules
-
-var computeStyles$1 = {
-  name: 'computeStyles',
-  enabled: true,
-  phase: 'beforeWrite',
-  fn: computeStyles,
-  data: {}
-};
-
-var passive = {
-  passive: true
-};
-function effect(_ref) {
-  var state = _ref.state,
-    instance = _ref.instance,
-    options = _ref.options;
-  var _options$scroll = options.scroll,
-    scroll = _options$scroll === void 0 ? true : _options$scroll,
-    _options$resize = options.resize,
-    resize = _options$resize === void 0 ? true : _options$resize;
-  var window = getWindow$1(state.elements.popper);
-  var scrollParents = [].concat(state.scrollParents.reference, state.scrollParents.popper);
-  if (scroll) {
-    scrollParents.forEach(function (scrollParent) {
-      scrollParent.addEventListener('scroll', instance.update, passive);
-    });
-  }
-  if (resize) {
-    window.addEventListener('resize', instance.update, passive);
-  }
-  return function () {
-    if (scroll) {
-      scrollParents.forEach(function (scrollParent) {
-        scrollParent.removeEventListener('scroll', instance.update, passive);
-      });
-    }
-    if (resize) {
-      window.removeEventListener('resize', instance.update, passive);
-    }
-  };
-} // eslint-disable-next-line import/no-unused-modules
-
-var eventListeners = {
-  name: 'eventListeners',
-  enabled: true,
-  phase: 'write',
-  fn: function fn() {},
-  effect: effect,
-  data: {}
-};
-
-var hash$1 = {
-  left: 'right',
-  right: 'left',
-  bottom: 'top',
-  top: 'bottom'
-};
-function getOppositePlacement(placement) {
-  return placement.replace(/left|right|bottom|top/g, function (matched) {
-    return hash$1[matched];
-  });
-}
-
-var hash = {
-  start: 'end',
-  end: 'start'
-};
-function getOppositeVariationPlacement(placement) {
-  return placement.replace(/start|end/g, function (matched) {
-    return hash[matched];
-  });
-}
-
-function getWindowScroll(node) {
-  var win = getWindow$1(node);
-  var scrollLeft = win.pageXOffset;
-  var scrollTop = win.pageYOffset;
-  return {
-    scrollLeft: scrollLeft,
-    scrollTop: scrollTop
-  };
-}
-
-function getWindowScrollBarX(element) {
-  // If <html> has a CSS width greater than the viewport, then this will be
-  // incorrect for RTL.
-  // Popper 1 is broken in this case and never had a bug report so let's assume
-  // it's not an issue. I don't think anyone ever specifies width on <html>
-  // anyway.
-  // Browsers where the left scrollbar doesn't cause an issue report `0` for
-  // this (e.g. Edge 2019, IE11, Safari)
-  return getBoundingClientRect$1(getDocumentElement(element)).left + getWindowScroll(element).scrollLeft;
-}
-
-function getViewportRect(element, strategy) {
-  var win = getWindow$1(element);
-  var html = getDocumentElement(element);
-  var visualViewport = win.visualViewport;
-  var width = html.clientWidth;
-  var height = html.clientHeight;
-  var x = 0;
-  var y = 0;
-  if (visualViewport) {
-    width = visualViewport.width;
-    height = visualViewport.height;
-    var layoutViewport = isLayoutViewport();
-    if (layoutViewport || !layoutViewport && strategy === 'fixed') {
-      x = visualViewport.offsetLeft;
-      y = visualViewport.offsetTop;
-    }
-  }
-  return {
-    width: width,
-    height: height,
-    x: x + getWindowScrollBarX(element),
-    y: y
-  };
-}
-
-// of the `<html>` and `<body>` rect bounds if horizontally scrollable
-
-function getDocumentRect(element) {
-  var _element$ownerDocumen;
-  var html = getDocumentElement(element);
-  var winScroll = getWindowScroll(element);
-  var body = (_element$ownerDocumen = element.ownerDocument) == null ? void 0 : _element$ownerDocumen.body;
-  var width = max$2(html.scrollWidth, html.clientWidth, body ? body.scrollWidth : 0, body ? body.clientWidth : 0);
-  var height = max$2(html.scrollHeight, html.clientHeight, body ? body.scrollHeight : 0, body ? body.clientHeight : 0);
-  var x = -winScroll.scrollLeft + getWindowScrollBarX(element);
-  var y = -winScroll.scrollTop;
-  if (getComputedStyle$1(body || html).direction === 'rtl') {
-    x += max$2(html.clientWidth, body ? body.clientWidth : 0) - width;
-  }
-  return {
-    width: width,
-    height: height,
-    x: x,
-    y: y
-  };
-}
-
-function isScrollParent(element) {
-  // Firefox wants us to check `-x` and `-y` variations as well
-  var _getComputedStyle = getComputedStyle$1(element),
-    overflow = _getComputedStyle.overflow,
-    overflowX = _getComputedStyle.overflowX,
-    overflowY = _getComputedStyle.overflowY;
-  return /auto|scroll|overlay|hidden/.test(overflow + overflowY + overflowX);
-}
-
-function getScrollParent(node) {
-  if (['html', 'body', '#document'].indexOf(getNodeName(node)) >= 0) {
-    // $FlowFixMe[incompatible-return]: assume body is always available
-    return node.ownerDocument.body;
-  }
-  if (isHTMLElement$2(node) && isScrollParent(node)) {
-    return node;
-  }
-  return getScrollParent(getParentNode(node));
-}
-
-/*
-given a DOM element, return the list of all scroll parents, up the list of ancesors
-until we get to the top window object. This list is what we attach scroll listeners
-to, because if any of these parent elements scroll, we'll need to re-calculate the
-reference element's position.
-*/
-
-function listScrollParents(element, list) {
-  var _element$ownerDocumen;
-  if (list === void 0) {
-    list = [];
-  }
-  var scrollParent = getScrollParent(element);
-  var isBody = scrollParent === ((_element$ownerDocumen = element.ownerDocument) == null ? void 0 : _element$ownerDocumen.body);
-  var win = getWindow$1(scrollParent);
-  var target = isBody ? [win].concat(win.visualViewport || [], isScrollParent(scrollParent) ? scrollParent : []) : scrollParent;
-  var updatedList = list.concat(target);
-  return isBody ? updatedList :
-  // $FlowFixMe[incompatible-call]: isBody tells us target will be an HTMLElement here
-  updatedList.concat(listScrollParents(getParentNode(target)));
-}
-
-function rectToClientRect(rect) {
-  return Object.assign({}, rect, {
-    left: rect.x,
-    top: rect.y,
-    right: rect.x + rect.width,
-    bottom: rect.y + rect.height
-  });
-}
-
-function getInnerBoundingClientRect(element, strategy) {
-  var rect = getBoundingClientRect$1(element, false, strategy === 'fixed');
-  rect.top = rect.top + element.clientTop;
-  rect.left = rect.left + element.clientLeft;
-  rect.bottom = rect.top + element.clientHeight;
-  rect.right = rect.left + element.clientWidth;
-  rect.width = element.clientWidth;
-  rect.height = element.clientHeight;
-  rect.x = rect.left;
-  rect.y = rect.top;
-  return rect;
-}
-function getClientRectFromMixedType(element, clippingParent, strategy) {
-  return clippingParent === viewport ? rectToClientRect(getViewportRect(element, strategy)) : isElement$2(clippingParent) ? getInnerBoundingClientRect(clippingParent, strategy) : rectToClientRect(getDocumentRect(getDocumentElement(element)));
-} // A "clipping parent" is an overflowable container with the characteristic of
-// clipping (or hiding) overflowing elements with a position different from
-// `initial`
-
-function getClippingParents(element) {
-  var clippingParents = listScrollParents(getParentNode(element));
-  var canEscapeClipping = ['absolute', 'fixed'].indexOf(getComputedStyle$1(element).position) >= 0;
-  var clipperElement = canEscapeClipping && isHTMLElement$2(element) ? getOffsetParent(element) : element;
-  if (!isElement$2(clipperElement)) {
-    return [];
-  } // $FlowFixMe[incompatible-return]: https://github.com/facebook/flow/issues/1414
-
-  return clippingParents.filter(function (clippingParent) {
-    return isElement$2(clippingParent) && contains$3(clippingParent, clipperElement) && getNodeName(clippingParent) !== 'body';
-  });
-} // Gets the maximum area that the element is visible in due to any number of
-// clipping parents
-
-function getClippingRect(element, boundary, rootBoundary, strategy) {
-  var mainClippingParents = boundary === 'clippingParents' ? getClippingParents(element) : [].concat(boundary);
-  var clippingParents = [].concat(mainClippingParents, [rootBoundary]);
-  var firstClippingParent = clippingParents[0];
-  var clippingRect = clippingParents.reduce(function (accRect, clippingParent) {
-    var rect = getClientRectFromMixedType(element, clippingParent, strategy);
-    accRect.top = max$2(rect.top, accRect.top);
-    accRect.right = min$1(rect.right, accRect.right);
-    accRect.bottom = min$1(rect.bottom, accRect.bottom);
-    accRect.left = max$2(rect.left, accRect.left);
-    return accRect;
-  }, getClientRectFromMixedType(element, firstClippingParent, strategy));
-  clippingRect.width = clippingRect.right - clippingRect.left;
-  clippingRect.height = clippingRect.bottom - clippingRect.top;
-  clippingRect.x = clippingRect.left;
-  clippingRect.y = clippingRect.top;
-  return clippingRect;
-}
-
-function computeOffsets(_ref) {
-  var reference = _ref.reference,
-    element = _ref.element,
-    placement = _ref.placement;
-  var basePlacement = placement ? getBasePlacement(placement) : null;
-  var variation = placement ? getVariation(placement) : null;
-  var commonX = reference.x + reference.width / 2 - element.width / 2;
-  var commonY = reference.y + reference.height / 2 - element.height / 2;
-  var offsets;
-  switch (basePlacement) {
-    case top$1:
-      offsets = {
-        x: commonX,
-        y: reference.y - element.height
-      };
-      break;
-    case bottom$1:
-      offsets = {
-        x: commonX,
-        y: reference.y + reference.height
-      };
-      break;
-    case right$1:
-      offsets = {
-        x: reference.x + reference.width,
-        y: commonY
-      };
-      break;
-    case left$1:
-      offsets = {
-        x: reference.x - element.width,
-        y: commonY
-      };
-      break;
-    default:
-      offsets = {
-        x: reference.x,
-        y: reference.y
-      };
-  }
-  var mainAxis = basePlacement ? getMainAxisFromPlacement(basePlacement) : null;
-  if (mainAxis != null) {
-    var len = mainAxis === 'y' ? 'height' : 'width';
-    switch (variation) {
-      case start:
-        offsets[mainAxis] = offsets[mainAxis] - (reference[len] / 2 - element[len] / 2);
-        break;
-      case end:
-        offsets[mainAxis] = offsets[mainAxis] + (reference[len] / 2 - element[len] / 2);
-        break;
-    }
-  }
-  return offsets;
-}
-
-function detectOverflow(state, options) {
-  if (options === void 0) {
-    options = {};
-  }
-  var _options = options,
-    _options$placement = _options.placement,
-    placement = _options$placement === void 0 ? state.placement : _options$placement,
-    _options$strategy = _options.strategy,
-    strategy = _options$strategy === void 0 ? state.strategy : _options$strategy,
-    _options$boundary = _options.boundary,
-    boundary = _options$boundary === void 0 ? clippingParents : _options$boundary,
-    _options$rootBoundary = _options.rootBoundary,
-    rootBoundary = _options$rootBoundary === void 0 ? viewport : _options$rootBoundary,
-    _options$elementConte = _options.elementContext,
-    elementContext = _options$elementConte === void 0 ? popper : _options$elementConte,
-    _options$altBoundary = _options.altBoundary,
-    altBoundary = _options$altBoundary === void 0 ? false : _options$altBoundary,
-    _options$padding = _options.padding,
-    padding = _options$padding === void 0 ? 0 : _options$padding;
-  var paddingObject = mergePaddingObject(typeof padding !== 'number' ? padding : expandToHashMap(padding, basePlacements));
-  var altContext = elementContext === popper ? reference : popper;
-  var popperRect = state.rects.popper;
-  var element = state.elements[altBoundary ? altContext : elementContext];
-  var clippingClientRect = getClippingRect(isElement$2(element) ? element : element.contextElement || getDocumentElement(state.elements.popper), boundary, rootBoundary, strategy);
-  var referenceClientRect = getBoundingClientRect$1(state.elements.reference);
-  var popperOffsets = computeOffsets({
-    reference: referenceClientRect,
-    element: popperRect,
-    strategy: 'absolute',
-    placement: placement
-  });
-  var popperClientRect = rectToClientRect(Object.assign({}, popperRect, popperOffsets));
-  var elementClientRect = elementContext === popper ? popperClientRect : referenceClientRect; // positive = overflowing the clipping rect
-  // 0 or negative = within the clipping rect
-
-  var overflowOffsets = {
-    top: clippingClientRect.top - elementClientRect.top + paddingObject.top,
-    bottom: elementClientRect.bottom - clippingClientRect.bottom + paddingObject.bottom,
-    left: clippingClientRect.left - elementClientRect.left + paddingObject.left,
-    right: elementClientRect.right - clippingClientRect.right + paddingObject.right
-  };
-  var offsetData = state.modifiersData.offset; // Offsets can be applied only to the popper element
-
-  if (elementContext === popper && offsetData) {
-    var offset = offsetData[placement];
-    Object.keys(overflowOffsets).forEach(function (key) {
-      var multiply = [right$1, bottom$1].indexOf(key) >= 0 ? 1 : -1;
-      var axis = [top$1, bottom$1].indexOf(key) >= 0 ? 'y' : 'x';
-      overflowOffsets[key] += offset[axis] * multiply;
-    });
-  }
-  return overflowOffsets;
-}
-
-function computeAutoPlacement(state, options) {
-  if (options === void 0) {
-    options = {};
-  }
-  var _options = options,
-    placement = _options.placement,
-    boundary = _options.boundary,
-    rootBoundary = _options.rootBoundary,
-    padding = _options.padding,
-    flipVariations = _options.flipVariations,
-    _options$allowedAutoP = _options.allowedAutoPlacements,
-    allowedAutoPlacements = _options$allowedAutoP === void 0 ? placements : _options$allowedAutoP;
-  var variation = getVariation(placement);
-  var placements$1 = variation ? flipVariations ? variationPlacements : variationPlacements.filter(function (placement) {
-    return getVariation(placement) === variation;
-  }) : basePlacements;
-  var allowedPlacements = placements$1.filter(function (placement) {
-    return allowedAutoPlacements.indexOf(placement) >= 0;
-  });
-  if (allowedPlacements.length === 0) {
-    allowedPlacements = placements$1;
-  } // $FlowFixMe[incompatible-type]: Flow seems to have problems with two array unions...
-
-  var overflows = allowedPlacements.reduce(function (acc, placement) {
-    acc[placement] = detectOverflow(state, {
-      placement: placement,
-      boundary: boundary,
-      rootBoundary: rootBoundary,
-      padding: padding
-    })[getBasePlacement(placement)];
-    return acc;
-  }, {});
-  return Object.keys(overflows).sort(function (a, b) {
-    return overflows[a] - overflows[b];
-  });
-}
-
-function getExpandedFallbackPlacements(placement) {
-  if (getBasePlacement(placement) === auto) {
-    return [];
-  }
-  var oppositePlacement = getOppositePlacement(placement);
-  return [getOppositeVariationPlacement(placement), oppositePlacement, getOppositeVariationPlacement(oppositePlacement)];
-}
-function flip$1(_ref) {
-  var state = _ref.state,
-    options = _ref.options,
-    name = _ref.name;
-  if (state.modifiersData[name]._skip) {
-    return;
-  }
-  var _options$mainAxis = options.mainAxis,
-    checkMainAxis = _options$mainAxis === void 0 ? true : _options$mainAxis,
-    _options$altAxis = options.altAxis,
-    checkAltAxis = _options$altAxis === void 0 ? true : _options$altAxis,
-    specifiedFallbackPlacements = options.fallbackPlacements,
-    padding = options.padding,
-    boundary = options.boundary,
-    rootBoundary = options.rootBoundary,
-    altBoundary = options.altBoundary,
-    _options$flipVariatio = options.flipVariations,
-    flipVariations = _options$flipVariatio === void 0 ? true : _options$flipVariatio,
-    allowedAutoPlacements = options.allowedAutoPlacements;
-  var preferredPlacement = state.options.placement;
-  var basePlacement = getBasePlacement(preferredPlacement);
-  var isBasePlacement = basePlacement === preferredPlacement;
-  var fallbackPlacements = specifiedFallbackPlacements || (isBasePlacement || !flipVariations ? [getOppositePlacement(preferredPlacement)] : getExpandedFallbackPlacements(preferredPlacement));
-  var placements = [preferredPlacement].concat(fallbackPlacements).reduce(function (acc, placement) {
-    return acc.concat(getBasePlacement(placement) === auto ? computeAutoPlacement(state, {
-      placement: placement,
-      boundary: boundary,
-      rootBoundary: rootBoundary,
-      padding: padding,
-      flipVariations: flipVariations,
-      allowedAutoPlacements: allowedAutoPlacements
-    }) : placement);
-  }, []);
-  var referenceRect = state.rects.reference;
-  var popperRect = state.rects.popper;
-  var checksMap = new Map();
-  var makeFallbackChecks = true;
-  var firstFittingPlacement = placements[0];
-  for (var i = 0; i < placements.length; i++) {
-    var placement = placements[i];
-    var _basePlacement = getBasePlacement(placement);
-    var isStartVariation = getVariation(placement) === start;
-    var isVertical = [top$1, bottom$1].indexOf(_basePlacement) >= 0;
-    var len = isVertical ? 'width' : 'height';
-    var overflow = detectOverflow(state, {
-      placement: placement,
-      boundary: boundary,
-      rootBoundary: rootBoundary,
-      altBoundary: altBoundary,
-      padding: padding
-    });
-    var mainVariationSide = isVertical ? isStartVariation ? right$1 : left$1 : isStartVariation ? bottom$1 : top$1;
-    if (referenceRect[len] > popperRect[len]) {
-      mainVariationSide = getOppositePlacement(mainVariationSide);
-    }
-    var altVariationSide = getOppositePlacement(mainVariationSide);
-    var checks = [];
-    if (checkMainAxis) {
-      checks.push(overflow[_basePlacement] <= 0);
-    }
-    if (checkAltAxis) {
-      checks.push(overflow[mainVariationSide] <= 0, overflow[altVariationSide] <= 0);
-    }
-    if (checks.every(function (check) {
-      return check;
-    })) {
-      firstFittingPlacement = placement;
-      makeFallbackChecks = false;
-      break;
-    }
-    checksMap.set(placement, checks);
-  }
-  if (makeFallbackChecks) {
-    // `2` may be desired in some cases – research later
-    var numberOfChecks = flipVariations ? 3 : 1;
-    var _loop = function _loop(_i) {
-      var fittingPlacement = placements.find(function (placement) {
-        var checks = checksMap.get(placement);
-        if (checks) {
-          return checks.slice(0, _i).every(function (check) {
-            return check;
-          });
-        }
-      });
-      if (fittingPlacement) {
-        firstFittingPlacement = fittingPlacement;
-        return "break";
-      }
-    };
-    for (var _i = numberOfChecks; _i > 0; _i--) {
-      var _ret = _loop(_i);
-      if (_ret === "break") break;
-    }
-  }
-  if (state.placement !== firstFittingPlacement) {
-    state.modifiersData[name]._skip = true;
-    state.placement = firstFittingPlacement;
-    state.reset = true;
-  }
-} // eslint-disable-next-line import/no-unused-modules
-
-var flip$2 = {
-  name: 'flip',
-  enabled: true,
-  phase: 'main',
-  fn: flip$1,
-  requiresIfExists: ['offset'],
-  data: {
-    _skip: false
-  }
-};
-
-function getSideOffsets(overflow, rect, preventedOffsets) {
-  if (preventedOffsets === void 0) {
-    preventedOffsets = {
-      x: 0,
-      y: 0
-    };
-  }
-  return {
-    top: overflow.top - rect.height - preventedOffsets.y,
-    right: overflow.right - rect.width + preventedOffsets.x,
-    bottom: overflow.bottom - rect.height + preventedOffsets.y,
-    left: overflow.left - rect.width - preventedOffsets.x
-  };
-}
-function isAnySideFullyClipped(overflow) {
-  return [top$1, right$1, bottom$1, left$1].some(function (side) {
-    return overflow[side] >= 0;
-  });
-}
-function hide(_ref) {
-  var state = _ref.state,
-    name = _ref.name;
-  var referenceRect = state.rects.reference;
-  var popperRect = state.rects.popper;
-  var preventedOffsets = state.modifiersData.preventOverflow;
-  var referenceOverflow = detectOverflow(state, {
-    elementContext: 'reference'
-  });
-  var popperAltOverflow = detectOverflow(state, {
-    altBoundary: true
-  });
-  var referenceClippingOffsets = getSideOffsets(referenceOverflow, referenceRect);
-  var popperEscapeOffsets = getSideOffsets(popperAltOverflow, popperRect, preventedOffsets);
-  var isReferenceHidden = isAnySideFullyClipped(referenceClippingOffsets);
-  var hasPopperEscaped = isAnySideFullyClipped(popperEscapeOffsets);
-  state.modifiersData[name] = {
-    referenceClippingOffsets: referenceClippingOffsets,
-    popperEscapeOffsets: popperEscapeOffsets,
-    isReferenceHidden: isReferenceHidden,
-    hasPopperEscaped: hasPopperEscaped
-  };
-  state.attributes.popper = Object.assign({}, state.attributes.popper, {
-    'data-popper-reference-hidden': isReferenceHidden,
-    'data-popper-escaped': hasPopperEscaped
-  });
-} // eslint-disable-next-line import/no-unused-modules
-
-var hide$1 = {
-  name: 'hide',
-  enabled: true,
-  phase: 'main',
-  requiresIfExists: ['preventOverflow'],
-  fn: hide
-};
-
-function distanceAndSkiddingToXY(placement, rects, offset) {
-  var basePlacement = getBasePlacement(placement);
-  var invertDistance = [left$1, top$1].indexOf(basePlacement) >= 0 ? -1 : 1;
-  var _ref = typeof offset === 'function' ? offset(Object.assign({}, rects, {
-      placement: placement
-    })) : offset,
-    skidding = _ref[0],
-    distance = _ref[1];
-  skidding = skidding || 0;
-  distance = (distance || 0) * invertDistance;
-  return [left$1, right$1].indexOf(basePlacement) >= 0 ? {
-    x: distance,
-    y: skidding
-  } : {
-    x: skidding,
-    y: distance
-  };
-}
-function offset$1(_ref2) {
-  var state = _ref2.state,
-    options = _ref2.options,
-    name = _ref2.name;
-  var _options$offset = options.offset,
-    offset = _options$offset === void 0 ? [0, 0] : _options$offset;
-  var data = placements.reduce(function (acc, placement) {
-    acc[placement] = distanceAndSkiddingToXY(placement, state.rects, offset);
-    return acc;
-  }, {});
-  var _data$state$placement = data[state.placement],
-    x = _data$state$placement.x,
-    y = _data$state$placement.y;
-  if (state.modifiersData.popperOffsets != null) {
-    state.modifiersData.popperOffsets.x += x;
-    state.modifiersData.popperOffsets.y += y;
-  }
-  state.modifiersData[name] = data;
-} // eslint-disable-next-line import/no-unused-modules
-
-var offset$2 = {
-  name: 'offset',
-  enabled: true,
-  phase: 'main',
-  requires: ['popperOffsets'],
-  fn: offset$1
-};
-
-function popperOffsets(_ref) {
-  var state = _ref.state,
-    name = _ref.name;
-  // Offsets are the actual position the popper needs to have to be
-  // properly positioned near its reference element
-  // This is the most basic placement, and will be adjusted by
-  // the modifiers in the next step
-  state.modifiersData[name] = computeOffsets({
-    reference: state.rects.reference,
-    element: state.rects.popper,
-    strategy: 'absolute',
-    placement: state.placement
-  });
-} // eslint-disable-next-line import/no-unused-modules
-
-var popperOffsets$1 = {
-  name: 'popperOffsets',
-  enabled: true,
-  phase: 'read',
-  fn: popperOffsets,
-  data: {}
-};
-
-function getAltAxis(axis) {
-  return axis === 'x' ? 'y' : 'x';
-}
-
-function preventOverflow(_ref) {
-  var state = _ref.state,
-    options = _ref.options,
-    name = _ref.name;
-  var _options$mainAxis = options.mainAxis,
-    checkMainAxis = _options$mainAxis === void 0 ? true : _options$mainAxis,
-    _options$altAxis = options.altAxis,
-    checkAltAxis = _options$altAxis === void 0 ? false : _options$altAxis,
-    boundary = options.boundary,
-    rootBoundary = options.rootBoundary,
-    altBoundary = options.altBoundary,
-    padding = options.padding,
-    _options$tether = options.tether,
-    tether = _options$tether === void 0 ? true : _options$tether,
-    _options$tetherOffset = options.tetherOffset,
-    tetherOffset = _options$tetherOffset === void 0 ? 0 : _options$tetherOffset;
-  var overflow = detectOverflow(state, {
-    boundary: boundary,
-    rootBoundary: rootBoundary,
-    padding: padding,
-    altBoundary: altBoundary
-  });
-  var basePlacement = getBasePlacement(state.placement);
-  var variation = getVariation(state.placement);
-  var isBasePlacement = !variation;
-  var mainAxis = getMainAxisFromPlacement(basePlacement);
-  var altAxis = getAltAxis(mainAxis);
-  var popperOffsets = state.modifiersData.popperOffsets;
-  var referenceRect = state.rects.reference;
-  var popperRect = state.rects.popper;
-  var tetherOffsetValue = typeof tetherOffset === 'function' ? tetherOffset(Object.assign({}, state.rects, {
-    placement: state.placement
-  })) : tetherOffset;
-  var normalizedTetherOffsetValue = typeof tetherOffsetValue === 'number' ? {
-    mainAxis: tetherOffsetValue,
-    altAxis: tetherOffsetValue
-  } : Object.assign({
-    mainAxis: 0,
-    altAxis: 0
-  }, tetherOffsetValue);
-  var offsetModifierState = state.modifiersData.offset ? state.modifiersData.offset[state.placement] : null;
-  var data = {
-    x: 0,
-    y: 0
-  };
-  if (!popperOffsets) {
-    return;
-  }
-  if (checkMainAxis) {
-    var _offsetModifierState$;
-    var mainSide = mainAxis === 'y' ? top$1 : left$1;
-    var altSide = mainAxis === 'y' ? bottom$1 : right$1;
-    var len = mainAxis === 'y' ? 'height' : 'width';
-    var offset = popperOffsets[mainAxis];
-    var min = offset + overflow[mainSide];
-    var max = offset - overflow[altSide];
-    var additive = tether ? -popperRect[len] / 2 : 0;
-    var minLen = variation === start ? referenceRect[len] : popperRect[len];
-    var maxLen = variation === start ? -popperRect[len] : -referenceRect[len]; // We need to include the arrow in the calculation so the arrow doesn't go
-    // outside the reference bounds
-
-    var arrowElement = state.elements.arrow;
-    var arrowRect = tether && arrowElement ? getLayoutRect(arrowElement) : {
-      width: 0,
-      height: 0
-    };
-    var arrowPaddingObject = state.modifiersData['arrow#persistent'] ? state.modifiersData['arrow#persistent'].padding : getFreshSideObject();
-    var arrowPaddingMin = arrowPaddingObject[mainSide];
-    var arrowPaddingMax = arrowPaddingObject[altSide]; // If the reference length is smaller than the arrow length, we don't want
-    // to include its full size in the calculation. If the reference is small
-    // and near the edge of a boundary, the popper can overflow even if the
-    // reference is not overflowing as well (e.g. virtual elements with no
-    // width or height)
-
-    var arrowLen = within(0, referenceRect[len], arrowRect[len]);
-    var minOffset = isBasePlacement ? referenceRect[len] / 2 - additive - arrowLen - arrowPaddingMin - normalizedTetherOffsetValue.mainAxis : minLen - arrowLen - arrowPaddingMin - normalizedTetherOffsetValue.mainAxis;
-    var maxOffset = isBasePlacement ? -referenceRect[len] / 2 + additive + arrowLen + arrowPaddingMax + normalizedTetherOffsetValue.mainAxis : maxLen + arrowLen + arrowPaddingMax + normalizedTetherOffsetValue.mainAxis;
-    var arrowOffsetParent = state.elements.arrow && getOffsetParent(state.elements.arrow);
-    var clientOffset = arrowOffsetParent ? mainAxis === 'y' ? arrowOffsetParent.clientTop || 0 : arrowOffsetParent.clientLeft || 0 : 0;
-    var offsetModifierValue = (_offsetModifierState$ = offsetModifierState == null ? void 0 : offsetModifierState[mainAxis]) != null ? _offsetModifierState$ : 0;
-    var tetherMin = offset + minOffset - offsetModifierValue - clientOffset;
-    var tetherMax = offset + maxOffset - offsetModifierValue;
-    var preventedOffset = within(tether ? min$1(min, tetherMin) : min, offset, tether ? max$2(max, tetherMax) : max);
-    popperOffsets[mainAxis] = preventedOffset;
-    data[mainAxis] = preventedOffset - offset;
-  }
-  if (checkAltAxis) {
-    var _offsetModifierState$2;
-    var _mainSide = mainAxis === 'x' ? top$1 : left$1;
-    var _altSide = mainAxis === 'x' ? bottom$1 : right$1;
-    var _offset = popperOffsets[altAxis];
-    var _len = altAxis === 'y' ? 'height' : 'width';
-    var _min = _offset + overflow[_mainSide];
-    var _max = _offset - overflow[_altSide];
-    var isOriginSide = [top$1, left$1].indexOf(basePlacement) !== -1;
-    var _offsetModifierValue = (_offsetModifierState$2 = offsetModifierState == null ? void 0 : offsetModifierState[altAxis]) != null ? _offsetModifierState$2 : 0;
-    var _tetherMin = isOriginSide ? _min : _offset - referenceRect[_len] - popperRect[_len] - _offsetModifierValue + normalizedTetherOffsetValue.altAxis;
-    var _tetherMax = isOriginSide ? _offset + referenceRect[_len] + popperRect[_len] - _offsetModifierValue - normalizedTetherOffsetValue.altAxis : _max;
-    var _preventedOffset = tether && isOriginSide ? withinMaxClamp(_tetherMin, _offset, _tetherMax) : within(tether ? _tetherMin : _min, _offset, tether ? _tetherMax : _max);
-    popperOffsets[altAxis] = _preventedOffset;
-    data[altAxis] = _preventedOffset - _offset;
-  }
-  state.modifiersData[name] = data;
-} // eslint-disable-next-line import/no-unused-modules
-
-var preventOverflow$1 = {
-  name: 'preventOverflow',
-  enabled: true,
-  phase: 'main',
-  fn: preventOverflow,
-  requiresIfExists: ['offset']
-};
-
-function getHTMLElementScroll(element) {
-  return {
-    scrollLeft: element.scrollLeft,
-    scrollTop: element.scrollTop
-  };
-}
-
-function getNodeScroll(node) {
-  if (node === getWindow$1(node) || !isHTMLElement$2(node)) {
-    return getWindowScroll(node);
-  } else {
-    return getHTMLElementScroll(node);
-  }
-}
-
-function isElementScaled(element) {
-  var rect = element.getBoundingClientRect();
-  var scaleX = round$2(rect.width) / element.offsetWidth || 1;
-  var scaleY = round$2(rect.height) / element.offsetHeight || 1;
-  return scaleX !== 1 || scaleY !== 1;
-} // Returns the composite rect of an element relative to its offsetParent.
-// Composite means it takes into account transforms as well as layout.
-
-function getCompositeRect(elementOrVirtualElement, offsetParent, isFixed) {
-  if (isFixed === void 0) {
-    isFixed = false;
-  }
-  var isOffsetParentAnElement = isHTMLElement$2(offsetParent);
-  var offsetParentIsScaled = isHTMLElement$2(offsetParent) && isElementScaled(offsetParent);
-  var documentElement = getDocumentElement(offsetParent);
-  var rect = getBoundingClientRect$1(elementOrVirtualElement, offsetParentIsScaled, isFixed);
-  var scroll = {
-    scrollLeft: 0,
-    scrollTop: 0
-  };
-  var offsets = {
-    x: 0,
-    y: 0
-  };
-  if (isOffsetParentAnElement || !isOffsetParentAnElement && !isFixed) {
-    if (getNodeName(offsetParent) !== 'body' ||
-    // https://github.com/popperjs/popper-core/issues/1078
-    isScrollParent(documentElement)) {
-      scroll = getNodeScroll(offsetParent);
-    }
-    if (isHTMLElement$2(offsetParent)) {
-      offsets = getBoundingClientRect$1(offsetParent, true);
-      offsets.x += offsetParent.clientLeft;
-      offsets.y += offsetParent.clientTop;
-    } else if (documentElement) {
-      offsets.x = getWindowScrollBarX(documentElement);
-    }
-  }
-  return {
-    x: rect.left + scroll.scrollLeft - offsets.x,
-    y: rect.top + scroll.scrollTop - offsets.y,
-    width: rect.width,
-    height: rect.height
-  };
-}
-
-function order$1(modifiers) {
-  var map = new Map();
-  var visited = new Set();
-  var result = [];
-  modifiers.forEach(function (modifier) {
-    map.set(modifier.name, modifier);
-  }); // On visiting object, check for its dependencies and visit them recursively
-
-  function sort(modifier) {
-    visited.add(modifier.name);
-    var requires = [].concat(modifier.requires || [], modifier.requiresIfExists || []);
-    requires.forEach(function (dep) {
-      if (!visited.has(dep)) {
-        var depModifier = map.get(dep);
-        if (depModifier) {
-          sort(depModifier);
-        }
-      }
-    });
-    result.push(modifier);
-  }
-  modifiers.forEach(function (modifier) {
-    if (!visited.has(modifier.name)) {
-      // check for visited object
-      sort(modifier);
-    }
-  });
-  return result;
-}
-function orderModifiers(modifiers) {
-  // order based on dependencies
-  var orderedModifiers = order$1(modifiers); // order based on phase
-
-  return modifierPhases.reduce(function (acc, phase) {
-    return acc.concat(orderedModifiers.filter(function (modifier) {
-      return modifier.phase === phase;
-    }));
-  }, []);
-}
-
-function debounce$1(fn) {
-  var pending;
-  return function () {
-    if (!pending) {
-      pending = new Promise(function (resolve) {
-        Promise.resolve().then(function () {
-          pending = undefined;
-          resolve(fn());
-        });
-      });
-    }
-    return pending;
-  };
-}
-
-function mergeByName(modifiers) {
-  var merged = modifiers.reduce(function (merged, current) {
-    var existing = merged[current.name];
-    merged[current.name] = existing ? Object.assign({}, existing, current, {
-      options: Object.assign({}, existing.options, current.options),
-      data: Object.assign({}, existing.data, current.data)
-    }) : current;
-    return merged;
-  }, {}); // IE11 does not support Object.values
-
-  return Object.keys(merged).map(function (key) {
-    return merged[key];
-  });
-}
-
-var DEFAULT_OPTIONS = {
-  placement: 'bottom',
-  modifiers: [],
-  strategy: 'absolute'
-};
-function areValidElements() {
-  for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
-    args[_key] = arguments[_key];
-  }
-  return !args.some(function (element) {
-    return !(element && typeof element.getBoundingClientRect === 'function');
-  });
-}
-function popperGenerator(generatorOptions) {
-  if (generatorOptions === void 0) {
-    generatorOptions = {};
-  }
-  var _generatorOptions = generatorOptions,
-    _generatorOptions$def = _generatorOptions.defaultModifiers,
-    defaultModifiers = _generatorOptions$def === void 0 ? [] : _generatorOptions$def,
-    _generatorOptions$def2 = _generatorOptions.defaultOptions,
-    defaultOptions = _generatorOptions$def2 === void 0 ? DEFAULT_OPTIONS : _generatorOptions$def2;
-  return function createPopper(reference, popper, options) {
-    if (options === void 0) {
-      options = defaultOptions;
-    }
-    var state = {
-      placement: 'bottom',
-      orderedModifiers: [],
-      options: Object.assign({}, DEFAULT_OPTIONS, defaultOptions),
-      modifiersData: {},
-      elements: {
-        reference: reference,
-        popper: popper
-      },
-      attributes: {},
-      styles: {}
-    };
-    var effectCleanupFns = [];
-    var isDestroyed = false;
-    var instance = {
-      state: state,
-      setOptions: function setOptions(setOptionsAction) {
-        var options = typeof setOptionsAction === 'function' ? setOptionsAction(state.options) : setOptionsAction;
-        cleanupModifierEffects();
-        state.options = Object.assign({}, defaultOptions, state.options, options);
-        state.scrollParents = {
-          reference: isElement$2(reference) ? listScrollParents(reference) : reference.contextElement ? listScrollParents(reference.contextElement) : [],
-          popper: listScrollParents(popper)
-        }; // Orders the modifiers based on their dependencies and `phase`
-        // properties
-
-        var orderedModifiers = orderModifiers(mergeByName([].concat(defaultModifiers, state.options.modifiers))); // Strip out disabled modifiers
-
-        state.orderedModifiers = orderedModifiers.filter(function (m) {
-          return m.enabled;
-        });
-        runModifierEffects();
-        return instance.update();
-      },
-      // Sync update – it will always be executed, even if not necessary. This
-      // is useful for low frequency updates where sync behavior simplifies the
-      // logic.
-      // For high frequency updates (e.g. `resize` and `scroll` events), always
-      // prefer the async Popper#update method
-      forceUpdate: function forceUpdate() {
-        if (isDestroyed) {
-          return;
-        }
-        var _state$elements = state.elements,
-          reference = _state$elements.reference,
-          popper = _state$elements.popper; // Don't proceed if `reference` or `popper` are not valid elements
-        // anymore
-
-        if (!areValidElements(reference, popper)) {
-          return;
-        } // Store the reference and popper rects to be read by modifiers
-
-        state.rects = {
-          reference: getCompositeRect(reference, getOffsetParent(popper), state.options.strategy === 'fixed'),
-          popper: getLayoutRect(popper)
-        }; // Modifiers have the ability to reset the current update cycle. The
-        // most common use case for this is the `flip` modifier changing the
-        // placement, which then needs to re-run all the modifiers, because the
-        // logic was previously ran for the previous placement and is therefore
-        // stale/incorrect
-
-        state.reset = false;
-        state.placement = state.options.placement; // On each update cycle, the `modifiersData` property for each modifier
-        // is filled with the initial data specified by the modifier. This means
-        // it doesn't persist and is fresh on each update.
-        // To ensure persistent data, use `${name}#persistent`
-
-        state.orderedModifiers.forEach(function (modifier) {
-          return state.modifiersData[modifier.name] = Object.assign({}, modifier.data);
-        });
-        for (var index = 0; index < state.orderedModifiers.length; index++) {
-          if (state.reset === true) {
-            state.reset = false;
-            index = -1;
-            continue;
-          }
-          var _state$orderedModifie = state.orderedModifiers[index],
-            fn = _state$orderedModifie.fn,
-            _state$orderedModifie2 = _state$orderedModifie.options,
-            _options = _state$orderedModifie2 === void 0 ? {} : _state$orderedModifie2,
-            name = _state$orderedModifie.name;
-          if (typeof fn === 'function') {
-            state = fn({
-              state: state,
-              options: _options,
-              name: name,
-              instance: instance
-            }) || state;
-          }
-        }
-      },
-      // Async and optimistically optimized update – it will not be executed if
-      // not necessary (debounced to run at most once-per-tick)
-      update: debounce$1(function () {
-        return new Promise(function (resolve) {
-          instance.forceUpdate();
-          resolve(state);
-        });
-      }),
-      destroy: function destroy() {
-        cleanupModifierEffects();
-        isDestroyed = true;
-      }
-    };
-    if (!areValidElements(reference, popper)) {
-      return instance;
-    }
-    instance.setOptions(options).then(function (state) {
-      if (!isDestroyed && options.onFirstUpdate) {
-        options.onFirstUpdate(state);
-      }
-    }); // Modifiers have the ability to execute arbitrary code before the first
-    // update cycle runs. They will be executed in the same order as the update
-    // cycle. This is useful when a modifier adds some persistent data that
-    // other modifiers need to use, but the modifier is run after the dependent
-    // one.
-
-    function runModifierEffects() {
-      state.orderedModifiers.forEach(function (_ref) {
-        var name = _ref.name,
-          _ref$options = _ref.options,
-          options = _ref$options === void 0 ? {} : _ref$options,
-          effect = _ref.effect;
-        if (typeof effect === 'function') {
-          var cleanupFn = effect({
-            state: state,
-            name: name,
-            instance: instance,
-            options: options
-          });
-          var noopFn = function noopFn() {};
-          effectCleanupFns.push(cleanupFn || noopFn);
-        }
-      });
-    }
-    function cleanupModifierEffects() {
-      effectCleanupFns.forEach(function (fn) {
-        return fn();
-      });
-      effectCleanupFns = [];
-    }
-    return instance;
-  };
-}
-
-var defaultModifiers = [eventListeners, popperOffsets$1, computeStyles$1, applyStyles$1, offset$2, flip$2, preventOverflow$1, arrow$1, hide$1];
-var createPopper = /*#__PURE__*/popperGenerator({
-  defaultModifiers: defaultModifiers
-}); // eslint-disable-next-line import/no-unused-modules
-
-function getPopperUtilityClass(slot) {
-  return generateUtilityClass('MuiPopper', slot);
-}
-generateUtilityClasses('MuiPopper', ['root']);
-
-function flipPlacement(placement, direction) {
-  if (direction === 'ltr') {
-    return placement;
-  }
-  switch (placement) {
-    case 'bottom-end':
-      return 'bottom-start';
-    case 'bottom-start':
-      return 'bottom-end';
-    case 'top-end':
-      return 'top-start';
-    case 'top-start':
-      return 'top-end';
-    default:
-      return placement;
-  }
-}
-function resolveAnchorEl(anchorEl) {
-  return typeof anchorEl === 'function' ? anchorEl() : anchorEl;
-}
-function isHTMLElement$1(element) {
-  return element.nodeType !== undefined;
-}
-function isVirtualElement(element) {
-  return !isHTMLElement$1(element);
-}
-const useUtilityClasses$b = ownerState => {
-  const {
-    classes
-  } = ownerState;
-  const slots = {
-    root: ['root']
-  };
-  return composeClasses(slots, getPopperUtilityClass, classes);
-};
-const defaultPopperOptions = {};
-const PopperTooltip = /*#__PURE__*/reactExports.forwardRef(function PopperTooltip(props, forwardedRef) {
-  const {
-    anchorEl,
-    children,
-    direction,
-    disablePortal,
-    modifiers,
-    open,
-    placement: initialPlacement,
-    popperOptions,
-    popperRef: popperRefProp,
-    slotProps = {},
-    slots = {},
-    TransitionProps,
-    // @ts-ignore internal logic
-    ownerState: ownerStateProp,
-    // prevent from spreading to DOM, it can come from the parent component e.g. Select.
-    ...other
-  } = props;
-  const tooltipRef = reactExports.useRef(null);
-  const ownRef = useForkRef(tooltipRef, forwardedRef);
-  const popperRef = reactExports.useRef(null);
-  const handlePopperRef = useForkRef(popperRef, popperRefProp);
-  const handlePopperRefRef = reactExports.useRef(handlePopperRef);
-  useEnhancedEffect$1(() => {
-    handlePopperRefRef.current = handlePopperRef;
-  }, [handlePopperRef]);
-  reactExports.useImperativeHandle(popperRefProp, () => popperRef.current, []);
-  const rtlPlacement = flipPlacement(initialPlacement, direction);
-  /**
-   * placement initialized from prop but can change during lifetime if modifiers.flip.
-   * modifiers.flip is essentially a flip for controlled/uncontrolled behavior
-   */
-  const [placement, setPlacement] = reactExports.useState(rtlPlacement);
-  const [resolvedAnchorElement, setResolvedAnchorElement] = reactExports.useState(resolveAnchorEl(anchorEl));
-  reactExports.useEffect(() => {
-    if (popperRef.current) {
-      popperRef.current.forceUpdate();
-    }
-  });
-  reactExports.useEffect(() => {
-    if (anchorEl) {
-      setResolvedAnchorElement(resolveAnchorEl(anchorEl));
-    }
-  }, [anchorEl]);
-  useEnhancedEffect$1(() => {
-    if (!resolvedAnchorElement || !open) {
-      return undefined;
-    }
-    const handlePopperUpdate = data => {
-      setPlacement(data.placement);
-    };
-    if (process.env.NODE_ENV !== 'production') {
-      if (resolvedAnchorElement && isHTMLElement$1(resolvedAnchorElement) && resolvedAnchorElement.nodeType === 1) {
-        const box = resolvedAnchorElement.getBoundingClientRect();
-        if (isLayoutSupported() && box.top === 0 && box.left === 0 && box.right === 0 && box.bottom === 0) {
-          console.warn(['MUI: The `anchorEl` prop provided to the component is invalid.', 'The anchor element should be part of the document layout.', "Make sure the element is present in the document or that it's not display none."].join('\n'));
-        }
-      }
-    }
-    let popperModifiers = [{
-      name: 'preventOverflow',
-      options: {
-        altBoundary: disablePortal
-      }
-    }, {
-      name: 'flip',
-      options: {
-        altBoundary: disablePortal
-      }
-    }, {
-      name: 'onUpdate',
-      enabled: true,
-      phase: 'afterWrite',
-      fn: ({
-        state
-      }) => {
-        handlePopperUpdate(state);
-      }
-    }];
-    if (modifiers != null) {
-      popperModifiers = popperModifiers.concat(modifiers);
-    }
-    if (popperOptions && popperOptions.modifiers != null) {
-      popperModifiers = popperModifiers.concat(popperOptions.modifiers);
-    }
-    const popper = createPopper(resolvedAnchorElement, tooltipRef.current, {
-      placement: rtlPlacement,
-      ...popperOptions,
-      modifiers: popperModifiers
-    });
-    handlePopperRefRef.current(popper);
-    const popperElement = tooltipRef.current;
-    return () => {
-      // popper.destroy() clears all inline positioning via the applyStyles
-      // modifier cleanup, which causes the element to jump to its static
-      // position. Snapshot and restore only the positioning properties so the
-      // element stays in place during the destroy/recreate gap (prevents scroll
-      // jumps when a child focuses between the two).
-      // https://github.com/mui/mui-x/issues/21839
-      if (popperElement) {
-        const {
-          style
-        } = popperElement;
-        const position = style.position;
-        const top = style.top;
-        const left = style.left;
-        const transform = style.transform;
-        popper.destroy();
-        style.position = position;
-        style.top = top;
-        style.left = left;
-        style.transform = transform;
-      } else {
-        popper.destroy();
-      }
-      handlePopperRefRef.current(null);
-    };
-  }, [resolvedAnchorElement, disablePortal, modifiers, open, popperOptions, rtlPlacement]);
-  const childProps = {
-    placement: placement
-  };
-  if (TransitionProps !== null) {
-    childProps.TransitionProps = TransitionProps;
-  }
-  const classes = useUtilityClasses$b(props);
-  const Root = slots.root ?? 'div';
-  const rootProps = useSlotProps({
-    elementType: Root,
-    externalSlotProps: slotProps.root,
-    externalForwardedProps: other,
-    additionalProps: {
-      role: 'tooltip',
-      ref: ownRef
-    },
-    ownerState: props,
-    className: classes.root
-  });
-  return /*#__PURE__*/jsxRuntimeExports.jsx(Root, {
-    ...rootProps,
-    children: typeof children === 'function' ? children(childProps) : children
-  });
-});
-
-/**
- * @ignore - internal component.
- */
-const Popper$2 = /*#__PURE__*/reactExports.forwardRef(function Popper(props, forwardedRef) {
-  const {
-    anchorEl,
-    children,
-    container: containerProp,
-    direction = 'ltr',
-    disablePortal = false,
-    keepMounted = false,
-    modifiers,
-    open,
-    placement = 'bottom',
-    popperOptions = defaultPopperOptions,
-    popperRef,
-    style,
-    transition = false,
-    slotProps = {},
-    slots = {},
-    ...other
-  } = props;
-  const [exited, setExited] = reactExports.useState(true);
-  const handleEnter = () => {
-    setExited(false);
-  };
-  const handleExited = () => {
-    setExited(true);
-  };
-  if (!keepMounted && !open && (!transition || exited)) {
-    return null;
-  }
-
-  // If the container prop is provided, use that
-  // If the anchorEl prop is provided, use its parent body element as the container
-  // If neither are provided let the Modal take care of choosing the container
-  let container;
-  if (containerProp) {
-    container = containerProp;
-  } else if (anchorEl) {
-    const resolvedAnchorEl = resolveAnchorEl(anchorEl);
-    container = resolvedAnchorEl && isHTMLElement$1(resolvedAnchorEl) ? ownerDocument(resolvedAnchorEl).body : ownerDocument(null).body;
-  }
-  const display = !open && keepMounted && (!transition || exited) ? 'none' : undefined;
-  const transitionProps = transition ? {
-    in: open,
-    onEnter: handleEnter,
-    onExited: handleExited
-  } : undefined;
-  return /*#__PURE__*/jsxRuntimeExports.jsx(Portal$1, {
-    disablePortal: disablePortal,
-    container: container,
-    children: /*#__PURE__*/jsxRuntimeExports.jsx(PopperTooltip, {
-      anchorEl: anchorEl,
-      direction: direction,
-      disablePortal: disablePortal,
-      modifiers: modifiers,
-      ref: forwardedRef,
-      open: transition ? !exited : open,
-      placement: placement,
-      popperOptions: popperOptions,
-      popperRef: popperRef,
-      slotProps: slotProps,
-      slots: slots,
-      ...other,
-      style: {
-        // Prevents scroll issue, waiting for Popper.js to add this style once initiated.
-        position: 'fixed',
-        // Fix Popper.js display issue
-        top: 0,
-        left: 0,
-        display,
-        ...style
-      },
-      TransitionProps: transitionProps,
-      children: children
-    })
-  });
-});
-process.env.NODE_ENV !== "production" ? Popper$2.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * An HTML element, [virtualElement](https://popper.js.org/docs/v2/virtual-elements/),
-   * or a function that returns either.
-   * It's used to set the position of the popper.
-   * The return value will passed as the reference object of the Popper instance.
-   */
-  anchorEl: chainPropTypes(PropTypes.oneOfType([HTMLElementType, PropTypes.object, PropTypes.func]), props => {
-    if (props.open) {
-      const resolvedAnchorEl = resolveAnchorEl(props.anchorEl);
-      if (resolvedAnchorEl && isHTMLElement$1(resolvedAnchorEl) && resolvedAnchorEl.nodeType === 1) {
-        const box = resolvedAnchorEl.getBoundingClientRect();
-        if (process.env.NODE_ENV !== 'production') {
-          if (isLayoutSupported() && box.top === 0 && box.left === 0 && box.right === 0 && box.bottom === 0) {
-            return new Error(['MUI: The `anchorEl` prop provided to the component is invalid.', 'The anchor element should be part of the document layout.', "Make sure the element is present in the document or that it's not display none."].join('\n'));
-          }
-        }
-      } else if (!resolvedAnchorEl || typeof resolvedAnchorEl.getBoundingClientRect !== 'function' || isVirtualElement(resolvedAnchorEl) && resolvedAnchorEl.contextElement != null && resolvedAnchorEl.contextElement.nodeType !== 1) {
-        return new Error(['MUI: The `anchorEl` prop provided to the component is invalid.', 'It should be an HTML element instance or a virtualElement ', '(https://popper.js.org/docs/v2/virtual-elements/).'].join('\n'));
-      }
-    }
-    return null;
-  }),
-  /**
-   * Popper render function or node.
-   */
-  children: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.node, PropTypes.func]),
-  /**
-   * An HTML element or function that returns one.
-   * The `container` will have the portal children appended to it.
-   *
-   * You can also provide a callback, which is called in a React layout effect.
-   * This lets you set the container from a ref, and also makes server-side rendering possible.
-   *
-   * By default, it uses the body of the top-level document object,
-   * so it's simply `document.body` most of the time.
-   */
-  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
-  /**
-   * Direction of the text.
-   * @default 'ltr'
-   */
-  direction: PropTypes.oneOf(['ltr', 'rtl']),
-  /**
-   * The `children` will be under the DOM hierarchy of the parent component.
-   * @default false
-   */
-  disablePortal: PropTypes.bool,
-  /**
-   * Always keep the children in the DOM.
-   * This prop can be useful in SEO situation or
-   * when you want to maximize the responsiveness of the Popper.
-   * @default false
-   */
-  keepMounted: PropTypes.bool,
-  /**
-   * Popper.js is based on a "plugin-like" architecture,
-   * most of its features are fully encapsulated "modifiers".
-   *
-   * A modifier is a function that is called each time Popper.js needs to
-   * compute the position of the popper.
-   * For this reason, modifiers should be very performant to avoid bottlenecks.
-   * To learn how to create a modifier, [read the modifiers documentation](https://popper.js.org/docs/v2/modifiers/).
-   */
-  modifiers: PropTypes.arrayOf(PropTypes.shape({
-    data: PropTypes.object,
-    effect: PropTypes.func,
-    enabled: PropTypes.bool,
-    fn: PropTypes.func,
-    name: PropTypes.any,
-    options: PropTypes.object,
-    phase: PropTypes.oneOf(['afterMain', 'afterRead', 'afterWrite', 'beforeMain', 'beforeRead', 'beforeWrite', 'main', 'read', 'write']),
-    requires: PropTypes.arrayOf(PropTypes.string),
-    requiresIfExists: PropTypes.arrayOf(PropTypes.string)
-  })),
-  /**
-   * If `true`, the component is shown.
-   */
-  open: PropTypes.bool.isRequired,
-  /**
-   * Popper placement.
-   * @default 'bottom'
-   */
-  placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
-  /**
-   * Options provided to the [`Popper.js`](https://popper.js.org/docs/v2/constructors/#options) instance.
-   * @default {}
-   */
-  popperOptions: PropTypes.shape({
-    modifiers: PropTypes.array,
-    onFirstUpdate: PropTypes.func,
-    placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
-    strategy: PropTypes.oneOf(['absolute', 'fixed'])
-  }),
-  /**
-   * A ref that points to the used popper instance.
-   */
-  popperRef: refType$1,
-  /**
-   * The props used for each slot inside the Popper.
-   * @default {}
-   */
-  slotProps: PropTypes.shape({
-    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
-  }),
-  /**
-   * The components used for each slot inside the Popper.
-   * Either a string to use a HTML element or a component.
-   * @default {}
-   */
-  slots: PropTypes.shape({
-    root: PropTypes.elementType
-  }),
-  /**
-   * Help supporting a react-transition-group/Transition component.
-   * @default false
-   */
-  transition: PropTypes.bool
-} : void 0;
-var BasePopper = Popper$2;
-
-const PopperRoot = styled$1(BasePopper, {
-  name: 'MuiPopper',
-  slot: 'Root'
-})({});
-
-/**
- *
- * Demos:
- *
- * - [Autocomplete](https://mui.com/material-ui/react-autocomplete/)
- * - [Menu](https://mui.com/material-ui/react-menu/)
- * - [Popper](https://mui.com/material-ui/react-popper/)
- *
- * API:
- *
- * - [Popper API](https://mui.com/material-ui/api/popper/)
- */
-const Popper = /*#__PURE__*/reactExports.forwardRef(function Popper(inProps, ref) {
-  const isRtl = useRtl();
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiPopper'
-  });
-  const {
-    anchorEl,
-    component,
-    container,
-    disablePortal,
-    keepMounted,
-    modifiers,
-    open,
-    placement,
-    popperOptions,
-    popperRef,
-    transition,
-    slots,
-    slotProps,
-    ...other
-  } = props;
-  const otherProps = {
-    anchorEl,
-    container,
-    disablePortal,
-    keepMounted,
-    modifiers,
-    open,
-    placement,
-    popperOptions,
-    popperRef,
-    transition,
-    ...other
-  };
-  return /*#__PURE__*/jsxRuntimeExports.jsx(PopperRoot, {
-    as: component,
-    direction: isRtl ? 'rtl' : 'ltr',
-    slots: slots,
-    slotProps: slotProps,
-    ...otherProps,
-    ref: ref
-  });
-});
-process.env.NODE_ENV !== "production" ? Popper.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │ To update them, edit the TypeScript types and run `pnpm proptypes`. │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * An HTML element, [virtualElement](https://popper.js.org/docs/v2/virtual-elements/),
-   * or a function that returns either.
-   * It's used to set the position of the popper.
-   * The return value will passed as the reference object of the Popper instance.
-   */
-  anchorEl: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.object, PropTypes.func]),
-  /**
-   * Popper render function or node.
-   */
-  children: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([PropTypes.node, PropTypes.func]),
-  /**
-   * The component used for the root node.
-   * Either a string to use a HTML element or a component.
-   */
-  component: PropTypes.elementType,
-  /**
-   * An HTML element or function that returns one.
-   * The `container` will have the portal children appended to it.
-   *
-   * You can also provide a callback, which is called in a React layout effect.
-   * This lets you set the container from a ref, and also makes server-side rendering possible.
-   *
-   * By default, it uses the body of the top-level document object,
-   * so it's simply `document.body` most of the time.
-   */
-  container: PropTypes /* @typescript-to-proptypes-ignore */.oneOfType([HTMLElementType, PropTypes.func]),
-  /**
-   * The `children` will be under the DOM hierarchy of the parent component.
-   * @default false
-   */
-  disablePortal: PropTypes.bool,
-  /**
-   * Always keep the children in the DOM.
-   * This prop can be useful in SEO situation or
-   * when you want to maximize the responsiveness of the Popper.
-   * @default false
-   */
-  keepMounted: PropTypes.bool,
-  /**
-   * Popper.js is based on a "plugin-like" architecture,
-   * most of its features are fully encapsulated "modifiers".
-   *
-   * A modifier is a function that is called each time Popper.js needs to
-   * compute the position of the popper.
-   * For this reason, modifiers should be very performant to avoid bottlenecks.
-   * To learn how to create a modifier, [read the modifiers documentation](https://popper.js.org/docs/v2/modifiers/).
-   */
-  modifiers: PropTypes.arrayOf(PropTypes.shape({
-    data: PropTypes.object,
-    effect: PropTypes.func,
-    enabled: PropTypes.bool,
-    fn: PropTypes.func,
-    name: PropTypes.any,
-    options: PropTypes.object,
-    phase: PropTypes.oneOf(['afterMain', 'afterRead', 'afterWrite', 'beforeMain', 'beforeRead', 'beforeWrite', 'main', 'read', 'write']),
-    requires: PropTypes.arrayOf(PropTypes.string),
-    requiresIfExists: PropTypes.arrayOf(PropTypes.string)
-  })),
-  /**
-   * If `true`, the component is shown.
-   */
-  open: PropTypes.bool.isRequired,
-  /**
-   * Popper placement.
-   * @default 'bottom'
-   */
-  placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
-  /**
-   * Options provided to the [`Popper.js`](https://popper.js.org/docs/v2/constructors/#options) instance.
-   * @default {}
-   */
-  popperOptions: PropTypes.shape({
-    modifiers: PropTypes.array,
-    onFirstUpdate: PropTypes.func,
-    placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
-    strategy: PropTypes.oneOf(['absolute', 'fixed'])
-  }),
-  /**
-   * A ref that points to the used popper instance.
-   */
-  popperRef: refType$1,
-  /**
-   * The props used for each slot inside the Popper.
-   * @default {}
-   */
-  slotProps: PropTypes.shape({
-    root: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
-  }),
-  /**
-   * The components used for each slot inside the Popper.
-   * Either a string to use a HTML element or a component.
-   * @default {}
-   */
-  slots: PropTypes.shape({
-    root: PropTypes.elementType
-  }),
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
-  /**
-   * Help supporting a react-transition-group/Transition component.
-   * @default false
-   */
-  transition: PropTypes.bool
-} : void 0;
-var Popper$1 = Popper;
-
-function getTooltipUtilityClass(slot) {
-  return generateUtilityClass('MuiTooltip', slot);
-}
-const tooltipClasses = generateUtilityClasses('MuiTooltip', ['popper', 'popperInteractive', 'popperArrow', 'popperClose', 'tooltip', 'tooltipArrow', 'touch', 'tooltipPlacementLeft', 'tooltipPlacementRight', 'tooltipPlacementTop', 'tooltipPlacementBottom', 'arrow']);
-var tooltipClasses$1 = tooltipClasses;
-
-function round$1(value) {
-  return Math.round(value * 1e5) / 1e5;
-}
-const useUtilityClasses$a = ownerState => {
-  const {
-    classes,
-    disableInteractive,
-    arrow,
-    touch,
-    placement
-  } = ownerState;
-  const slots = {
-    popper: ['popper', !disableInteractive && 'popperInteractive', arrow && 'popperArrow'],
-    tooltip: ['tooltip', arrow && 'tooltipArrow', touch && 'touch', `tooltipPlacement${capitalize$3(placement.split('-')[0])}`],
-    arrow: ['arrow']
-  };
-  return composeClasses(slots, getTooltipUtilityClass, classes);
-};
-const TooltipPopper = styled$1(Popper$1, {
-  name: 'MuiTooltip',
-  slot: 'Popper',
-  overridesResolver: (props, styles) => {
-    const {
-      ownerState
-    } = props;
-    return [styles.popper, !ownerState.disableInteractive && styles.popperInteractive, ownerState.arrow && styles.popperArrow, !ownerState.open && styles.popperClose];
-  }
-})(memoTheme$1(({
-  theme
-}) => ({
-  zIndex: (theme.vars || theme).zIndex.tooltip,
-  pointerEvents: 'none',
-  variants: [{
-    props: ({
-      ownerState,
-      open
-    }) => open && !ownerState.disableInteractive,
-    style: {
-      pointerEvents: 'auto'
-    }
-  }, {
-    props: ({
-      ownerState
-    }) => ownerState.arrow,
-    style: {
-      [`&[data-popper-placement*="bottom"] .${tooltipClasses$1.arrow}`]: {
-        top: 0,
-        marginTop: '-0.71em',
-        '&::before': {
-          transformOrigin: '0 100%'
-        }
-      },
-      [`&[data-popper-placement*="top"] .${tooltipClasses$1.arrow}`]: {
-        bottom: 0,
-        marginBottom: '-0.71em',
-        '&::before': {
-          transformOrigin: '100% 0'
-        }
-      },
-      [`&[data-popper-placement*="right"] .${tooltipClasses$1.arrow}`]: {
-        height: '1em',
-        width: '0.71em',
-        insetInlineStart: 0,
-        marginInlineStart: '-0.71em',
-        '&::before': {
-          transformOrigin: '100% 100%'
-        }
-      },
-      [`&[data-popper-placement*="left"] .${tooltipClasses$1.arrow}`]: {
-        height: '1em',
-        width: '0.71em',
-        insetInlineEnd: 0,
-        marginInlineEnd: '-0.71em',
-        '&::before': {
-          transformOrigin: '0 0'
-        }
-      }
-    }
-  }]
-})));
-const TooltipTooltip = styled$1('div', {
-  name: 'MuiTooltip',
-  slot: 'Tooltip',
-  overridesResolver: (props, styles) => {
-    const {
-      ownerState
-    } = props;
-    return [styles.tooltip, ownerState.touch && styles.touch, ownerState.arrow && styles.tooltipArrow, styles[`tooltipPlacement${capitalize$3(ownerState.placement.split('-')[0])}`]];
-  }
-})(memoTheme$1(({
-  theme
-}) => ({
-  backgroundColor: theme.vars ? theme.vars.palette.Tooltip.bg : theme.alpha(theme.palette.grey[700], 0.92),
-  borderRadius: (theme.vars || theme).shape.borderRadius,
-  color: (theme.vars || theme).palette.common.white,
-  fontFamily: theme.typography.fontFamily,
-  padding: '4px 8px',
-  fontSize: theme.typography.pxToRem(11),
-  maxWidth: 300,
-  margin: 2,
-  wordWrap: 'break-word',
-  fontWeight: theme.typography.fontWeightMedium,
-  [`.${tooltipClasses$1.popper}[data-popper-placement*="left"] &`]: {
-    transformOrigin: 'right center',
-    marginInlineEnd: '14px'
-  },
-  [`.${tooltipClasses$1.popper}[data-popper-placement*="right"] &`]: {
-    transformOrigin: 'left center',
-    marginInlineStart: '14px'
-  },
-  [`.${tooltipClasses$1.popper}[data-popper-placement*="top"] &`]: {
-    transformOrigin: 'center bottom',
-    marginBottom: '14px'
-  },
-  [`.${tooltipClasses$1.popper}[data-popper-placement*="bottom"] &`]: {
-    transformOrigin: 'center top',
-    marginTop: '14px'
-  },
-  variants: [{
-    props: ({
-      ownerState
-    }) => ownerState.arrow,
-    style: {
-      position: 'relative',
-      marginBlock: 0
-    }
-  }, {
-    props: ({
-      ownerState
-    }) => ownerState.touch,
-    style: {
-      padding: '8px 16px',
-      fontSize: theme.typography.pxToRem(14),
-      lineHeight: `${round$1(16 / 14)}em`,
-      fontWeight: theme.typography.fontWeightRegular
-    }
-  }, {
-    props: ({
-      ownerState
-    }) => ownerState.touch,
-    style: {
-      [`.${tooltipClasses$1.popper}[data-popper-placement*="left"] &`]: {
-        marginInlineEnd: '24px'
-      },
-      [`.${tooltipClasses$1.popper}[data-popper-placement*="right"] &`]: {
-        marginInlineStart: '24px'
-      },
-      [`.${tooltipClasses$1.popper}[data-popper-placement*="top"] &`]: {
-        marginBottom: '24px'
-      },
-      [`.${tooltipClasses$1.popper}[data-popper-placement*="bottom"] &`]: {
-        marginTop: '24px'
-      }
-    }
-  }]
-})));
-const TooltipArrow = styled$1('span', {
-  name: 'MuiTooltip',
-  slot: 'Arrow'
-})(memoTheme$1(({
-  theme
-}) => ({
-  overflow: 'hidden',
-  position: 'absolute',
-  width: '1em',
-  height: '0.71em' /* = width / sqrt(2) = (length of the hypotenuse) */,
-  boxSizing: 'border-box',
-  color: theme.vars ? theme.vars.palette.Tooltip.bg : theme.alpha(theme.palette.grey[700], 0.9),
-  '&::before': {
-    content: '""',
-    margin: 'auto',
-    display: 'block',
-    width: '100%',
-    height: '100%',
-    backgroundColor: 'currentColor',
-    transform: 'rotate(45deg)'
-  }
-})));
-let hystersisOpen = false;
-const hystersisTimer = new Timeout();
-let cursorPosition = {
-  x: 0,
-  y: 0
-};
-function composeEventHandler(handler, eventHandler) {
-  return (event, ...params) => {
-    if (eventHandler) {
-      eventHandler(event, ...params);
-    }
-    handler(event, ...params);
-  };
-}
-const Tooltip$1 = /*#__PURE__*/reactExports.forwardRef(function Tooltip(inProps, ref) {
-  const props = useDefaultProps({
-    props: inProps,
-    name: 'MuiTooltip'
-  });
-  const {
-    arrow = false,
-    children: childrenProp,
-    classes: classesProp,
-    describeChild = false,
-    disableFocusListener = false,
-    disableHoverListener = false,
-    disableInteractive: disableInteractiveProp = false,
-    disableTouchListener = false,
-    enterDelay = 100,
-    enterNextDelay = 0,
-    enterTouchDelay = 700,
-    followCursor = false,
-    id: idProp,
-    leaveDelay = 0,
-    leaveTouchDelay = 1500,
-    onClose,
-    onOpen,
-    open: openProp,
-    placement = 'bottom',
-    slotProps = {},
-    slots = {},
-    title,
-    ...other
-  } = props;
-
-  // to prevent runtime errors, developers will need to provide a child as a React element anyway.
-  const children = /*#__PURE__*/reactExports.isValidElement(childrenProp) ? childrenProp : /*#__PURE__*/jsxRuntimeExports.jsx("span", {
-    children: childrenProp
-  });
-  const theme = useTheme();
-  const [childNode, setChildNode] = reactExports.useState();
-  const [arrowRef, setArrowRef] = reactExports.useState(null);
-  const ignoreNonTouchEvents = reactExports.useRef(false);
-  const disableInteractive = disableInteractiveProp || followCursor;
-  const closeTimer = useTimeout();
-  const enterTimer = useTimeout();
-  const leaveTimer = useTimeout();
-  const touchTimer = useTimeout();
-  const [openState, setOpenState] = useControlled({
-    controlled: openProp,
-    default: false,
-    name: 'Tooltip',
-    state: 'open'
-  });
-  let open = openState;
-  if (process.env.NODE_ENV !== 'production') {
-    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- process.env never changes
-    const {
-      current: isControlled
-    } = reactExports.useRef(openProp !== undefined);
-
-    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- process.env never changes
-    reactExports.useEffect(() => {
-      if (childNode && childNode.disabled && !isControlled && title !== '' && childNode.tagName.toLowerCase() === 'button') {
-        console.warn(['MUI: You are providing a disabled `button` child to the Tooltip component.', 'A disabled element does not fire events.', "Tooltip needs to listen to the child element's events to display the title.", '', 'Add a simple wrapper element, such as a `span`.'].join('\n'));
-      }
-    }, [title, childNode, isControlled]);
-  }
-  const id = useId(idProp);
-  const prevUserSelect = reactExports.useRef();
-  const stopTouchInteraction = useEventCallback(() => {
-    if (prevUserSelect.current !== undefined) {
-      document.body.style.WebkitUserSelect = prevUserSelect.current;
-      prevUserSelect.current = undefined;
-    }
-    touchTimer.clear();
-  });
-  reactExports.useEffect(() => stopTouchInteraction, [stopTouchInteraction]);
-  const handleOpen = event => {
-    hystersisTimer.clear();
-    hystersisOpen = true;
-
-    // The mouseover event will trigger for every nested element in the tooltip.
-    // We can skip rerendering when the tooltip is already open.
-    // We are using the mouseover event instead of the mouseenter event to fix a hide/show issue.
-    setOpenState(true);
-    if (onOpen && !open) {
-      onOpen(event);
-    }
-  };
-  const handleClose = useEventCallback(
-  /**
-   * @param {React.SyntheticEvent | Event} event
-   */
-  event => {
-    hystersisTimer.start(800 + leaveDelay, () => {
-      hystersisOpen = false;
-    });
-    setOpenState(false);
-    if (onClose && open) {
-      onClose(event);
-    }
-    closeTimer.start(theme.transitions.duration.shortest, () => {
-      ignoreNonTouchEvents.current = false;
-    });
-  });
-  const handleMouseOver = event => {
-    if (ignoreNonTouchEvents.current && event.type !== 'touchstart') {
-      return;
-    }
-
-    // Remove the title ahead of time.
-    // We don't want to wait for the next render commit.
-    // We would risk displaying two tooltips at the same time (native + this one).
-    if (childNode) {
-      childNode.removeAttribute('title');
-    }
-    enterTimer.clear();
-    leaveTimer.clear();
-    if (enterDelay || hystersisOpen && enterNextDelay) {
-      enterTimer.start(hystersisOpen ? enterNextDelay : enterDelay, () => {
-        handleOpen(event);
-      });
-    } else {
-      handleOpen(event);
-    }
-  };
-  const handleMouseLeave = event => {
-    enterTimer.clear();
-    leaveTimer.start(leaveDelay, () => {
-      handleClose(event);
-    });
-  };
-  const [, setChildIsFocusVisible] = reactExports.useState(false);
-  const handleBlur = event => {
-    // Needed for https://github.com/mui/material-ui/issues/45373
-    const target = event?.target ?? childNode;
-    if (!target || target.disabled || !isFocusVisible(target)) {
-      setChildIsFocusVisible(false);
-
-      // InputBase can call onBlur() without an event when the input becomes disabled.
-      // Tooltip must not assume an event object exists.
-      const closeEvent = event ?? new Event('blur');
-
-      // `new Event('blur')` has `target/currentTarget === null`, but Tooltip's close logic
-      // (and user callbacks like onClose) may expect them to reference the anchor element.
-      if (!event && target) {
-        Object.defineProperty(closeEvent, 'target', {
-          value: target
-        });
-        Object.defineProperty(closeEvent, 'currentTarget', {
-          value: target
-        });
-      }
-      handleMouseLeave(closeEvent);
-    }
-  };
-  const handleFocus = event => {
-    // Workaround for https://github.com/facebook/react/issues/7769
-    // The autoFocus of React might trigger the event before the componentDidMount.
-    // We need to account for this eventuality.
-    if (!childNode) {
-      setChildNode(event.currentTarget);
-    }
-    if (isFocusVisible(event.target)) {
-      // Workaround for https://github.com/facebook/react/issues/9142.
-      // React does not fire blur when a focused element becomes disabled.
-      const handleNativeBlur = blurEvent => {
-        if (blurEvent.target.disabled) {
-          handleBlur(blurEvent);
-        }
-        blurEvent.target.removeEventListener('blur', handleNativeBlur);
-      };
-      event.target.addEventListener('blur', handleNativeBlur);
-      setChildIsFocusVisible(true);
-      handleMouseOver(event);
-    }
-  };
-  const detectTouchStart = event => {
-    ignoreNonTouchEvents.current = true;
-    const childrenProps = children.props;
-    if (childrenProps.onTouchStart) {
-      childrenProps.onTouchStart(event);
-    }
-  };
-  const handleTouchStart = event => {
-    detectTouchStart(event);
-    leaveTimer.clear();
-    closeTimer.clear();
-    stopTouchInteraction();
-    prevUserSelect.current = document.body.style.WebkitUserSelect;
-    // Prevent iOS text selection on long-tap.
-    document.body.style.WebkitUserSelect = 'none';
-    touchTimer.start(enterTouchDelay, () => {
-      document.body.style.WebkitUserSelect = prevUserSelect.current;
-      handleMouseOver(event);
-    });
-  };
-  const handleTouchEnd = event => {
-    if (children.props.onTouchEnd) {
-      children.props.onTouchEnd(event);
-    }
-    stopTouchInteraction();
-    leaveTimer.start(leaveTouchDelay, () => {
-      handleClose(event);
-    });
-  };
-  reactExports.useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    /**
-     * @param {KeyboardEvent} nativeEvent
-     */
-    function handleKeyDown(nativeEvent) {
-      if (nativeEvent.key === 'Escape') {
-        handleClose(nativeEvent);
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleClose, open]);
-  const handleRef = useForkRef(getReactElementRef(children), setChildNode, ref);
-
-  // There is no point in displaying an empty tooltip.
-  // So we exclude all falsy values, except 0, which is valid.
-  if (!title && title !== 0) {
-    open = false;
-  }
-  const popperRef = reactExports.useRef();
-  const handleMouseMove = event => {
-    const childrenProps = children.props;
-    if (childrenProps.onMouseMove) {
-      childrenProps.onMouseMove(event);
-    }
-    cursorPosition = {
-      x: event.clientX,
-      y: event.clientY
-    };
-    if (popperRef.current) {
-      popperRef.current.update();
-    }
-  };
-  const nameOrDescProps = {};
-  const titleIsString = typeof title === 'string';
-  if (describeChild) {
-    nameOrDescProps.title = !open && titleIsString && !disableHoverListener ? title : null;
-    nameOrDescProps['aria-describedby'] = open ? id : null;
-  } else {
-    nameOrDescProps['aria-label'] = titleIsString ? title : null;
-    nameOrDescProps['aria-labelledby'] = open && !titleIsString ? id : null;
-  }
-  const childrenProps = {
-    ...nameOrDescProps,
-    ...other,
-    ...children.props,
-    className: clsx(other.className, children.props.className),
-    onTouchStart: detectTouchStart,
-    ref: handleRef,
-    ...(followCursor ? {
-      onMouseMove: handleMouseMove
-    } : {})
-  };
-  if (process.env.NODE_ENV !== 'production') {
-    childrenProps['data-mui-internal-clone-element'] = true;
-
-    // TODO: uncomment once we enable eslint-plugin-react-compiler // eslint-disable-next-line react-compiler/react-compiler
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- process.env never changes
-    reactExports.useEffect(() => {
-      if (childNode && !childNode.getAttribute('data-mui-internal-clone-element')) {
-        console.error(['MUI: The `children` component of the Tooltip is not forwarding its props correctly.', 'Please make sure that props are spread on the same element that the ref is applied to.'].join('\n'));
-      }
-    }, [childNode]);
-  }
-  const interactiveWrapperListeners = {};
-  if (!disableTouchListener) {
-    childrenProps.onTouchStart = handleTouchStart;
-    childrenProps.onTouchEnd = handleTouchEnd;
-  }
-  if (!disableHoverListener) {
-    childrenProps.onMouseOver = composeEventHandler(handleMouseOver, childrenProps.onMouseOver);
-    childrenProps.onMouseLeave = composeEventHandler(handleMouseLeave, childrenProps.onMouseLeave);
-    if (!disableInteractive) {
-      interactiveWrapperListeners.onMouseOver = handleMouseOver;
-      interactiveWrapperListeners.onMouseLeave = handleMouseLeave;
-    }
-  }
-  if (!disableFocusListener) {
-    childrenProps.onFocus = composeEventHandler(handleFocus, childrenProps.onFocus);
-    childrenProps.onBlur = composeEventHandler(handleBlur, childrenProps.onBlur);
-    if (!disableInteractive) {
-      interactiveWrapperListeners.onFocus = handleFocus;
-      interactiveWrapperListeners.onBlur = handleBlur;
-    }
-  }
-  if (process.env.NODE_ENV !== 'production') {
-    if (children.props.title) {
-      console.error(['MUI: You have provided a `title` prop to the child of <Tooltip />.', `Remove this title prop \`${children.props.title}\` or the Tooltip component.`].join('\n'));
-    }
-  }
-  const ownerState = {
-    ...props,
-    arrow,
-    disableInteractive,
-    placement,
-    touch: ignoreNonTouchEvents.current
-  };
-  const resolvedPopperProps = typeof slotProps.popper === 'function' ? slotProps.popper(ownerState) : slotProps.popper;
-  const popperOptions = reactExports.useMemo(() => {
-    let tooltipModifiers = [{
-      name: 'arrow',
-      enabled: Boolean(arrowRef),
-      options: {
-        element: arrowRef,
-        padding: 4
-      }
-    }];
-    if (resolvedPopperProps?.popperOptions?.modifiers) {
-      tooltipModifiers = tooltipModifiers.concat(resolvedPopperProps.popperOptions.modifiers);
-    }
-    return {
-      ...resolvedPopperProps?.popperOptions,
-      modifiers: tooltipModifiers
-    };
-  }, [arrowRef, resolvedPopperProps?.popperOptions]);
-  const classes = useUtilityClasses$a(ownerState);
-  const externalForwardedProps = {
-    slots,
-    slotProps: {
-      arrow: slotProps.arrow,
-      popper: resolvedPopperProps,
-      tooltip: slotProps.tooltip,
-      transition: slotProps.transition
-    }
-  };
-  const [PopperSlot, popperSlotProps] = useSlot('popper', {
-    elementType: TooltipPopper,
-    externalForwardedProps,
-    ownerState,
-    className: classes.popper
-  });
-  const [TransitionSlot, transitionSlotProps] = useSlot('transition', {
-    elementType: Grow$1,
-    externalForwardedProps,
-    ownerState
-  });
-  const [TooltipSlot, tooltipSlotProps] = useSlot('tooltip', {
-    elementType: TooltipTooltip,
-    className: classes.tooltip,
-    externalForwardedProps,
-    ownerState
-  });
-  const [ArrowSlot, arrowSlotProps] = useSlot('arrow', {
-    elementType: TooltipArrow,
-    className: classes.arrow,
-    externalForwardedProps,
-    ownerState,
-    ref: setArrowRef
-  });
-  return /*#__PURE__*/jsxRuntimeExports.jsxs(reactExports.Fragment, {
-    children: [/*#__PURE__*/reactExports.cloneElement(children, childrenProps), /*#__PURE__*/jsxRuntimeExports.jsx(PopperSlot, {
-      as: Popper$1,
-      placement: placement,
-      anchorEl: followCursor ? {
-        getBoundingClientRect: () => ({
-          top: cursorPosition.y,
-          left: cursorPosition.x,
-          right: cursorPosition.x,
-          bottom: cursorPosition.y,
-          width: 0,
-          height: 0
-        })
-      } : childNode,
-      popperRef: popperRef,
-      open: childNode ? open : false,
-      id: id,
-      transition: true,
-      ...interactiveWrapperListeners,
-      ...popperSlotProps,
-      popperOptions: popperOptions,
-      children: ({
-        TransitionProps: TransitionPropsInner
-      }) => /*#__PURE__*/jsxRuntimeExports.jsx(TransitionSlot, {
-        timeout: theme.transitions.duration.shorter,
-        ...TransitionPropsInner,
-        ...transitionSlotProps,
-        children: /*#__PURE__*/jsxRuntimeExports.jsxs(TooltipSlot, {
-          ...tooltipSlotProps,
-          children: [title, arrow ? /*#__PURE__*/jsxRuntimeExports.jsx(ArrowSlot, {
-            ...arrowSlotProps
-          }) : null]
-        })
-      })
-    })]
-  });
-});
-process.env.NODE_ENV !== "production" ? Tooltip$1.propTypes /* remove-proptypes */ = {
-  // ┌────────────────────────────── Warning ──────────────────────────────┐
-  // │ These PropTypes are generated from the TypeScript type definitions. │
-  // │    To update them, edit the d.ts file and run `pnpm proptypes`.     │
-  // └─────────────────────────────────────────────────────────────────────┘
-  /**
-   * If `true`, adds an arrow to the tooltip.
-   * @default false
-   */
-  arrow: PropTypes.bool,
-  /**
-   * Tooltip reference element.
-   */
-  children: elementAcceptingRef$1.isRequired,
-  /**
-   * Override or extend the styles applied to the component.
-   */
-  classes: PropTypes.object,
-  /**
-   * @ignore
-   */
-  className: PropTypes.string,
-  /**
-   * Set to `true` if the `title` acts as an accessible description.
-   * By default the `title` acts as an accessible label for the child.
-   * @default false
-   */
-  describeChild: PropTypes.bool,
-  /**
-   * Do not respond to focus-visible events.
-   * @default false
-   */
-  disableFocusListener: PropTypes.bool,
-  /**
-   * Do not respond to hover events.
-   * @default false
-   */
-  disableHoverListener: PropTypes.bool,
-  /**
-   * Makes a tooltip not interactive, i.e. it will close when the user
-   * hovers over the tooltip before the `leaveDelay` is expired.
-   * @default false
-   */
-  disableInteractive: PropTypes.bool,
-  /**
-   * Do not respond to long press touch events.
-   * @default false
-   */
-  disableTouchListener: PropTypes.bool,
-  /**
-   * The number of milliseconds to wait before showing the tooltip.
-   * This prop won't impact the enter touch delay (`enterTouchDelay`).
-   * @default 100
-   */
-  enterDelay: PropTypes.number,
-  /**
-   * The number of milliseconds to wait before showing the tooltip when one was already recently opened.
-   * @default 0
-   */
-  enterNextDelay: PropTypes.number,
-  /**
-   * The number of milliseconds a user must touch the element before showing the tooltip.
-   * @default 700
-   */
-  enterTouchDelay: PropTypes.number,
-  /**
-   * If `true`, the tooltip follow the cursor over the wrapped element.
-   * @default false
-   */
-  followCursor: PropTypes.bool,
-  /**
-   * This prop is used to help implement the accessibility logic.
-   * If you don't provide this prop. It falls back to a randomly generated id.
-   */
-  id: PropTypes.string,
-  /**
-   * The number of milliseconds to wait before hiding the tooltip.
-   * This prop won't impact the leave touch delay (`leaveTouchDelay`).
-   * @default 0
-   */
-  leaveDelay: PropTypes.number,
-  /**
-   * The number of milliseconds after the user stops touching an element before hiding the tooltip.
-   * @default 1500
-   */
-  leaveTouchDelay: PropTypes.number,
-  /**
-   * Callback fired when the component requests to be closed.
-   *
-   * @param {React.SyntheticEvent} event The event source of the callback.
-   */
-  onClose: PropTypes.func,
-  /**
-   * Callback fired when the component requests to be open.
-   *
-   * @param {React.SyntheticEvent} event The event source of the callback.
-   */
-  onOpen: PropTypes.func,
-  /**
-   * If `true`, the component is shown.
-   */
-  open: PropTypes.bool,
-  /**
-   * Tooltip placement.
-   * @default 'bottom'
-   */
-  placement: PropTypes.oneOf(['auto-end', 'auto-start', 'auto', 'bottom-end', 'bottom-start', 'bottom', 'left-end', 'left-start', 'left', 'right-end', 'right-start', 'right', 'top-end', 'top-start', 'top']),
-  /**
-   * The props used for each slot inside.
-   * @default {}
-   */
-  slotProps: PropTypes.shape({
-    arrow: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
-    popper: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
-    tooltip: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
-    transition: PropTypes.oneOfType([PropTypes.func, PropTypes.object])
-  }),
-  /**
-   * The components used for each slot inside.
-   * @default {}
-   */
-  slots: PropTypes.shape({
-    arrow: PropTypes.elementType,
-    popper: PropTypes.elementType,
-    tooltip: PropTypes.elementType,
-    transition: PropTypes.elementType
-  }),
-  /**
-   * The system prop that allows defining system overrides as well as additional CSS styles.
-   */
-  sx: PropTypes.oneOfType([PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.func, PropTypes.object, PropTypes.bool])), PropTypes.func, PropTypes.object]),
-  /**
-   * Tooltip title. Zero-length titles string, undefined, null and false are never displayed.
-   */
-  title: PropTypes.node
-} : void 0;
-var Tooltip$2 = Tooltip$1;
 
 /// <reference path="../common/types.d.ts" />
 const DEFAULT_MIN = 6;
@@ -66757,7 +67225,7 @@ const disabledTransition = /*#__PURE__*/CSS$1.Transition.toString({
   duration: 0,
   easing: 'linear'
 });
-const defaultAttributes = {
+const defaultAttributes$1 = {
   roleDescription: 'sortable'
 };
 
@@ -66867,7 +67335,7 @@ function useSortable(_ref) {
     id,
     data,
     attributes: {
-      ...defaultAttributes,
+      ...defaultAttributes$1,
       ...userDefinedAttributes
     },
     disabled: disabled.draggable
@@ -67141,10 +67609,14 @@ function SortableDocumentTab(props) {
   }, attributes, listeners, {
     className: "mn-document-tabs__tab",
     "data-tab-id": props.tab.id,
+    fullWidth: props.fullWidth,
     label: props.label,
+    onChange: props.onChange,
     onDoubleClick: event => props.onEdit(props.tab, event.currentTarget),
+    selected: props.selected,
+    textColor: props.textColor,
     style: style,
-    value: props.tab.id
+    value: props.value
   }));
 }
 
@@ -67894,6 +68366,22 @@ describe('DocumentTabs', function () {
       result.container.querySelector('[aria-label="Move tab left"]').click();
     });
     expect(documentModel.getTabs().map(tab => tab.title)).toEqual(['', 'Bridge', '', 'Chorus']);
+  });
+  it('selects a tab when it is clicked', function () {
+    const localize = makeLocalizeMock$3();
+    const documentModel = createModel();
+    harness = createTestHarness().withService('localize', localize).withContext({
+      localize
+    });
+    const result = harness.render(DocumentTabs, {
+      documentModel
+    });
+    const bridgeTab = Array.from(result.container.querySelectorAll('.mn-document-tabs__tab')).find(tab => tab.textContent === 'Bridge');
+    const bridgeId = documentModel.getTabs().find(tab => tab.title === 'Bridge').id;
+    reactExports.act(() => {
+      bridgeTab.click();
+    });
+    expect(documentModel.getActiveTabId()).toBe(bridgeId);
   });
   it('renames a tab with an inline editor', function () {
     const localize = makeLocalizeMock$3();
@@ -72190,37 +72678,89 @@ class EditorInteractionsService extends Service {
     super('editor-interactions', registry);
     this.implement(['start', 'registerHandler', 'unregisterHandler', 'getHandlers', 'dispatch']);
   }
+
+  /**
+   * Initializes the registered editor interaction handlers.
+   *
+   * @returns {void}
+   */
   start() {
+    /** @type {EditorInteractionHandlerRegistration[]} */
     this.handlers = [];
   }
+
+  /**
+   * Registers a service-owned editor interaction handler.
+   *
+   * The handler stores ownership and event metadata for a service that
+   * implements `handleEditorEvent`.
+   *
+   * @param {Partial<EditorInteractionHandlerRegistration>} handler - Handler registration details.
+   * @returns {() => boolean | null} Function that unregisters the handler.
+   */
   registerHandler(handler = {}) {
-    if (!handler.id || typeof handler.handle !== 'function') {
-      console.warn('Cannot register editor interaction handler without an id and handle function.');
+    if (!handler.id || !handler.serviceName || !Array.isArray(handler.events)) {
+      console.warn('Cannot register editor interaction handler without an id, serviceName, and events.');
       return () => null;
     }
     const normalized = {
-      events: Array.isArray(handler.events) ? handler.events : [],
-      handle: handler.handle,
+      events: handler.events,
+      gutterSelectable: handler.gutterSelectable === true,
       id: handler.id,
-      priority: Number.isFinite(Number(handler.priority)) ? Number(handler.priority) : 0
+      idAttribute: handler.idAttribute || '',
+      pointHitMargin: {
+        bottom: Number.isFinite(Number(handler.pointHitMargin?.bottom)) ? Number(handler.pointHitMargin.bottom) : 0,
+        left: Number.isFinite(Number(handler.pointHitMargin?.left)) ? Number(handler.pointHitMargin.left) : 0,
+        right: Number.isFinite(Number(handler.pointHitMargin?.right)) ? Number(handler.pointHitMargin.right) : 0,
+        top: Number.isFinite(Number(handler.pointHitMargin?.top)) ? Number(handler.pointHitMargin.top) : 0
+      },
+      pointSelectable: handler.pointSelectable === true,
+      priority: Number.isFinite(Number(handler.priority)) ? Number(handler.priority) : 0,
+      role: handler.role || '',
+      selector: handler.selector || '',
+      serviceName: handler.serviceName
     };
     this.unregisterHandler(normalized.id);
     this.handlers.push(normalized);
     this.handlers.sort((first, second) => second.priority - first.priority);
     return () => this.unregisterHandler(normalized.id);
   }
+
+  /**
+   * Unregisters an editor interaction handler by id.
+   *
+   * @param {string} id - Registered handler id.
+   * @returns {boolean} Whether a handler was removed.
+   */
   unregisterHandler(id) {
     const before = this.handlers.length;
     this.handlers = this.handlers.filter(handler => handler.id !== id);
     return this.handlers.length !== before;
   }
-  getHandlers(eventName = '') {
-    return this.handlers.filter(handler => !eventName || handler.events.includes(eventName));
+
+  /**
+   * Gets registered handlers, optionally filtered by event name.
+   *
+   * @param {string} eventName - Optional editor interaction event name.
+   * @param {string} serviceName - Optional target service name.
+   * @returns {EditorInteractionHandlerRegistration[]} Matching handler registrations.
+   */
+  getHandlers(eventName = '', serviceName = '') {
+    return this.handlers.filter(handler => (!eventName || handler.events.includes(eventName)) && (!serviceName || handler.serviceName === serviceName));
   }
+
+  /**
+   * Dispatches an editor interaction to registered service handlers by priority.
+   *
+   * @param {string} eventName - Editor interaction event name.
+   * @param {Event | KeyboardEvent | PointerEvent | unknown} event - Source event object.
+   * @param {EditorInteractionContext} context - Editor-owned context for the interaction.
+   * @returns {EditorInteractionDispatchResult} Dispatch result and first handled response.
+   */
   dispatch(eventName, event, context = {}) {
-    const handlers = this.getHandlers(eventName);
+    const handlers = this.getHandlers(eventName, context.targetServiceName || '');
     for (const handler of handlers) {
-      const result = handler.handle(event, {
+      const result = this.invokeHandler(handler, eventName, event, {
         ...context,
         eventName
       });
@@ -72228,7 +72768,8 @@ class EditorInteractionsService extends Service {
         return {
           handled: true,
           handlerId: handler.id,
-          result
+          result,
+          serviceName: handler.serviceName
         };
       }
     }
@@ -72236,10 +72777,45 @@ class EditorInteractionsService extends Service {
       handled: false
     };
   }
+
+  /**
+   * Invokes a registered handler through its service method.
+   *
+   * @param {EditorInteractionHandlerRegistration} handler - Handler registration to invoke.
+   * @param {string} eventName - Editor interaction event name.
+   * @param {Event | KeyboardEvent | PointerEvent | unknown} event - Source event object.
+   * @param {EditorInteractionContext} context - Editor-owned context for the interaction.
+   * @returns {EditorInteractionHandlerResult | boolean | null} Handler result.
+   */
+  invokeHandler(handler, eventName, event, context) {
+    const service = this.registry.subscribe(handler.serviceName);
+    const method = service?.handleEditorEvent;
+    if (typeof method !== 'function') {
+      console.warn(`Cannot dispatch editor interaction to ${handler.serviceName}.handleEditorEvent.`);
+      return false;
+    }
+    return method(eventName, event, {
+      ...context,
+      handler
+    });
+  }
 }
 new EditorInteractionsService();
 
 /* global describe it expect */
+class EditorInteractionTestHandler extends Service {
+  constructor(registry, serviceName, calls = [], result = false) {
+    super(serviceName, registry);
+    this.implement(['handleEditorEvent']);
+    this.calls = calls;
+    this.result = result;
+    this.serviceName = serviceName;
+  }
+  handleEditorEvent(eventName, _event, context) {
+    this.calls.push(`${this.serviceName}:${eventName}:${context.eventName}`);
+    return this.result;
+  }
+}
 describe('EditorInteractionsService', function () {
   function createService() {
     const registry = new Registry$1();
@@ -72250,41 +72826,39 @@ describe('EditorInteractionsService', function () {
   it('dispatches matching handlers by priority until one handles the event', function () {
     const service = createService();
     const calls = [];
-    service.registerHandler({
-      events: ['contextmenu'],
-      handle() {
-        calls.push('low');
-        return true;
-      },
-      id: 'low',
-      priority: 10
+    const registry = service.registry;
+    new EditorInteractionTestHandler(registry, 'low-handler', calls, true);
+    new EditorInteractionTestHandler(registry, 'high-handler', calls, {
+      handled: true
     });
     service.registerHandler({
       events: ['contextmenu'],
-      handle(_event, context) {
-        calls.push(`high:${context.eventName}`);
-        return {
-          handled: true
-        };
-      },
+      id: 'low',
+      priority: 10,
+      serviceName: 'low-handler'
+    });
+    service.registerHandler({
+      events: ['contextmenu'],
       id: 'high',
-      priority: 20
+      priority: 20,
+      serviceName: 'high-handler'
     });
     expect(service.dispatch('contextmenu', {}, {})).toEqual({
       handled: true,
       handlerId: 'high',
       result: {
         handled: true
-      }
+      },
+      serviceName: 'high-handler'
     });
-    expect(calls).toEqual(['high:contextmenu']);
+    expect(calls).toEqual(['high-handler:contextmenu:contextmenu']);
   });
   it('returns an unregister function for handlers', function () {
     const service = createService();
     const unregister = service.registerHandler({
       events: ['keydown'],
-      handle: () => true,
-      id: 'temporary'
+      id: 'temporary',
+      serviceName: 'temporary-handler'
     });
     expect(service.getHandlers('keydown').length).toBe(1);
     expect(unregister()).toBeTrue();
@@ -72294,16 +72868,34 @@ describe('EditorInteractionsService', function () {
 
 /**
  * Registry and render request queue for feature-owned views mounted by EditorPage.
+ *
+ * @extends {Service}
  */
 class EditorViewsService extends Service {
   constructor(registry) {
     super('editor-views', registry);
     this.implement(['start', 'registerView', 'unregisterView', 'requestView', 'closeView', 'getRequestedViews', 'getComponent']);
   }
+
+  /**
+   * Initializes registered editor views and active render requests.
+   *
+   * @returns {void}
+   */
   start() {
+    /** @type {Map<string, EditorViewProvider>} */
     this.views = new Map();
+    /** @type {Map<string, EditorViewRequest>} */
     this.requests = new Map();
   }
+
+  /**
+   * Registers a named editor view provider.
+   *
+   * @param {string} name - Unique editor view name.
+   * @param {EditorViewProvider} view - Provider that returns a renderable component.
+   * @returns {() => boolean | null} Function that unregisters the view.
+   */
   registerView(name, view) {
     if (!name || typeof view?.getComponent !== 'function') {
       console.warn('Cannot register an editor view without a name and getComponent function.');
@@ -72313,6 +72905,13 @@ class EditorViewsService extends Service {
     this.fireUpdated();
     return () => this.unregisterView(name);
   }
+
+  /**
+   * Unregisters a named editor view provider and any matching active request.
+   *
+   * @param {string} name - Editor view name.
+   * @returns {boolean} Whether a registered view was removed.
+   */
   unregisterView(name) {
     const removed = this.views.delete(name);
     if (this.requests.delete(name) || removed) {
@@ -72320,6 +72919,14 @@ class EditorViewsService extends Service {
     }
     return removed;
   }
+
+  /**
+   * Requests that a registered editor view be mounted by EditorPage.
+   *
+   * @param {string} name - Editor view name.
+   * @param {Record<string, unknown>} props - Props to pass to the view provider.
+   * @returns {boolean} Whether the request was accepted.
+   */
   requestView(name, props = {}) {
     if (!name) {
       return false;
@@ -72331,6 +72938,13 @@ class EditorViewsService extends Service {
     this.fireUpdated();
     return true;
   }
+
+  /**
+   * Closes an active editor view request.
+   *
+   * @param {string} name - Editor view name.
+   * @returns {boolean} Whether an active request was removed.
+   */
   closeView(name) {
     const removed = this.requests.delete(name);
     if (removed) {
@@ -72338,9 +72952,23 @@ class EditorViewsService extends Service {
     }
     return removed;
   }
+
+  /**
+   * Gets the current editor view requests in mount order.
+   *
+   * @returns {EditorViewRequest[]} Active editor view requests.
+   */
   getRequestedViews() {
     return Array.from(this.requests.values());
   }
+
+  /**
+   * Gets a renderable component for a request and editor context.
+   *
+   * @param {EditorViewRequest | string} request - Active request or view name.
+   * @param {EditorViewContext} editorContext - Editor-owned context for the view.
+   * @returns {unknown | null} Renderable component or null when no provider exists.
+   */
   getComponent(request, editorContext = {}) {
     const normalizedRequest = typeof request === 'string' ? this.requests.get(request) : request;
     const view = this.views.get(normalizedRequest?.name);
@@ -72353,6 +72981,12 @@ class EditorViewsService extends Service {
       viewName: normalizedRequest.name
     });
   }
+
+  /**
+   * Fires the updated event with the current requested views.
+   *
+   * @returns {void}
+   */
   fireUpdated() {
     this.fire?.('updated', this.getRequestedViews());
   }
@@ -107423,6 +108057,419 @@ var ti = class r {
   ni = ti;
 
 /**
+ * Coordinates editor-owned mechanics for dispatching editor interaction events.
+ */
+class EditorInteractionDispatcher {
+  /**
+   * Initializes dispatcher dependencies.
+   *
+   * @param {EditorInteractionDispatcherOptions} options - Editor dependency accessors.
+   */
+  constructor(options = {}) {
+    this.getEditorInteractions = options.getEditorInteractions || (() => null);
+    this.getEditorRoot = options.getEditorRoot || (() => null);
+    this.getCursorRoot = options.getCursorRoot || this.getEditorRoot;
+    this.getQuill = options.getQuill || (() => null);
+    this.cursorClass = null;
+  }
+
+  /**
+   * Dispatches an editor interaction event with resolved editor context.
+   *
+   * @param {string} eventName - Editor interaction event name.
+   * @param {Event | KeyboardEvent | PointerEvent | unknown} event - Source event object.
+   * @param {Partial<EditorInteractionContext>} extraContext - Additional context for this event.
+   * @returns {EditorInteractionDispatchResult} Dispatch result.
+   */
+  dispatch(eventName, event, extraContext = {}) {
+    const target = extraContext.target || this.resolveTarget(event) || this.resolvePointTarget(eventName, event) || this.resolveSelectionTarget(eventName);
+    const targetServiceName = extraContext.targetServiceName || target?.serviceName || '';
+    if (!targetServiceName && this.requiresResolvedTarget(eventName)) {
+      this.applyCursorClass(null);
+      return {
+        handled: false,
+        target: null
+      };
+    }
+    const dispatchContext = this.getInteractionContext({
+      ...extraContext,
+      point: extraContext.point || this.getPoint(event),
+      target,
+      targetServiceName
+    });
+    const result = this.getEditorInteractions()?.dispatch?.(eventName, event, dispatchContext) || {
+      handled: false
+    };
+    this.applyResult(event, result);
+    return {
+      ...result,
+      target
+    };
+  }
+
+  /**
+   * Creates generic editor context for feature-owned interaction handlers.
+   *
+   * @param {Partial<EditorInteractionContext>} extraContext - Additional context values.
+   * @returns {EditorInteractionContext} Editor interaction context.
+   */
+  getInteractionContext(extraContext = {}) {
+    const quill = this.getQuill();
+    return {
+      editorRoot: this.getEditorRoot() || quill?.root || null,
+      findBlot: (node, bubble = true) => Quill.find(node, bubble),
+      getIndex: blot => quill?.getIndex?.(blot),
+      getLeaf: index => quill?.getLeaf?.(index) || [],
+      getLength: () => quill?.getLength?.() || 0,
+      getLine: index => quill?.getLine?.(index) || [],
+      getModule: name => quill?.getModule?.(name) || null,
+      getSelection: (focus = false) => quill?.getSelection?.(focus) || null,
+      quill,
+      setSelection: (...args) => quill?.setSelection?.(...args),
+      ...extraContext
+    };
+  }
+
+  /**
+   * Resolves the registered owner nearest to an event target.
+   *
+   * @param {Event | unknown} event - Source event object.
+   * @returns {EditorInteractionTarget | null} Resolved target owner.
+   */
+  resolveTarget(event) {
+    const node = this.getElementFromNode(event?.target);
+    if (!node?.closest) {
+      return null;
+    }
+    const candidates = this.getCandidateTargets(node);
+    if (!candidates.length) {
+      return null;
+    }
+    return this.pickTarget(node, candidates);
+  }
+
+  /**
+   * Gets registered owner candidates that match a DOM node.
+   *
+   * @param {Element} node - Event target node.
+   * @returns {EditorInteractionTarget[]} Matching owner targets.
+   */
+  getCandidateTargets(node) {
+    const handlers = this.getEditorInteractions()?.getHandlers?.() || [];
+    return handlers.filter(handler => handler.selector).map(handler => {
+      const element = node.closest(handler.selector);
+      if (!element) {
+        return null;
+      }
+      return this.createTarget(element, handler);
+    }).filter(Boolean);
+  }
+
+  /**
+   * Resolves an owner target from the current Quill selection.
+   *
+   * @param {string} eventName - Editor interaction event name.
+   * @returns {EditorInteractionTarget | null} Resolved target owner.
+   */
+  resolveSelectionTarget(eventName) {
+    const quill = this.getQuill();
+    const range = quill?.getSelection?.();
+    if (!range) {
+      return null;
+    }
+    const [line] = quill.getLine?.(range.index) || [];
+    const [leaf] = quill.getLeaf?.(range.index) || [];
+    const nodes = [leaf?.domNode, line?.domNode].filter(Boolean);
+    const handlers = this.getEditorInteractions()?.getHandlers?.(eventName) || [];
+    for (const node of nodes) {
+      const element = node.nodeType === 1 ? node : node.parentElement;
+      if (!element?.closest) {
+        continue;
+      }
+      const candidates = handlers.filter(handler => handler.selector).map(handler => {
+        const owner = element.closest(handler.selector);
+        return owner ? this.createTarget(owner, handler) : null;
+      }).filter(Boolean);
+      if (candidates.length) {
+        return this.pickTarget(element, candidates);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Resolves an owner target from pointer coordinates within the editor root.
+   *
+   * @param {string} eventName - Editor interaction event name.
+   * @param {Event | unknown} event - Source event object.
+   * @returns {EditorInteractionTarget | null} Resolved target owner.
+   */
+  resolvePointTarget(eventName, event) {
+    const point = this.getPoint(event);
+    const editorRoot = this.getEditorRoot();
+    if (!point || !editorRoot) {
+      return null;
+    }
+    const handlers = this.getEditorInteractions()?.getHandlers?.(eventName) || [];
+    const candidates = handlers.filter(handler => handler.pointSelectable === true && handler.selector).flatMap(handler => this.getPointTargetCandidates(editorRoot, handler, point));
+    if (!candidates.length) {
+      return null;
+    }
+    return candidates.sort((first, second) => first.area - second.area || Number(second.target.registration?.priority || 0) - Number(first.target.registration?.priority || 0))[0].target;
+  }
+
+  /**
+   * Gets owner candidates whose expanded bounds contain a pointer point.
+   *
+   * @param {Element} editorRoot - Root editor element.
+   * @param {EditorInteractionHandlerRegistration} handler - Handler registration.
+   * @param {{clientX: number, clientY: number}} point - Pointer coordinates.
+   * @returns {{area: number, target: EditorInteractionTarget}[]} Candidate targets.
+   */
+  getPointTargetCandidates(editorRoot, handler, point) {
+    const elements = editorRoot.matches?.(handler.selector) ? [editorRoot] : Array.from(editorRoot.querySelectorAll?.(handler.selector) || []);
+    return elements.map(element => this.getPointTargetCandidate(element, handler, point)).filter(Boolean);
+  }
+
+  /**
+   * Gets one point target candidate if the point is inside its expanded bounds.
+   *
+   * @param {Element} element - Candidate owner element.
+   * @param {EditorInteractionHandlerRegistration} handler - Handler registration.
+   * @param {{clientX: number, clientY: number}} point - Pointer coordinates.
+   * @returns {{area: number, target: EditorInteractionTarget} | null} Candidate target.
+   */
+  getPointTargetCandidate(element, handler, point) {
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    const margin = handler.pointHitMargin || {};
+    const left = rect.left - (Number(margin.left) || 0);
+    const right = rect.right + (Number(margin.right) || 0);
+    const top = rect.top - (Number(margin.top) || 0);
+    const bottom = rect.bottom + (Number(margin.bottom) || 0);
+    if (point.clientX < left || point.clientX > right || point.clientY < top || point.clientY > bottom) {
+      return null;
+    }
+    return {
+      area: Math.max((right - left) * (bottom - top), 0),
+      target: this.createTarget(element, handler)
+    };
+  }
+
+  /**
+   * Resolves the owner target for a gutter line-selection hit.
+   *
+   * @param {string} eventName - Editor interaction event name.
+   * @param {{index: number, table?: Element} | null} range - Hit range.
+   * @returns {EditorInteractionTarget | null} Resolved target owner.
+   */
+  resolveGutterTarget(eventName, range) {
+    const sourceElement = range?.table || this.getLineElement(range);
+    if (!sourceElement) {
+      return null;
+    }
+    const handlers = this.getEditorInteractions()?.getHandlers?.(eventName) || [];
+    const candidates = handlers.filter(handler => handler.gutterSelectable === true && handler.selector).flatMap(handler => this.getGutterTargetCandidates(sourceElement, handler));
+    if (!candidates.length) {
+      return null;
+    }
+    return candidates.sort((first, second) => first.left - second.left || Number(second.target.registration?.priority || 0) - Number(first.target.registration?.priority || 0))[0].target;
+  }
+
+  /**
+   * Gets the rendered line element for a Quill range.
+   *
+   * @param {{index: number} | null} range - Quill range-like object.
+   * @returns {Element | null} Rendered line element.
+   */
+  getLineElement(range) {
+    if (!Number.isInteger(range?.index)) {
+      return null;
+    }
+    const [line] = this.getQuill()?.getLine?.(range.index) || [];
+    const node = line?.domNode || null;
+    return node?.nodeType === 1 ? node : node?.parentElement || null;
+  }
+
+  /**
+   * Gets owner candidates from the line/row nearest a gutter interaction.
+   *
+   * @param {Element} sourceElement - Line or table element near the gutter hit.
+   * @param {EditorInteractionHandlerRegistration} handler - Handler registration.
+   * @returns {{left: number, target: EditorInteractionTarget}[]} Candidate targets.
+   */
+  getGutterTargetCandidates(sourceElement, handler) {
+    const elements = new Set();
+    const closest = sourceElement.closest?.(handler.selector);
+    if (closest) {
+      elements.add(closest);
+    }
+    if (sourceElement.matches?.(handler.selector)) {
+      elements.add(sourceElement);
+    }
+    const descendants = sourceElement.querySelectorAll?.(handler.selector) || [];
+    descendants.forEach(element => elements.add(element));
+    return Array.from(elements).map(element => {
+      const rect = element.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      return {
+        left: rect.left,
+        target: this.createTarget(element, handler)
+      };
+    }).filter(Boolean);
+  }
+
+  /**
+   * Creates a target description from a matched owner element.
+   *
+   * @param {Element} element - Matched owner element.
+   * @param {EditorInteractionHandlerRegistration} handler - Handler registration.
+   * @returns {EditorInteractionTarget} Target description.
+   */
+  createTarget(element, handler) {
+    return {
+      data: {
+        ...element.dataset
+      },
+      element,
+      handlerId: handler.id,
+      id: handler.idAttribute ? element.getAttribute(handler.idAttribute) : '',
+      registration: handler,
+      role: handler.role || '',
+      serviceName: handler.serviceName
+    };
+  }
+
+  /**
+   * Whether dispatch should be skipped when no target owner is resolved.
+   *
+   * @param {string} eventName - Editor interaction event name.
+   * @returns {boolean} Whether a target is required.
+   */
+  requiresResolvedTarget(eventName) {
+    const handlers = this.getEditorInteractions()?.getHandlers?.(eventName) || [];
+    return handlers.some(handler => handler.selector);
+  }
+
+  /**
+   * Picks the nearest owner target for a DOM node.
+   *
+   * @param {Element} node - Event target node.
+   * @param {EditorInteractionTarget[]} candidates - Matching owner targets.
+   * @returns {EditorInteractionTarget} Selected owner target.
+   */
+  pickTarget(node, candidates) {
+    return [...candidates].sort((first, second) => this.getDistanceToAncestor(node, first.element) - this.getDistanceToAncestor(node, second.element) || Number(second.registration?.priority || 0) - Number(first.registration?.priority || 0))[0];
+  }
+
+  /**
+   * Gets the number of parent steps between a node and an ancestor.
+   *
+   * @param {Element} node - Starting node.
+   * @param {Element} ancestor - Candidate ancestor.
+   * @returns {number} Parent step count or Infinity when unrelated.
+   */
+  getDistanceToAncestor(node, ancestor) {
+    let distance = 0;
+    let current = this.getElementFromNode(node);
+    while (current) {
+      if (current === ancestor) {
+        return distance;
+      }
+      current = current.parentElement;
+      distance += 1;
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Gets an element from an event target or DOM node.
+   *
+   * @param {Node | Element | unknown} node - Source node.
+   * @returns {Element | null}
+   */
+  getElementFromNode(node) {
+    if (!node) {
+      return null;
+    }
+    if (node.nodeType === getNodeType$2('ELEMENT_NODE')) {
+      return node;
+    }
+    return node.parentElement || null;
+  }
+
+  /**
+   * Gets pointer coordinates from an event when available.
+   *
+   * @param {Event | PointerEvent | MouseEvent | unknown} event - Source event object.
+   * @returns {{clientX: number | null, clientY: number | null} | null} Pointer coordinates.
+   */
+  getPoint(event) {
+    if (!Number.isFinite(Number(event?.clientX)) || !Number.isFinite(Number(event?.clientY))) {
+      return null;
+    }
+    return {
+      clientX: Number(event.clientX),
+      clientY: Number(event.clientY)
+    };
+  }
+
+  /**
+   * Applies generic effects returned by an interaction handler.
+   *
+   * @param {Event | unknown} event - Source event object.
+   * @param {EditorInteractionDispatchResult} dispatchResult - Dispatch result.
+   * @returns {void}
+   */
+  applyResult(event, dispatchResult) {
+    const result = dispatchResult?.result;
+    if (result?.preventDefault) {
+      event?.preventDefault?.();
+    }
+    if (result?.stopPropagation) {
+      event?.stopPropagation?.();
+      event?.stopImmediatePropagation?.();
+      event?.nativeEvent?.stopPropagation?.();
+      event?.nativeEvent?.stopImmediatePropagation?.();
+    }
+    this.applyCursorClass(result?.cursorClass || null);
+  }
+
+  /**
+   * Applies the active interaction cursor class to the editor root.
+   *
+   * @param {string | null} cursorClass - Cursor class to apply.
+   * @returns {void}
+   */
+  applyCursorClass(cursorClass) {
+    const cursorRoot = this.getCursorRoot();
+    if (this.cursorClass === cursorClass) {
+      return;
+    }
+    if (this.cursorClass) {
+      cursorRoot?.classList?.remove?.(this.cursorClass);
+    }
+    this.cursorClass = cursorClass || null;
+    if (this.cursorClass) {
+      cursorRoot?.classList?.add?.(this.cursorClass);
+    }
+  }
+}
+function getNodeType$2(name) {
+  if (typeof Node !== 'undefined') {
+    return Node[name];
+  }
+  return {
+    ELEMENT_NODE: 1,
+    TEXT_NODE: 3
+  }[name];
+}
+
+/**
  * Renders the editor command toolbar from the editor-toolbar service.
  *
  * @extends {React.Component<EditorToolbarProps, EditorToolbarState>}
@@ -138065,17 +139112,43 @@ class PagedViewPreview extends React$1.Component {
 				page-break-inside: avoid;
 			}
 
-			.mn-paged-preview-document table {
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-wrapper {
+				display: block;
+				width: auto;
+				min-width: 0;
+				max-width: 100%;
+				overflow: visible;
+			}
+
+			.mn-paged-preview-document table,
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table {
+				width: 100%;
+				max-width: 100%;
+				table-layout: fixed;
+				break-inside: auto;
+				page-break-inside: auto;
+			}
+
+			.mn-paged-preview-document tbody,
+			.mn-paged-preview-document thead {
+				break-inside: auto;
+				page-break-inside: auto;
+			}
+
+			.mn-paged-preview-document tr {
 				break-inside: avoid;
 				page-break-inside: avoid;
 			}
 
-			.mn-paged-preview-document .ql-table-wrapper {
-				display: inline-block;
-				width: max-content;
-				min-width: 100%;
-				max-width: none;
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-cell {
 				overflow: visible;
+			}
+
+			.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-cell-inner {
+				display: block;
+				width: auto;
+				min-width: 0;
+				max-width: 100%;
 			}
 
 			.pagedjs_pages {
@@ -138238,11 +139311,26 @@ class EditorPage extends React$1.Component {
     this.activeTabId = '';
     this.isApplyingDocumentModelContent = false;
     this.selectionOwnerDocument = null;
+    this.editorPointerInteraction = null;
+    this.editorPointerInteractionOwnerDocument = null;
+    this.nativeEditorMouseDownRoot = null;
     this.lineSelectionAnchorRange = null;
     this.lineSelectionOwnerDocument = null;
-    this.tableColumnSelectionAnchorRange = null;
-    this.tableColumnSelectionClassNode = null;
-    this.tableColumnSelectionOwnerDocument = null;
+    this.gutterSelectionInteraction = null;
+    this.tableSelectionMouseDownGate = null;
+    this.tableDebugEnabled = false;
+    this.tableDebugEventSequence = 0;
+    this.tableDebugNativeListeners = [];
+    this.tableDebugPatchedListeners = [];
+    this.tableDebugPatchedMethods = [];
+    this.tableDebugPatchedSelection = null;
+    this.objectTypeClipboardMatcherKeys = new Set();
+    this.editorInteractionDispatcher = new EditorInteractionDispatcher({
+      getEditorInteractions: () => this.editorInteractions,
+      getCursorRoot: () => this.editorRef.current || this.quill?.root || null,
+      getEditorRoot: () => this.quill?.root || this.editorRef.current || null,
+      getQuill: () => this.quill
+    });
   }
 
   /**
@@ -138291,9 +139379,11 @@ class EditorPage extends React$1.Component {
     this.unsubscribeFromEditorViews();
     this.removeObjectTypeEventListeners();
     this.disconnectEditorMutationObserver();
+    this.detachNativeEditorInteractionListeners();
+    this.detachEditorPointerCaptureListeners();
     this.detachLineSelectionDragListeners();
-    this.detachTableColumnSelectionDragListeners();
-    this.clearTableColumnSelectionCursor();
+    this.detachTableDebugInstrumentation();
+    this.detachTableSelectionMouseDownGate();
     window.clearTimeout(this.documentOverflowWidthTimer);
     window.clearTimeout(this.pagedPreviewHtmlTimer);
     window.clearTimeout(this.whiteSpaceMarkerTimer);
@@ -138386,6 +139476,10 @@ class EditorPage extends React$1.Component {
   onObjectTypesChanged() {
     this.configureObjectTypeContext();
     this.listenForObjectTypeChanges();
+    this.registerObjectTypeClipboardMatchers();
+  }
+  getObjectTypeClipboardMatchers() {
+    return (this.objectTypes?.getTypes?.() || []).flatMap(definition => Array.isArray(definition.clipboardMatchers) ? definition.clipboardMatchers : []);
   }
 
   /**
@@ -138402,10 +139496,16 @@ class EditorPage extends React$1.Component {
       modules: {
         [ni.moduleName]: {
           modules: [{
-            module: Gr
+            module: Gr,
+            options: {
+              selectColor: 'var(--mn-selection-color)'
+            }
           }, {
             module: zr
           }]
+        },
+        clipboard: {
+          matchers: this.getObjectTypeClipboardMatchers()
         },
         toolbar: false
       },
@@ -138460,15 +139560,36 @@ class EditorPage extends React$1.Component {
     this.quill.on('text-change', (delta, oldDelta, source) => {
       this.onEditorTextChange(source);
     });
+    this.attachNativeEditorInteractionListeners();
     this.selectionOwnerDocument = this.editorRef.current.ownerDocument;
     this.selectionOwnerDocument.addEventListener('selectionchange', this.updateEmbedSelectionState);
     this.attachEditorSurface();
     this.listenForObjectTypeChanges();
+    this.registerObjectTypeClipboardMatchers();
     this.connectEditorMutationObserver();
+    this.attachTableSelectionMouseDownGate();
+    this.attachTableDebugInstrumentation();
     this.loadActiveTabContent();
     this.updatePagedPreviewHtml();
     this.updateDocumentOverflowWidth();
     this.scheduleWhiteSpaceMarkerUpdate();
+  }
+  registerObjectTypeClipboardMatchers() {
+    const clipboard = this.quill?.clipboard;
+    if (!clipboard?.addMatcher) {
+      return;
+    }
+    this.getObjectTypeClipboardMatchers().forEach(([selector, matcher]) => {
+      if (!selector || typeof matcher !== 'function') {
+        return;
+      }
+      const key = `${String(selector)}:${matcher.name || 'anonymous'}`;
+      if (this.objectTypeClipboardMatcherKeys.has(key)) {
+        return;
+      }
+      clipboard.addMatcher(selector, matcher);
+      this.objectTypeClipboardMatcherKeys.add(key);
+    });
   }
 
   /**
@@ -138556,8 +139677,7 @@ class EditorPage extends React$1.Component {
       return false;
     }
     this.getTableSelectionModule()?.hide?.();
-    this.quill.focus?.();
-    this.quill.setSelection(index, 0, 'user');
+    this.setQuillSelectionWithoutScroll(index, 0, 'user', cell);
     this.updateToolbarState();
     this.updateEmbedSelectionState();
     return false;
@@ -138595,21 +139715,147 @@ class EditorPage extends React$1.Component {
   handleEditorKeyDown = event => {
     this.dispatchEditorInteraction('keydown', event);
   };
-  dispatchEditorInteraction(eventName, event) {
-    return this.editorInteractions?.dispatch?.(eventName, event, this.getEditorInteractionContext()) || {
-      handled: false
+  handleNativeEditorMouseDownCapture = event => {
+    const result = this.dispatchEditorInteraction('mousedown-capture', event);
+    if (result?.result?.suppressTableSelection === true) {
+      event.mnSuppressTableUpSelection = true;
+      if (result?.result?.suppressBlankTableCellFocus !== true) {
+        this.scheduleBlankTableCellFocus(event);
+      }
+    }
+  };
+  attachNativeEditorInteractionListeners() {
+    const root = this.quill?.root;
+    if (!root || this.nativeEditorMouseDownRoot === root) {
+      return;
+    }
+    this.detachNativeEditorInteractionListeners();
+    root.addEventListener('mousedown', this.handleNativeEditorMouseDownCapture, true);
+    this.nativeEditorMouseDownRoot = root;
+  }
+  detachNativeEditorInteractionListeners() {
+    if (!this.nativeEditorMouseDownRoot) {
+      return;
+    }
+    this.nativeEditorMouseDownRoot.removeEventListener('mousedown', this.handleNativeEditorMouseDownCapture, true);
+    this.nativeEditorMouseDownRoot = null;
+  }
+  handleEditorSurfacePointerDownCapture = event => {
+    if (!this.isLineSelectionGutterPoint(event)) {
+      return;
+    }
+    this.handleLineSelectionPointerDown(event);
+  };
+  isLineSelectionGutterPoint(event) {
+    const content = this.documentContentRef.current;
+    const rect = content?.getBoundingClientRect?.();
+    const clientX = Number(event?.clientX);
+    const clientY = Number(event?.clientY);
+    if (!rect || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+      return false;
+    }
+    return rect.top <= clientY && clientY <= rect.bottom && rect.left - 56 <= clientX && clientX <= rect.left + 2;
+  }
+  handleEditorPointerDown = event => {
+    const result = this.dispatchEditorInteraction('pointerdown', event);
+    if (this.shouldCaptureEditorPointer(result)) {
+      this.startEditorPointerCapture(event, result);
+    }
+  };
+  handleEditorPointerMove = event => {
+    if (this.editorPointerInteraction) {
+      return;
+    }
+    this.dispatchEditorInteraction('pointermove', event);
+  };
+  handleEditorPointerLeave = event => {
+    if (this.editorPointerInteraction) {
+      return;
+    }
+    this.dispatchEditorInteraction('pointerleave', event);
+  };
+  handleEditorPointerUp = event => {
+    if (this.editorPointerInteraction) {
+      return;
+    }
+    this.dispatchEditorInteraction('pointerup', event);
+  };
+  handleEditorPointerCancel = event => {
+    if (this.editorPointerInteraction) {
+      return;
+    }
+    this.dispatchEditorInteraction('pointercancel', event);
+  };
+  dispatchEditorInteraction(eventName, event, extraContext = {}) {
+    this.logTableDebug(`app-dispatch:${eventName}:before`, {
+      eventName,
+      event: this.getTableDebugEventSummary(event),
+      extraContext: this.getTableDebugContextSummary(extraContext)
+    });
+    const result = this.editorInteractionDispatcher.dispatch(eventName, event, extraContext);
+    const resultSummary = this.getTableDebugDispatchResultSummary(result);
+    this.logTableDebug(`app-dispatch:${eventName}:after:${this.getTableDebugResultLabel(resultSummary)}`, {
+      eventName,
+      event: this.getTableDebugEventSummary(event),
+      result: resultSummary,
+      snapshot: this.getTableDebugSnapshot(event)
+    });
+    return result;
+  }
+  shouldCaptureEditorPointer(result) {
+    return result?.handled === true && result?.result?.capturePointer === true;
+  }
+  startEditorPointerCapture(event, result) {
+    const ownerDocument = event.currentTarget?.ownerDocument || event.target?.ownerDocument;
+    if (!ownerDocument) {
+      return;
+    }
+    this.detachEditorPointerCaptureListeners();
+    this.editorPointerInteraction = {
+      handlerId: result.handlerId || '',
+      serviceName: result.serviceName || result.target?.serviceName || '',
+      target: result.target || null
+    };
+    this.editorPointerInteractionOwnerDocument = ownerDocument;
+    ownerDocument.addEventListener('pointermove', this.handleCapturedEditorPointerMove);
+    ownerDocument.addEventListener('pointerup', this.handleCapturedEditorPointerUp);
+    ownerDocument.addEventListener('pointercancel', this.handleCapturedEditorPointerUp);
+  }
+  handleCapturedEditorPointerMove = event => {
+    if (!this.editorPointerInteraction) {
+      return;
+    }
+    this.dispatchEditorInteraction('pointermove', event, this.getCapturedEditorPointerContext());
+  };
+  handleCapturedEditorPointerUp = event => {
+    if (!this.editorPointerInteraction) {
+      return;
+    }
+    const eventName = event.type === 'pointercancel' ? 'pointercancel' : 'pointerup';
+    this.dispatchEditorInteraction(eventName, event, this.getCapturedEditorPointerContext());
+    this.detachEditorPointerCaptureListeners();
+  };
+  getCapturedEditorPointerContext() {
+    return {
+      captured: true,
+      handlerId: this.editorPointerInteraction?.handlerId || '',
+      target: this.editorPointerInteraction?.target || null,
+      targetServiceName: this.editorPointerInteraction?.serviceName || ''
     };
   }
+  detachEditorPointerCaptureListeners() {
+    if (!this.editorPointerInteractionOwnerDocument) {
+      this.editorPointerInteraction = null;
+      return;
+    }
+    this.editorPointerInteractionOwnerDocument.removeEventListener('pointermove', this.handleCapturedEditorPointerMove);
+    this.editorPointerInteractionOwnerDocument.removeEventListener('pointerup', this.handleCapturedEditorPointerUp);
+    this.editorPointerInteractionOwnerDocument.removeEventListener('pointercancel', this.handleCapturedEditorPointerUp);
+    this.editorPointerInteractionOwnerDocument = null;
+    this.editorPointerInteraction = null;
+  }
   getEditorInteractionContext() {
-    return {
-      editorRoot: this.quill?.root || null,
-      findBlot: (node, bubble = true) => Quill.find(node, bubble),
-      getCurrentTableCellInner: this.getCurrentTableCellInner.bind(this),
-      getTableModule: () => this.quill?.getModule?.(ni.moduleName) || null,
-      getTableSelectionModule: this.getTableSelectionModule.bind(this),
-      quill: this.quill,
-      selectTableCell: this.selectTableCell.bind(this)
-    };
+    return this.editorInteractionDispatcher.getInteractionContext();
   }
   getEditorViewContext() {
     return {
@@ -139135,12 +140381,28 @@ class EditorPage extends React$1.Component {
     if (!this.quill) {
       return;
     }
-    const range = this.getTableRowSelectionRangeFromPoint(event.clientY) || this.getLineSelectionRangeFromPoint(event.clientY);
+    event.preventDefault();
+    event.stopPropagation();
+    const range = this.getLineSelectionRangeFromPoint(event.clientY);
     if (!range) {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
+    const lineHit = this.getGutterLineSelectionHit(range, event);
+    const target = this.editorInteractionDispatcher.resolveGutterTarget('gutter-line-select-start', range);
+    const result = target ? this.dispatchEditorInteraction('gutter-line-select-start', event, {
+      anchorLineHit: lineHit,
+      lineHit,
+      target,
+      targetServiceName: target.serviceName
+    }) : {
+      handled: false
+    };
+    if (result.handled) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.startGutterSelectionInteraction(event, result, lineHit);
+      return;
+    }
     this.lineSelectionAnchorRange = range;
     this.selectLineSelectionRanges(range, range);
     this.lineSelectionOwnerDocument = event.currentTarget.ownerDocument;
@@ -139156,10 +140418,24 @@ class EditorPage extends React$1.Component {
    * @returns {void}
    */
   handleLineSelectionPointerMove = event => {
+    if (this.gutterSelectionInteraction) {
+      const range = this.getLineSelectionRangeFromPoint(event.clientY);
+      if (!range) {
+        return;
+      }
+      event.preventDefault();
+      this.dispatchEditorInteraction('gutter-line-select-move', event, {
+        anchorLineHit: this.gutterSelectionInteraction.anchorLineHit,
+        lineHit: this.getGutterLineSelectionHit(range, event),
+        target: this.gutterSelectionInteraction.target,
+        targetServiceName: this.gutterSelectionInteraction.serviceName
+      });
+      return;
+    }
     if (!this.lineSelectionAnchorRange) {
       return;
     }
-    const range = this.getTableRowSelectionRangeFromPoint(event.clientY) || this.getLineSelectionRangeFromPoint(event.clientY);
+    const range = this.getLineSelectionRangeFromPoint(event.clientY);
     if (!range) {
       return;
     }
@@ -139172,10 +140448,45 @@ class EditorPage extends React$1.Component {
    *
    * @returns {void}
    */
-  handleLineSelectionPointerUp = () => {
+  handleLineSelectionPointerUp = event => {
+    if (this.gutterSelectionInteraction) {
+      this.dispatchEditorInteraction(event?.type === 'pointercancel' ? 'gutter-line-select-cancel' : 'gutter-line-select-end', event, {
+        anchorLineHit: this.gutterSelectionInteraction.anchorLineHit,
+        target: this.gutterSelectionInteraction.target,
+        targetServiceName: this.gutterSelectionInteraction.serviceName
+      });
+      this.gutterSelectionInteraction = null;
+      this.detachLineSelectionDragListeners();
+      return;
+    }
     this.lineSelectionAnchorRange = null;
     this.detachLineSelectionDragListeners();
   };
+  startGutterSelectionInteraction(event, result, anchorLineHit) {
+    const ownerDocument = event.currentTarget?.ownerDocument || event.target?.ownerDocument;
+    if (!ownerDocument) {
+      return;
+    }
+    this.gutterSelectionInteraction = {
+      anchorLineHit,
+      handlerId: result.handlerId || '',
+      serviceName: result.serviceName || result.target?.serviceName || '',
+      target: result.target || null
+    };
+    this.lineSelectionOwnerDocument = ownerDocument;
+    ownerDocument.addEventListener('pointermove', this.handleLineSelectionPointerMove);
+    ownerDocument.addEventListener('pointerup', this.handleLineSelectionPointerUp);
+    ownerDocument.addEventListener('pointercancel', this.handleLineSelectionPointerUp);
+  }
+  getGutterLineSelectionHit(range, event) {
+    return {
+      point: this.editorInteractionDispatcher.getPoint(event),
+      range: {
+        index: range.index,
+        length: range.length
+      }
+    };
+  }
 
   /**
    * Removes document-level gutter drag listeners.
@@ -139200,165 +140511,12 @@ class EditorPage extends React$1.Component {
    * @returns {void}
    */
   selectLineSelectionRanges(anchorRange, focusRange) {
-    if (this.selectTableSelectionRanges(anchorRange, focusRange)) {
-      return;
-    }
     const start = Math.min(anchorRange.index, focusRange.index);
     const end = Math.max(anchorRange.index + anchorRange.length, focusRange.index + focusRange.length);
     const length = Math.max(end - start, 0);
     this.quill?.setSelection(start, length, 'user');
     this.updateToolbarState();
     this.updateEmbedSelectionState();
-  }
-
-  /**
-   * Selects whole table cells through TableUp when gutter selection hits rows.
-   *
-   * @param {{index: number, length: number, table?: HTMLTableElement}} anchorRange
-   * @param {{index: number, length: number, table?: HTMLTableElement}} focusRange
-   * @returns {boolean}
-   */
-  selectTableSelectionRanges(anchorRange, focusRange) {
-    if (!anchorRange.table || !focusRange.table || anchorRange.table !== focusRange.table) {
-      return false;
-    }
-    const tableSelection = this.getTableSelectionModule();
-    const cells = this.getTableSelectionCells(anchorRange.table, anchorRange, focusRange);
-    if (!tableSelection || !cells.length) {
-      return false;
-    }
-    this.applyTableSelection(tableSelection, anchorRange.table, cells);
-    this.quill?.setSelection?.(null, 'api');
-    this.updateToolbarState();
-    this.updateEmbedSelectionState();
-    return true;
-  }
-
-  /**
-   * Applies explicit selected cells without asking TableUp to recompute the selection rectangle.
-   *
-   * @param {unknown} tableSelection
-   * @param {HTMLTableElement} table
-   * @param {unknown[]} cells
-   * @returns {void}
-   */
-  applyTableSelection(tableSelection, table, cells) {
-    tableSelection.setSelectionTable(table);
-    tableSelection.setSelectedTds(cells);
-    const boundary = this.getTableSelectionBoundary(cells);
-    if (boundary) {
-      tableSelection.boundary = boundary;
-    }
-    const editor = this.quill?.root;
-    const tableView = table.parentElement;
-    tableSelection.selectedEditorScrollX = Number(editor?.scrollLeft) || 0;
-    tableSelection.selectedEditorScrollY = Number(editor?.scrollTop) || 0;
-    tableSelection.selectedTableScrollX = Number(tableView?.scrollLeft) || 0;
-    tableSelection.selectedTableScrollY = Number(tableView?.scrollTop) || 0;
-    tableSelection.show?.();
-  }
-
-  /**
-   * Selects a table column when the pointer is in the table's top selection band.
-   *
-   * @param {React.PointerEvent<HTMLElement>} event
-   * @returns {void}
-   */
-  handleTableColumnPointerDown = event => {
-    const range = this.getTableColumnSelectionRangeFromPoint(event.clientX, event.clientY);
-    if (!range) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    this.tableColumnSelectionAnchorRange = range;
-    this.selectTableSelectionRanges(range, range);
-    this.tableColumnSelectionOwnerDocument = event.currentTarget.ownerDocument;
-    this.tableColumnSelectionOwnerDocument.addEventListener('pointermove', this.handleTableColumnSelectionPointerMove);
-    this.tableColumnSelectionOwnerDocument.addEventListener('pointerup', this.handleTableColumnSelectionPointerUp);
-    this.tableColumnSelectionOwnerDocument.addEventListener('pointercancel', this.handleTableColumnSelectionPointerUp);
-  };
-
-  /**
-   * Shows the table column selection cursor while the pointer is in a column selection band.
-   *
-   * @param {React.PointerEvent<HTMLElement>} event
-   * @returns {void}
-   */
-  handleTableColumnPointerMove = event => {
-    if (this.tableColumnSelectionAnchorRange) {
-      return;
-    }
-    const range = this.getTableColumnSelectionRangeFromPoint(event.clientX, event.clientY);
-    const node = event.currentTarget;
-    if (range) {
-      node.classList.add('mn-table-column-selection-cursor');
-      this.tableColumnSelectionClassNode = node;
-    } else if (this.tableColumnSelectionClassNode === node) {
-      this.clearTableColumnSelectionCursor();
-    }
-  };
-
-  /**
-   * Clears the table column selection cursor.
-   *
-   * @returns {void}
-   */
-  handleTableColumnPointerLeave = () => {
-    this.clearTableColumnSelectionCursor();
-  };
-
-  /**
-   * Extends column selection while dragging through the table top band.
-   *
-   * @param {PointerEvent} event
-   * @returns {void}
-   */
-  handleTableColumnSelectionPointerMove = event => {
-    if (!this.tableColumnSelectionAnchorRange) {
-      return;
-    }
-    const range = this.getTableColumnSelectionRangeFromPoint(event.clientX, event.clientY);
-    if (!range || range.table !== this.tableColumnSelectionAnchorRange.table) {
-      return;
-    }
-    event.preventDefault();
-    this.selectTableSelectionRanges(this.tableColumnSelectionAnchorRange, range);
-  };
-
-  /**
-   * Ends active table column drag selection.
-   *
-   * @returns {void}
-   */
-  handleTableColumnSelectionPointerUp = () => {
-    this.tableColumnSelectionAnchorRange = null;
-    this.detachTableColumnSelectionDragListeners();
-  };
-
-  /**
-   * Removes document-level column drag listeners.
-   *
-   * @returns {void}
-   */
-  detachTableColumnSelectionDragListeners() {
-    if (!this.tableColumnSelectionOwnerDocument) {
-      return;
-    }
-    this.tableColumnSelectionOwnerDocument.removeEventListener('pointermove', this.handleTableColumnSelectionPointerMove);
-    this.tableColumnSelectionOwnerDocument.removeEventListener('pointerup', this.handleTableColumnSelectionPointerUp);
-    this.tableColumnSelectionOwnerDocument.removeEventListener('pointercancel', this.handleTableColumnSelectionPointerUp);
-    this.tableColumnSelectionOwnerDocument = null;
-  }
-
-  /**
-   * Clears the table column selection cursor class from the current editor node.
-   *
-   * @returns {void}
-   */
-  clearTableColumnSelectionCursor() {
-    this.tableColumnSelectionClassNode?.classList?.remove?.('mn-table-column-selection-cursor');
-    this.tableColumnSelectionClassNode = null;
   }
 
   /**
@@ -139374,6 +140532,10 @@ class EditorPage extends React$1.Component {
       return null;
     }
     const y = clampNumber(clientY, rect.top + 1, rect.bottom - 1);
+    const renderedRange = this.getRenderedLineSelectionRangeFromPoint(y);
+    if (renderedRange) {
+      return renderedRange;
+    }
     const startRange = this.getQuillRangeFromPoint(rect.left + 1, y);
     const endRange = this.getQuillRangeFromPoint(rect.right - 1, y);
     const startIndex = startRange?.index;
@@ -139390,6 +140552,99 @@ class EditorPage extends React$1.Component {
     }
     const index = Number.isInteger(startIndex) ? startIndex : endIndex;
     return this.getLogicalLineRangeAtIndex(index);
+  }
+  getRenderedLineSelectionRangeFromPoint(clientY) {
+    const editor = this.quill?.root;
+    const ownerDocument = editor?.ownerDocument || document;
+    if (!editor?.nodeType || !ownerDocument?.createTreeWalker) {
+      return null;
+    }
+    const candidates = this.getRenderedTextLineCandidates(editor, clientY);
+    const line = this.getClosestRenderedTextLine(candidates, clientY);
+    if (!line) {
+      return null;
+    }
+    return {
+      index: line.index,
+      length: Math.max(line.end - line.index, 1)
+    };
+  }
+  getRenderedTextLineCandidates(editor, clientY) {
+    const ownerDocument = editor.ownerDocument || document;
+    const nodeFilter = ownerDocument.defaultView?.NodeFilter || (typeof NodeFilter === 'undefined' ? null : NodeFilter);
+    if (!nodeFilter) {
+      return [];
+    }
+    const walker = ownerDocument.createTreeWalker(editor, nodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) {
+          return nodeFilter.FILTER_REJECT;
+        }
+        if (node.parentElement?.closest?.('.music-keyboard-embed, .ql-ui')) {
+          return nodeFilter.FILTER_REJECT;
+        }
+        return nodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const candidates = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      for (let offset = 0; offset < node.nodeValue.length; offset += 1) {
+        const rect = getTextRangeRect(node, offset, offset + 1);
+        if (!rect || rect.width <= 0 || rect.height <= 0) {
+          continue;
+        }
+        if (rect.bottom < clientY - 8 || rect.top > clientY + 8) {
+          continue;
+        }
+        const start = this.getQuillRangeFromTextOffset(node, offset)?.index;
+        const end = this.getQuillRangeFromTextOffset(node, offset + 1)?.index;
+        if (!Number.isInteger(start) || !Number.isInteger(end)) {
+          continue;
+        }
+        candidates.push({
+          bottom: rect.bottom,
+          center: rect.top + rect.height / 2,
+          end: Math.max(start, end),
+          index: Math.min(start, end),
+          top: rect.top
+        });
+      }
+    }
+    return candidates;
+  }
+  getClosestRenderedTextLine(candidates, clientY) {
+    const lines = [];
+    candidates.forEach(candidate => {
+      const line = lines.find(entry => Math.abs(entry.center - candidate.center) <= 3);
+      if (line) {
+        line.bottom = Math.max(line.bottom, candidate.bottom);
+        line.center = (line.center + candidate.center) / 2;
+        line.end = Math.max(line.end, candidate.end);
+        line.index = Math.min(line.index, candidate.index);
+        line.top = Math.min(line.top, candidate.top);
+        return;
+      }
+      lines.push({
+        ...candidate
+      });
+    });
+    return lines.filter(line => line.top - 4 <= clientY && clientY <= line.bottom + 4).sort((first, second) => Math.abs(first.center - clientY) - Math.abs(second.center - clientY) || first.index - second.index)[0] || null;
+  }
+  getQuillRangeFromTextOffset(node, offset) {
+    const ownerDocument = node?.ownerDocument || document;
+    const range = ownerDocument.createRange?.();
+    if (!range) {
+      return null;
+    }
+    try {
+      range.setStart(node, offset);
+      range.setEnd(node, offset);
+      const normalized = this.quill?.selection?.normalizeNative?.(range);
+      return normalized ? this.quill.selection.normalizedToRange(normalized) : null;
+    } finally {
+      range.detach?.();
+    }
   }
 
   /**
@@ -139436,232 +140691,6 @@ class EditorPage extends React$1.Component {
   }
 
   /**
-   * Resolves a gutter y-position to a whole rendered table row when possible.
-   *
-   * @param {number} clientY
-   * @returns {{index: number, length: number} | null}
-   */
-  getTableRowSelectionRangeFromPoint(clientY) {
-    const editor = this.quill?.root;
-    if (!editor) {
-      return null;
-    }
-    const rows = Array.from(editor.querySelectorAll('.ql-table tr, .table-up-table tr, table tr'));
-    const row = rows.find(candidate => {
-      const rect = candidate.getBoundingClientRect?.();
-      return rect && rect.height > 0 && rect.top <= clientY && clientY <= rect.bottom;
-    });
-    return row ? this.getTableRowSelectionRange(row) : null;
-  }
-
-  /**
-   * Converts a rendered table row to the Quill range covering its cells.
-   *
-   * @param {HTMLTableRowElement} row
-   * @returns {{index: number, length: number} | null}
-   */
-  getTableRowSelectionRange(row) {
-    const ranges = this.getTableCellSelectionRanges(row);
-    if (!ranges.length) {
-      return null;
-    }
-    const start = Math.min(...ranges.map(range => range.index));
-    const end = Math.max(...ranges.map(range => range.index + range.length));
-    return {
-      index: start,
-      length: Math.max(end - start, 1),
-      table: row.closest('table')
-    };
-  }
-
-  /**
-   * Resolves a pointer position to a whole table column when it is in the top selection band.
-   *
-   * @param {number} clientX
-   * @param {number} clientY
-   * @returns {{index: number, length: number, table?: HTMLTableElement, cells?: unknown[]} | null}
-   */
-  getTableColumnSelectionRangeFromPoint(clientX, clientY) {
-    const editor = this.quill?.root;
-    if (!editor) {
-      return null;
-    }
-    const tables = Array.from(editor.querySelectorAll('.ql-table, .table-up-table, table'));
-    const table = tables.find(candidate => {
-      const rect = candidate.getBoundingClientRect?.();
-      return rect && rect.width > 0 && rect.height > 0 && rect.left <= clientX && clientX <= rect.right && rect.top - 10 <= clientY && clientY <= rect.top + 18;
-    });
-    if (!table) {
-      return null;
-    }
-    const columnCell = Array.from(table.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner')).find(cell => {
-      const rect = cell.getBoundingClientRect?.();
-      return rect && rect.width > 0 && rect.left <= clientX && clientX <= rect.right;
-    });
-    return columnCell ? this.getTableColumnSelectionRange(columnCell) : null;
-  }
-
-  /**
-   * Converts a rendered table column cell to the selection range for all cells in that column.
-   *
-   * @param {HTMLElement} columnCell
-   * @returns {{index: number, length: number, table?: HTMLTableElement, cells?: unknown[]} | null}
-   */
-  getTableColumnSelectionRange(columnCell) {
-    const table = columnCell.closest('table');
-    const columnId = columnCell.dataset?.colId;
-    const columnCells = columnId ? Array.from(table?.querySelectorAll(`.ql-table-cell-inner[data-col-id="${cssEscape(columnId)}"], .table-up-cell-inner[data-col-id="${cssEscape(columnId)}"]`) || []) : this.getTableColumnCellsByVisualIndex(columnCell);
-    const ranges = columnCells.map(cell => this.getTableCellSelectionRange(cell)).filter(Boolean);
-    const columnIndex = this.getTableColumnVisualIndex(columnCell);
-    if (!table || !ranges.length) {
-      return null;
-    }
-    const start = Math.min(...ranges.map(range => range.index));
-    const end = Math.max(...ranges.map(range => range.index + range.length));
-    return {
-      cells: ranges.map(range => range.blot),
-      columnIndex,
-      index: start,
-      length: Math.max(end - start, 1),
-      table
-    };
-  }
-
-  /**
-   * Gets column cells by row-local visual index when TableUp column ids are not present.
-   *
-   * @param {HTMLElement} columnCell
-   * @returns {HTMLElement[]}
-   */
-  getTableColumnCellsByVisualIndex(columnCell) {
-    const table = columnCell.closest('table');
-    const row = columnCell.closest('tr');
-    const rowCells = Array.from(row?.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner') || []);
-    const columnIndex = rowCells.indexOf(columnCell);
-    if (!table || columnIndex < 0) {
-      return [];
-    }
-    return Array.from(table.querySelectorAll('tr')).map(tableRow => Array.from(tableRow.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'))[columnIndex]).filter(Boolean);
-  }
-
-  /**
-   * Gets the visual index of a rendered cell within its table row.
-   *
-   * @param {HTMLElement} columnCell
-   * @returns {number}
-   */
-  getTableColumnVisualIndex(columnCell) {
-    const row = columnCell.closest('tr');
-    const rowCells = Array.from(row?.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner') || []);
-    return rowCells.indexOf(columnCell);
-  }
-
-  /**
-   * Gets Quill ranges for table cell inners under a rendered element.
-   *
-   * @param {HTMLElement} container
-   * @returns {Array<{index: number, length: number, blot: unknown}>}
-   */
-  getTableCellSelectionRanges(container) {
-    const cells = Array.from(container.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'));
-    return cells.map(cell => this.getTableCellSelectionRange(cell)).filter(Boolean);
-  }
-
-  /**
-   * Gets a Quill range for one rendered table cell inner.
-   *
-   * @param {HTMLElement} cell
-   * @returns {{index: number, length: number, blot: unknown} | null}
-   */
-  getTableCellSelectionRange(cell) {
-    const blot = Quill.find(cell, true);
-    if (!blot || !this.quill?.getIndex) {
-      return null;
-    }
-    const index = this.quill.getIndex(blot);
-    const blotLength = typeof blot.length === 'function' ? blot.length() : 1;
-    const length = Math.max(Number(blotLength) || 1, 1);
-    return Number.isInteger(index) ? {
-      blot,
-      index,
-      length
-    } : null;
-  }
-
-  /**
-   * Gets TableUp cell blots between two row selection ranges.
-   *
-   * @param {HTMLTableElement} table
-   * @param {{index: number, length: number}} anchorRange
-   * @param {{index: number, length: number}} focusRange
-   * @returns {unknown[]}
-   */
-  getTableCellsBetweenRanges(table, anchorRange, focusRange) {
-    const start = Math.min(anchorRange.index, focusRange.index);
-    const end = Math.max(anchorRange.index + anchorRange.length, focusRange.index + focusRange.length);
-    return this.getTableCellSelectionRanges(table).filter(range => start <= range.index && range.index < end).map(range => range.blot);
-  }
-
-  /**
-   * Gets exact TableUp cell blots from table selection range data.
-   *
-   * @param {HTMLTableElement} table
-   * @param {{index: number, length: number, cells?: unknown[]}} anchorRange
-   * @param {{index: number, length: number, cells?: unknown[]}} focusRange
-   * @returns {unknown[]}
-   */
-  getTableSelectionCells(table, anchorRange, focusRange) {
-    if (Number.isInteger(anchorRange.columnIndex) && Number.isInteger(focusRange.columnIndex)) {
-      return this.getTableCellsBetweenColumns(table, anchorRange.columnIndex, focusRange.columnIndex);
-    }
-    if (anchorRange.cells?.length && focusRange.cells?.length) {
-      return Array.from(new Set([...anchorRange.cells, ...focusRange.cells]));
-    }
-    return this.getTableCellsBetweenRanges(table, anchorRange, focusRange);
-  }
-
-  /**
-   * Gets exact cell blots for all columns between two visual column indexes.
-   *
-   * @param {HTMLTableElement} table
-   * @param {number} anchorColumnIndex
-   * @param {number} focusColumnIndex
-   * @returns {unknown[]}
-   */
-  getTableCellsBetweenColumns(table, anchorColumnIndex, focusColumnIndex) {
-    const start = Math.min(anchorColumnIndex, focusColumnIndex);
-    const end = Math.max(anchorColumnIndex, focusColumnIndex);
-    return Array.from(table.querySelectorAll('tr')).flatMap(row => Array.from(row.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner')).slice(start, end + 1)).map(cell => this.getTableCellSelectionRange(cell)?.blot).filter(Boolean);
-  }
-
-  /**
-   * Gets a TableUp overlay boundary for explicit table cells.
-   *
-   * @param {unknown[]} cells
-   * @returns {{x: number, y: number, width: number, height: number} | null}
-   */
-  getTableSelectionBoundary(cells) {
-    const rootRect = this.quill?.root?.getBoundingClientRect?.();
-    if (!rootRect) {
-      return null;
-    }
-    const rects = cells.map(cell => cell?.parent?.domNode?.getBoundingClientRect?.() || cell?.domNode?.getBoundingClientRect?.()).filter(rect => rect && rect.width > 0 && rect.height > 0);
-    if (!rects.length) {
-      return null;
-    }
-    const left = Math.min(...rects.map(rect => rect.left));
-    const top = Math.min(...rects.map(rect => rect.top));
-    const right = Math.max(...rects.map(rect => rect.right));
-    const bottom = Math.max(...rects.map(rect => rect.bottom));
-    return {
-      height: bottom - top,
-      width: right - left,
-      x: left - rootRect.left,
-      y: top - rootRect.top
-    };
-  }
-
-  /**
    * Gets the TableUp selection helper when it is available.
    *
    * @returns {unknown | null}
@@ -139669,6 +140698,842 @@ class EditorPage extends React$1.Component {
   getTableSelectionModule() {
     const tableModule = this.quill?.getModule?.(ni.moduleName);
     return tableModule?.getModule?.(Gr.moduleName) || null;
+  }
+
+  /**
+   * Gates TableUp's default root mousedown cell-selection behavior.
+   *
+   * The app uses TableUp's selection module for explicit row/column
+   * selection, but a plain click inside a cell should remain a Quill/browser
+   * caret placement gesture.
+   *
+   * @returns {void}
+   */
+  attachTableSelectionMouseDownGate() {
+    const tableSelection = this.getTableSelectionModule();
+    const root = this.quill?.root;
+    const original = tableSelection?.tableSelectMouseDownHandler;
+    if (!root || !tableSelection || typeof original !== 'function' || this.tableSelectionMouseDownGate) {
+      return;
+    }
+    const gated = event => {
+      if (event?.mnSuppressTableUpSelection === true) {
+        this.logTableDebug('table-selection:root-mousedown:suppressed', {
+          event: this.getTableDebugEventSummary(event),
+          snapshot: this.getTableDebugSnapshot(event)
+        });
+        return;
+      }
+      return original.call(tableSelection, event);
+    };
+    root.removeEventListener('mousedown', original);
+    root.addEventListener('mousedown', gated);
+    tableSelection.tableSelectMouseDownHandler = gated;
+    this.tableSelectionMouseDownGate = {
+      gated,
+      original,
+      root,
+      tableSelection
+    };
+  }
+
+  /**
+   * Restores TableUp's original root mousedown handler.
+   *
+   * @returns {void}
+   */
+  detachTableSelectionMouseDownGate() {
+    const gate = this.tableSelectionMouseDownGate;
+    if (!gate) {
+      return;
+    }
+    gate.root?.removeEventListener?.('mousedown', gate.gated);
+    gate.root?.addEventListener?.('mousedown', gate.original);
+    if (gate.tableSelection?.tableSelectMouseDownHandler === gate.gated) {
+      gate.tableSelection.tableSelectMouseDownHandler = gate.original;
+    }
+    this.tableSelectionMouseDownGate = null;
+  }
+
+  /**
+   * Places the caret in a table cell when a plain click lands on blank cell space.
+   *
+   * @param {MouseEvent | unknown} event - Source mousedown event.
+   * @returns {void}
+   */
+  scheduleBlankTableCellFocus(event) {
+    const target = this.getElementFromNode(event?.target);
+    const cell = this.getTableCellInnerFromNode(target);
+    const musicEmbed = this.getMusicEmbedFromNode(target);
+    if (!cell || this.isTableTextCursorTarget(event?.target)) {
+      this.logTableDebug('table-cell-focus:skip', {
+        cell: this.describeTableDebugNode(cell),
+        reason: cell ? 'text-cursor-target' : 'no-cell',
+        target: this.describeTableDebugNode(target)
+      });
+      return;
+    }
+    this.logTableDebug('table-cell-focus:scheduled', {
+      cell: this.describeTableDebugNode(cell),
+      musicEmbed: this.describeTableDebugNode(musicEmbed),
+      target: this.describeTableDebugNode(target)
+    });
+    this.schedulePostMouseGestureTask(() => {
+      if (!cell.isConnected) {
+        this.logTableDebug('table-cell-focus:skip', {
+          cell: this.describeTableDebugNode(cell),
+          reason: 'disconnected-cell'
+        });
+        return;
+      }
+      if (musicEmbed?.isConnected && this.selectAfterMusicEmbed(musicEmbed)) {
+        this.logTableDebug('table-cell-focus:selected-after-embed', {
+          cell: this.describeTableDebugNode(cell),
+          musicEmbed: this.describeTableDebugNode(musicEmbed),
+          snapshot: this.getTableDebugSnapshot()
+        });
+        return;
+      }
+      if (this.isQuillSelectionInTableCell(cell)) {
+        this.logTableDebug('table-cell-focus:skip', {
+          cell: this.describeTableDebugNode(cell),
+          reason: 'selection-already-in-cell',
+          snapshot: this.getTableDebugSnapshot()
+        });
+        return;
+      }
+      this.logTableDebug('table-cell-focus:selected-cell-start', {
+        cell: this.describeTableDebugNode(cell),
+        snapshot: this.getTableDebugSnapshot()
+      });
+      this.selectTableCell(cell);
+    });
+  }
+
+  /**
+   * Runs a task after the current mouse gesture has had a chance to settle.
+   *
+   * @param {() => void} task - Task to run.
+   * @returns {void}
+   */
+  schedulePostMouseGestureTask(task) {
+    window.setTimeout(() => {
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(task);
+        return;
+      }
+      window.setTimeout(task, 0);
+    }, 0);
+  }
+
+  /**
+   * Gets a rendered TableUp cell-inner element from any table-cell descendant.
+   *
+   * @param {Node | Element | unknown} node - Source node.
+   * @returns {Element | null}
+   */
+  getTableCellInnerFromNode(node) {
+    const element = this.getElementFromNode(node);
+    const inner = element?.closest?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
+    if (inner) {
+      return inner;
+    }
+    const cell = element?.closest?.('td, th, .ql-table-cell, .table-up-cell') || null;
+    return cell?.querySelector?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
+  }
+
+  /**
+   * Gets a music embed from an event target.
+   *
+   * @param {Node | Element | unknown} node - Source node.
+   * @returns {Element | null}
+   */
+  getMusicEmbedFromNode(node) {
+    const element = this.getElementFromNode(node);
+    return element?.closest?.('.music-keyboard-embed') || null;
+  }
+
+  /**
+   * Places the Quill selection immediately after a clicked music embed.
+   *
+   * @param {Element} embed - Rendered music embed root.
+   * @returns {boolean}
+   */
+  selectAfterMusicEmbed(embed) {
+    const blot = embed ? Quill.find(embed) || Quill.find(embed, true) : null;
+    if (!blot || !this.quill?.getIndex) {
+      this.logTableDebug('table-cell-focus:select-after-embed-failed', {
+        musicEmbed: this.describeTableDebugNode(embed),
+        reason: blot ? 'missing-quill-index' : 'missing-blot'
+      });
+      return false;
+    }
+    const index = this.quill.getIndex(blot);
+    const length = Number(blot.length?.());
+    if (!Number.isInteger(index)) {
+      this.logTableDebug('table-cell-focus:select-after-embed-failed', {
+        index,
+        musicEmbed: this.describeTableDebugNode(embed),
+        reason: 'invalid-index'
+      });
+      return false;
+    }
+    this.getTableSelectionModule()?.hide?.();
+    this.setQuillSelectionWithoutScroll(index + (Number.isFinite(length) && length > 0 ? length : 1), 0, 'user', embed);
+    this.updateToolbarState();
+    this.updateEmbedSelectionState();
+    return true;
+  }
+
+  /**
+   * Sets a Quill selection while preserving visible scroll positions.
+   *
+   * @param {number} index - Selection index.
+   * @param {number} length - Selection length.
+   * @param {string} source - Quill selection source.
+   * @param {Element | null} anchor - DOM anchor used to find scroll containers.
+   * @returns {void}
+   */
+  setQuillSelectionWithoutScroll(index, length, source, anchor = null) {
+    const snapshots = this.captureScrollSnapshots(anchor);
+    try {
+      this.quill?.focus?.({
+        preventScroll: true
+      });
+      this.quill?.setSelection?.(index, length, source);
+    } finally {
+      this.restoreScrollSnapshots(snapshots);
+      window.setTimeout(() => this.restoreScrollSnapshots(snapshots), 0);
+    }
+  }
+
+  /**
+   * Captures scroll positions that programmatic focus/selection might disturb.
+   *
+   * @param {Element | null} anchor - DOM anchor used to find scroll containers.
+   * @returns {Array<Record<string, unknown>>}
+   */
+  captureScrollSnapshots(anchor = null) {
+    const snapshots = [];
+    const ownerDocument = anchor?.ownerDocument || this.quill?.root?.ownerDocument || document;
+    const ownerWindow = ownerDocument?.defaultView || window;
+    const seen = new Set();
+    if (ownerWindow) {
+      snapshots.push({
+        target: ownerWindow,
+        type: 'window',
+        x: ownerWindow.scrollX,
+        y: ownerWindow.scrollY
+      });
+    }
+    [this.documentContentRef?.current, this.quill?.root, anchor, anchor?.closest?.('.ql-editor, .mn-document-content, .mn-editor-page, .mn-editor-scroll, [data-scroll-container]')].filter(Boolean).forEach(node => {
+      let current = node;
+      while (current && current !== ownerDocument?.body && current !== ownerDocument?.documentElement) {
+        if (!seen.has(current) && this.isScrollableElement(current)) {
+          seen.add(current);
+          snapshots.push({
+            target: current,
+            type: 'element',
+            x: current.scrollLeft,
+            y: current.scrollTop
+          });
+        }
+        current = current.parentElement;
+      }
+    });
+    return snapshots;
+  }
+
+  /**
+   * Restores scroll positions captured before a forced Quill selection.
+   *
+   * @param {Array<Record<string, unknown>>} snapshots - Captured scroll positions.
+   * @returns {void}
+   */
+  restoreScrollSnapshots(snapshots = []) {
+    snapshots.forEach(snapshot => {
+      if (snapshot.type === 'window') {
+        snapshot.target?.scrollTo?.(snapshot.x, snapshot.y);
+        return;
+      }
+      if (snapshot.target) {
+        snapshot.target.scrollLeft = snapshot.x;
+        snapshot.target.scrollTop = snapshot.y;
+      }
+    });
+  }
+
+  /**
+   * Checks whether an element can scroll.
+   *
+   * @param {Element | unknown} element - Candidate element.
+   * @returns {boolean}
+   */
+  isScrollableElement(element) {
+    return Boolean(element && (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth));
+  }
+
+  /**
+   * Checks whether a native event target already gives the browser a text cursor target.
+   *
+   * @param {Node | Element | unknown} target - Native event target.
+   * @returns {boolean}
+   */
+  isTableTextCursorTarget(target) {
+    const element = this.getElementFromNode(target);
+    if (element?.closest?.('.music-keyboard-embed, [contenteditable="false"]')) {
+      return false;
+    }
+    if (target?.nodeType === getNodeType$1('TEXT_NODE')) {
+      return true;
+    }
+    if (!element) {
+      return false;
+    }
+    const textBlock = element.closest?.('p, li, h1, h2, h3, h4, h5, h6, blockquote');
+    return Boolean(textBlock && element !== textBlock);
+  }
+
+  /**
+   * Checks whether the current Quill selection is already inside a table cell.
+   *
+   * @param {HTMLElement} cell - Rendered table cell inner.
+   * @returns {boolean}
+   */
+  isQuillSelectionInTableCell(cell) {
+    const currentCell = this.getCurrentTableCellInner();
+    return currentCell === cell || Boolean(currentCell && cell.contains(currentCell));
+  }
+
+  /**
+   * Gets an element from a DOM node.
+   *
+   * @param {Node | Element | unknown} node - Source node.
+   * @returns {Element | null}
+   */
+  getElementFromNode(node) {
+    if (!node) {
+      return null;
+    }
+    if (node.nodeType === getNodeType$1('ELEMENT_NODE')) {
+      return node;
+    }
+    return node.parentElement || null;
+  }
+
+  /**
+   * Attaches optional table debugging instrumentation for event-flow tracing.
+   *
+   * Enable with localStorage.setItem('mn.tableDebug', '1') and reload, or by
+   * adding ?mnTableDebug=1 to the app URL.
+   *
+   * @returns {void}
+   */
+  attachTableDebugInstrumentation() {
+    this.tableDebugEnabled = this.isTableDebugEnabled();
+    if (!this.tableDebugEnabled) {
+      return;
+    }
+    this.logTableDebug('debug:attached', {
+      snapshot: this.getTableDebugSnapshot()
+    });
+    this.attachTableDebugNativeListeners();
+    this.patchTableSelectionDebugMethods();
+  }
+
+  /**
+   * Removes table debugging instrumentation and restores patched methods.
+   *
+   * @returns {void}
+   */
+  detachTableDebugInstrumentation() {
+    this.detachTableDebugNativeListeners();
+    this.restoreTableSelectionDebugMethods();
+    this.tableDebugEnabled = false;
+  }
+
+  /**
+   * Checks whether table instrumentation should be active.
+   *
+   * @returns {boolean}
+   */
+  isTableDebugEnabled() {
+    const params = new URLSearchParams(window.location?.search || '');
+    if (params.get('mnTableDebug') === '1') {
+      return true;
+    }
+    try {
+      return window.localStorage?.getItem?.('mn.tableDebug') === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Attaches native event listeners around the Quill root and document.
+   *
+   * @returns {void}
+   */
+  attachTableDebugNativeListeners() {
+    const root = this.quill?.root;
+    const ownerDocument = root?.ownerDocument;
+    if (!root || !ownerDocument || this.tableDebugNativeListeners.length) {
+      return;
+    }
+    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup'].forEach(eventName => {
+      this.addTableDebugNativeListener(root, eventName, true);
+      this.addTableDebugNativeListener(root, eventName, false);
+    });
+    this.addTableDebugNativeListener(ownerDocument, 'selectionchange', false);
+  }
+
+  /**
+   * Adds one table debug native listener and stores it for cleanup.
+   *
+   * @param {EventTarget} target - Native event target.
+   * @param {string} eventName - Event name to trace.
+   * @param {boolean} capture - Whether to listen in capture phase.
+   * @returns {void}
+   */
+  addTableDebugNativeListener(target, eventName, capture) {
+    const listener = event => {
+      this.logTableDebug(`native:${eventName}:${capture ? 'capture' : 'bubble'}`, {
+        event: this.getTableDebugEventSummary(event),
+        snapshot: this.getTableDebugSnapshot(event)
+      });
+    };
+    target.addEventListener(eventName, listener, capture);
+    this.tableDebugNativeListeners.push({
+      capture,
+      eventName,
+      listener,
+      target
+    });
+  }
+
+  /**
+   * Removes table debug native listeners.
+   *
+   * @returns {void}
+   */
+  detachTableDebugNativeListeners() {
+    this.tableDebugNativeListeners.forEach(record => {
+      record.target?.removeEventListener?.(record.eventName, record.listener, record.capture);
+    });
+    this.tableDebugNativeListeners = [];
+  }
+
+  /**
+   * Wraps live TableUp selection methods to trace TableUp's own decisions.
+   *
+   * @returns {void}
+   */
+  patchTableSelectionDebugMethods() {
+    const tableSelection = this.getTableSelectionModule();
+    if (!tableSelection || this.tableDebugPatchedSelection === tableSelection) {
+      return;
+    }
+    this.restoreTableSelectionDebugMethods();
+    this.tableDebugPatchedSelection = tableSelection;
+    this.patchTableSelectionDebugBoundListeners(tableSelection);
+    ['setSelectionTable', 'setSelectedTds', 'show', 'hide', 'computeSelectedTds', 'updateWithSelectedTds', 'update'].forEach(methodName => this.patchTableSelectionDebugMethod(tableSelection, methodName));
+  }
+
+  /**
+   * Wraps one TableUp selection method.
+   *
+   * @param {unknown} tableSelection - TableUp selection module instance.
+   * @param {string} methodName - Method to wrap.
+   * @returns {void}
+   */
+  patchTableSelectionDebugMethod(tableSelection, methodName) {
+    const original = tableSelection?.[methodName];
+    if (typeof original !== 'function') {
+      return;
+    }
+    const page = this;
+    const wrapped = function (...args) {
+      page.logTableDebug(`table-selection:${methodName}:before`, {
+        args: page.getTableDebugArgsSummary(args),
+        snapshot: page.getTableDebugSnapshot(args[0])
+      });
+      try {
+        return original.apply(this, args);
+      } finally {
+        page.logTableDebug(`table-selection:${methodName}:after`, {
+          args: page.getTableDebugArgsSummary(args),
+          snapshot: page.getTableDebugSnapshot(args[0])
+        });
+      }
+    };
+    tableSelection[methodName] = wrapped;
+    this.tableDebugPatchedMethods.push({
+      methodName,
+      original,
+      tableSelection
+    });
+  }
+
+  /**
+   * Restores patched TableUp selection methods.
+   *
+   * @returns {void}
+   */
+  restoreTableSelectionDebugMethods() {
+    this.restoreTableSelectionDebugBoundListeners();
+    this.tableDebugPatchedMethods.forEach(record => {
+      if (record.tableSelection?.[record.methodName]) {
+        record.tableSelection[record.methodName] = record.original;
+      }
+    });
+    this.tableDebugPatchedMethods = [];
+    this.tableDebugPatchedSelection = null;
+  }
+
+  /**
+   * Rewires TableUp listeners that were bound before method wrapping.
+   *
+   * @param {unknown} tableSelection - TableUp selection module instance.
+   * @returns {void}
+   */
+  patchTableSelectionDebugBoundListeners(tableSelection) {
+    this.patchTableSelectionDebugDomListener({
+      eventName: 'mousedown',
+      label: 'table-selection:bound-root-mousedown',
+      listenerProperty: 'tableSelectMouseDownHandler',
+      target: this.quill?.root || null,
+      tableSelection
+    });
+    this.patchTableSelectionDebugDomListener({
+      eventName: 'selectionchange',
+      label: 'table-selection:bound-document-selectionchange',
+      listenerProperty: 'selectionChangeHandler',
+      target: this.quill?.root?.ownerDocument || null,
+      tableSelection
+    });
+    this.patchTableSelectionDebugQuillListener(tableSelection);
+  }
+
+  /**
+   * Rewires one TableUp DOM listener.
+   *
+   * @param {Record<string, unknown>} options - Listener patch options.
+   * @returns {void}
+   */
+  patchTableSelectionDebugDomListener(options) {
+    const {
+      eventName,
+      label,
+      listenerProperty,
+      tableSelection,
+      target
+    } = options;
+    const original = tableSelection?.[listenerProperty];
+    if (!target?.removeEventListener || typeof original !== 'function') {
+      return;
+    }
+    const wrapped = (...args) => {
+      this.logTableDebug(`${label}:before`, {
+        args: this.getTableDebugArgsSummary(args),
+        snapshot: this.getTableDebugSnapshot(args[0])
+      });
+      try {
+        return original.apply(tableSelection, args);
+      } finally {
+        this.logTableDebug(`${label}:after`, {
+          args: this.getTableDebugArgsSummary(args),
+          snapshot: this.getTableDebugSnapshot(args[0])
+        });
+      }
+    };
+    target.removeEventListener(eventName, original);
+    target.addEventListener(eventName, wrapped);
+    tableSelection[listenerProperty] = wrapped;
+    this.tableDebugPatchedListeners.push({
+      eventName,
+      original,
+      propertyName: listenerProperty,
+      tableSelection,
+      target,
+      type: 'dom',
+      wrapped
+    });
+  }
+
+  /**
+   * Rewires TableUp's Quill selection-change listener.
+   *
+   * @param {unknown} tableSelection - TableUp selection module instance.
+   * @returns {void}
+   */
+  patchTableSelectionDebugQuillListener(tableSelection) {
+    const original = tableSelection?.quillSelectionChangeHandler;
+    if (!this.quill?.off || !this.quill?.on || typeof original !== 'function') {
+      return;
+    }
+    const eventName = Quill.events.SELECTION_CHANGE;
+    const wrapped = (...args) => {
+      this.logTableDebug('table-selection:bound-quill-selection-change:before', {
+        args: this.getTableDebugArgsSummary(args),
+        snapshot: this.getTableDebugSnapshot()
+      });
+      try {
+        return original.apply(tableSelection, args);
+      } finally {
+        this.logTableDebug('table-selection:bound-quill-selection-change:after', {
+          args: this.getTableDebugArgsSummary(args),
+          snapshot: this.getTableDebugSnapshot()
+        });
+      }
+    };
+    this.quill.off(eventName, original);
+    this.quill.on(eventName, wrapped);
+    tableSelection.quillSelectionChangeHandler = wrapped;
+    this.tableDebugPatchedListeners.push({
+      eventName,
+      original,
+      propertyName: 'quillSelectionChangeHandler',
+      tableSelection,
+      type: 'quill',
+      wrapped
+    });
+  }
+
+  /**
+   * Restores TableUp listeners rewired for debug tracing.
+   *
+   * @returns {void}
+   */
+  restoreTableSelectionDebugBoundListeners() {
+    this.tableDebugPatchedListeners.forEach(record => {
+      if (record.type === 'dom') {
+        record.target?.removeEventListener?.(record.eventName, record.wrapped);
+        record.target?.addEventListener?.(record.eventName, record.original);
+      }
+      if (record.type === 'quill') {
+        this.quill?.off?.(record.eventName, record.wrapped);
+        this.quill?.on?.(record.eventName, record.original);
+      }
+      if (record.tableSelection?.[record.propertyName]) {
+        record.tableSelection[record.propertyName] = record.original;
+      }
+    });
+    this.tableDebugPatchedListeners = [];
+  }
+
+  /**
+   * Logs a normalized table debug event.
+   *
+   * @param {string} label - Debug label.
+   * @param {Record<string, unknown>} detail - Debug detail.
+   * @returns {void}
+   */
+  logTableDebug(label, detail = {}) {
+    if (!this.tableDebugEnabled) {
+      return;
+    }
+    this.tableDebugEventSequence += 1;
+    const payload = {
+      label,
+      sequence: this.tableDebugEventSequence,
+      time: Number(typeof performance !== 'undefined' && performance.now?.() || Date.now()).toFixed(2),
+      ...detail
+    };
+    console.groupCollapsed?.(`[mn-table-debug #${payload.sequence}] ${label}`);
+    console.log(payload);
+    console.groupEnd?.();
+  }
+
+  /**
+   * Builds a compact event summary for table debug logs.
+   *
+   * @param {Event | unknown} event - Event-like object.
+   * @returns {Record<string, unknown> | null}
+   */
+  getTableDebugEventSummary(event) {
+    if (!event?.type) {
+      return null;
+    }
+    return {
+      button: event.button,
+      buttons: event.buttons,
+      cancelBubble: event.cancelBubble,
+      clientX: Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : null,
+      clientY: Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : null,
+      defaultPrevented: event.defaultPrevented,
+      eventPhase: this.getTableDebugEventPhaseName(event.eventPhase),
+      target: this.describeTableDebugNode(event.target),
+      type: event.type
+    };
+  }
+
+  /**
+   * Builds a compact interaction context summary.
+   *
+   * @param {Partial<EditorInteractionContext>} context - Interaction context.
+   * @returns {Record<string, unknown>}
+   */
+  getTableDebugContextSummary(context = {}) {
+    return {
+      captured: context.captured === true,
+      handlerId: context.handlerId || context.handler?.id || '',
+      target: this.getTableDebugTargetSummary(context.target),
+      targetServiceName: context.targetServiceName || ''
+    };
+  }
+
+  /**
+   * Builds a compact dispatch result summary.
+   *
+   * @param {EditorInteractionDispatchResult | unknown} result - Dispatch result.
+   * @returns {Record<string, unknown>}
+   */
+  getTableDebugDispatchResultSummary(result = {}) {
+    return {
+      handlerId: result.handlerId || '',
+      handled: result.handled === true,
+      preventDefault: result.result?.preventDefault === true,
+      serviceName: result.serviceName || '',
+      stopPropagation: result.result?.stopPropagation === true,
+      target: this.getTableDebugTargetSummary(result.target)
+    };
+  }
+
+  /**
+   * Formats a dispatch result summary for compact debug labels.
+   *
+   * @param {Record<string, unknown>} result - Dispatch result summary.
+   * @returns {string}
+   */
+  getTableDebugResultLabel(result = {}) {
+    const flags = [result.handled === true ? 'handled' : 'open', result.preventDefault === true ? 'prevent' : '', result.stopPropagation === true ? 'stop' : '', result.serviceName || '', result.handlerId || ''].filter(Boolean);
+    return flags.join(':');
+  }
+
+  /**
+   * Builds a snapshot of Quill and TableUp state for a table debug log.
+   *
+   * @param {Event | unknown} event - Optional event-like source.
+   * @returns {Record<string, unknown>}
+   */
+  getTableDebugSnapshot(event = null) {
+    const tableSelection = this.getTableSelectionModule();
+    const selectedTds = Array.isArray(tableSelection?.selectedTds) ? tableSelection.selectedTds : [];
+    const targetCell = this.getTableCellInnerFromNode(event?.target);
+    const activeElement = this.quill?.root?.ownerDocument?.activeElement || null;
+    return {
+      activeElement: this.describeTableDebugNode(activeElement),
+      quillSelection: this.getTableDebugQuillSelection(),
+      selectedCells: selectedTds.map(cell => this.describeTableDebugNode(cell?.domNode || cell?.parent?.domNode || null)),
+      selectedTdsCount: selectedTds.length,
+      tableSelectionDisplay: tableSelection?.isDisplaySelection === true,
+      tableSelectionTable: this.describeTableDebugNode(tableSelection?.table || null),
+      targetCell: this.describeTableDebugNode(targetCell)
+    };
+  }
+
+  /**
+   * Gets the current Quill selection without forcing focus.
+   *
+   * @returns {Record<string, number> | null}
+   */
+  getTableDebugQuillSelection() {
+    const range = this.quill?.getSelection?.();
+    if (!range) {
+      return null;
+    }
+    return {
+      index: range.index,
+      length: range.length
+    };
+  }
+
+  /**
+   * Summarizes method wrapper arguments for debug logs.
+   *
+   * @param {unknown[]} args - Wrapped method arguments.
+   * @returns {unknown[]}
+   */
+  getTableDebugArgsSummary(args = []) {
+    return args.map(arg => {
+      if (arg?.type) {
+        return this.getTableDebugEventSummary(arg);
+      }
+      if (arg?.nodeType || arg?.tagName) {
+        return this.describeTableDebugNode(arg);
+      }
+      if (Array.isArray(arg)) {
+        return arg.map(item => this.describeTableDebugNode(item?.domNode || item?.parent?.domNode || item));
+      }
+      if (arg && typeof arg === 'object') {
+        return {
+          keys: Object.keys(arg).slice(0, 12)
+        };
+      }
+      return arg;
+    });
+  }
+
+  /**
+   * Summarizes an editor interaction target.
+   *
+   * @param {EditorInteractionTarget | null | undefined} target - Interaction target.
+   * @returns {Record<string, unknown> | null}
+   */
+  getTableDebugTargetSummary(target) {
+    if (!target) {
+      return null;
+    }
+    return {
+      element: this.describeTableDebugNode(target.element),
+      handlerId: target.handlerId || '',
+      role: target.role || '',
+      serviceName: target.serviceName || ''
+    };
+  }
+
+  /**
+   * Converts event phase constants to readable names.
+   *
+   * @param {number} phase - Event phase constant.
+   * @returns {string}
+   */
+  getTableDebugEventPhaseName(phase) {
+    if (phase === Event.CAPTURING_PHASE) {
+      return 'capture';
+    }
+    if (phase === Event.AT_TARGET) {
+      return 'target';
+    }
+    if (phase === Event.BUBBLING_PHASE) {
+      return 'bubble';
+    }
+    return 'none';
+  }
+
+  /**
+   * Describes a DOM node for compact table debug logs.
+   *
+   * @param {Node | null | undefined} node - Node to describe.
+   * @returns {string | null}
+   */
+  describeTableDebugNode(node) {
+    if (!node) {
+      return null;
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      return '#text';
+    }
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!element) {
+      return String(node.nodeName || node);
+    }
+    const id = element.id ? `#${element.id}` : '';
+    const classes = Array.from(element.classList || []).slice(0, 6).map(className => `.${className}`).join('');
+    const tableId = element.dataset?.tableId ? `[data-table-id="${element.dataset.tableId}"]` : '';
+    const rowId = element.dataset?.rowId ? `[data-row-id="${element.dataset.rowId}"]` : '';
+    const colId = element.dataset?.colId ? `[data-col-id="${element.dataset.colId}"]` : '';
+    return `${element.tagName?.toLowerCase?.() || element.nodeName}${id}${classes}${tableId}${rowId}${colId}`;
   }
 
   /**
@@ -139933,7 +141798,8 @@ class EditorPage extends React$1.Component {
       label: "Editor toolbar"
     }), /*#__PURE__*/React$1.createElement("div", {
       ref: this.editorSurfaceRef,
-      className: "editor-page-surface"
+      className: "editor-page-surface",
+      onPointerDownCapture: this.handleEditorSurfacePointerDownCapture
     }, /*#__PURE__*/React$1.createElement("div", {
       className: "mn-editor-split-workspace"
     }, /*#__PURE__*/React$1.createElement("div", {
@@ -139953,9 +141819,11 @@ class EditorPage extends React$1.Component {
       className: "editor-quill",
       onContextMenu: this.handleEditorContextMenu,
       onKeyDown: this.handleEditorKeyDown,
-      onPointerDown: this.handleTableColumnPointerDown,
-      onPointerLeave: this.handleTableColumnPointerLeave,
-      onPointerMove: this.handleTableColumnPointerMove
+      onPointerCancel: this.handleEditorPointerCancel,
+      onPointerDown: this.handleEditorPointerDown,
+      onPointerLeave: this.handleEditorPointerLeave,
+      onPointerMove: this.handleEditorPointerMove,
+      onPointerUp: this.handleEditorPointerUp
     }), /*#__PURE__*/React$1.createElement("div", {
       ref: this.whiteSpaceOverlayRef,
       className: "mn-white-space-overlay",
@@ -139978,12 +141846,6 @@ function clampNumber(value, min, max) {
     return min;
   }
   return Math.min(Math.max(number, min), max);
-}
-function cssEscape(value) {
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
-    return CSS.escape(value);
-  }
-  return String(value).replace(/["\\]/g, '\\$&');
 }
 function getTextRangeRect(node, start, end) {
   const range = node.ownerDocument.createRange();
@@ -140263,6 +142125,15 @@ function isNativeSelectionIncludingNode(node) {
     }
   }
   return false;
+}
+function getNodeType$1(name) {
+  if (typeof Node !== 'undefined') {
+    return Node[name];
+  }
+  return {
+    ELEMENT_NODE: 1,
+    TEXT_NODE: 3
+  }[name];
 }
 
 describe('EditorPage', function () {
@@ -140871,6 +142742,80 @@ describe('EditorPage', function () {
       length: 4
     });
   });
+  it('uses rendered visual rows before paragraph fallback for gutter selection', function () {
+    const page = new EditorPage({});
+    const line = {
+      length() {
+        return 80;
+      }
+    };
+    page.quill = {
+      getIndex(value) {
+        return value === line ? 8 : 0;
+      },
+      getLine() {
+        return [line, 0];
+      },
+      root: {
+        getBoundingClientRect() {
+          return {
+            bottom: 220,
+            height: 200,
+            left: 100,
+            right: 500,
+            top: 20,
+            width: 400
+          };
+        }
+      }
+    };
+    page.getRenderedLineSelectionRangeFromPoint = () => ({
+      index: 22,
+      length: 14
+    });
+    page.getQuillRangeFromPoint = () => ({
+      index: 9,
+      length: 0
+    });
+    expect(page.getLineSelectionRangeFromPoint(60)).toEqual({
+      index: 22,
+      length: 14
+    });
+  });
+  it('chooses the rendered text row nearest the gutter click', function () {
+    const page = new EditorPage({});
+    expect(page.getClosestRenderedTextLine([{
+      bottom: 30,
+      center: 20,
+      end: 6,
+      index: 2,
+      top: 10
+    }, {
+      bottom: 31,
+      center: 21,
+      end: 12,
+      index: 6,
+      top: 11
+    }, {
+      bottom: 58,
+      center: 48,
+      end: 24,
+      index: 16,
+      top: 38
+    }, {
+      bottom: 59,
+      center: 49,
+      end: 32,
+      index: 24,
+      top: 39
+    }], 45)).toEqual({
+      bottom: 59,
+      center: 48.5,
+      end: 32,
+      index: 16,
+      top: 38
+    });
+  });
   it('extends left-gutter line selection by full line ranges while dragging', function () {
     const calls = [];
     const listeners = {};
@@ -140983,383 +142928,38 @@ describe('EditorPage', function () {
       method: 'removeEventListener'
     }]);
   });
-  it('prefers table row ranges for left-gutter selection', function () {
-    const calls = [];
-    const listeners = {};
-    const page = new EditorPage({});
-    const ownerDocument = {
-      addEventListener(eventName, listener) {
-        listeners[eventName] = listener;
-      },
-      removeEventListener(eventName) {
-        delete listeners[eventName];
-      }
-    };
-    page.quill = {
-      setSelection(index, length, source) {
-        calls.push({
-          index,
-          length,
-          method: 'setSelection',
-          source
-        });
-      }
-    };
-    page.getTableRowSelectionRangeFromPoint = () => ({
-      index: 18,
-      length: 7
-    });
-    page.getLineSelectionRangeFromPoint = () => {
-      throw new Error('line selection should not resolve when a table row is hit');
-    };
-    page.updateToolbarState = () => calls.push({
-      method: 'updateToolbarState'
-    });
-    page.updateEmbedSelectionState = () => calls.push({
-      method: 'updateEmbedSelectionState'
-    });
-    page.handleLineSelectionPointerDown({
-      clientY: 40,
-      currentTarget: {
-        ownerDocument
-      },
-      preventDefault() {
-        calls.push({
-          method: 'preventDefault'
-        });
-      },
-      stopPropagation() {
-        calls.push({
-          method: 'stopPropagation'
-        });
-      }
-    });
-    expect(calls).toEqual([{
-      method: 'preventDefault'
-    }, {
-      method: 'stopPropagation'
-    }, {
-      index: 18,
-      length: 7,
-      method: 'setSelection',
-      source: 'user'
-    }, {
-      method: 'updateToolbarState'
-    }, {
-      method: 'updateEmbedSelectionState'
-    }]);
-    expect(listeners.pointermove).toBeTruthy();
-  });
-  it('resolves table row selection from rendered row bounds', function () {
-    const page = new EditorPage({});
-    const editor = document.createElement('div');
-    const table = document.createElement('table');
-    const firstRow = document.createElement('tr');
-    const secondRow = document.createElement('tr');
-    table.className = 'ql-table';
-    table.appendChild(firstRow);
-    table.appendChild(secondRow);
-    editor.appendChild(table);
-    firstRow.getBoundingClientRect = () => ({
-      bottom: 24,
-      height: 24,
-      top: 0
-    });
-    secondRow.getBoundingClientRect = () => ({
-      bottom: 48,
-      height: 24,
-      top: 24
-    });
-    page.quill = {
-      root: editor
-    };
-    page.getTableRowSelectionRange = row => row === secondRow ? {
-      index: 30,
-      length: 12
-    } : {
-      index: 10,
-      length: 8
-    };
-    expect(page.getTableRowSelectionRangeFromPoint(36)).toEqual({
-      index: 30,
-      length: 12
-    });
-  });
-  it('uses TableUp selected cells for left-gutter table row selection', function () {
+  it('starts gutter selection from the editor surface left margin', function () {
     const calls = [];
     const page = new EditorPage({});
-    const table = document.createElement('table');
-    const firstCell = {
-      id: 'first-cell'
+    page.documentContentRef.current = {
+      getBoundingClientRect: () => ({
+        bottom: 240,
+        left: 100,
+        top: 20
+      })
     };
-    const secondCell = {
-      id: 'second-cell'
-    };
-    const tableSelection = {
-      show() {
-        calls.push({
-          method: 'show'
-        });
-      },
-      setSelectedTds(cells) {
-        calls.push({
-          cells,
-          method: 'setSelectedTds'
-        });
-      },
-      setSelectionTable(selectedTable) {
-        calls.push({
-          method: 'setSelectionTable',
-          selectedTable
-        });
-      }
-    };
-    page.quill = {
-      setSelection(index, source) {
-        calls.push({
-          index,
-          method: 'setSelection',
-          source
-        });
-      }
-    };
-    page.getTableSelectionModule = () => tableSelection;
-    page.getTableCellsBetweenRanges = () => [firstCell, secondCell];
-    page.getTableSelectionBoundary = () => ({
-      height: 24,
-      width: 120,
-      x: 5,
-      y: 10
-    });
-    page.updateToolbarState = () => calls.push({
-      method: 'updateToolbarState'
-    });
-    page.updateEmbedSelectionState = () => calls.push({
-      method: 'updateEmbedSelectionState'
-    });
-    page.selectLineSelectionRanges({
-      index: 10,
-      length: 4,
-      table
-    }, {
-      index: 20,
-      length: 4,
-      table
-    });
-    expect(calls).toEqual([{
-      method: 'setSelectionTable',
-      selectedTable: table
-    }, {
-      cells: [firstCell, secondCell],
-      method: 'setSelectedTds'
-    }, {
-      method: 'show'
-    }, {
-      index: null,
-      method: 'setSelection',
-      source: 'api'
-    }, {
-      method: 'updateToolbarState'
-    }, {
-      method: 'updateEmbedSelectionState'
-    }]);
-    expect(tableSelection.boundary).toEqual({
-      height: 24,
-      width: 120,
-      x: 5,
-      y: 10
-    });
-  });
-  it('resolves table column selection from the top table band', function () {
-    const page = new EditorPage({});
-    const editor = document.createElement('div');
-    const table = document.createElement('table');
-    const row = document.createElement('tr');
-    const firstCell = document.createElement('div');
-    const secondCell = document.createElement('div');
-    table.className = 'ql-table';
-    firstCell.className = 'ql-table-cell-inner';
-    secondCell.className = 'ql-table-cell-inner';
-    row.appendChild(firstCell);
-    row.appendChild(secondCell);
-    table.appendChild(row);
-    editor.appendChild(table);
-    table.getBoundingClientRect = () => ({
-      bottom: 120,
-      height: 100,
-      left: 20,
-      right: 220,
-      top: 20,
-      width: 200
-    });
-    firstCell.getBoundingClientRect = () => ({
-      height: 40,
-      left: 20,
-      right: 120,
-      top: 20,
-      width: 100
-    });
-    secondCell.getBoundingClientRect = () => ({
-      height: 40,
-      left: 120,
-      right: 220,
-      top: 20,
-      width: 100
-    });
-    page.quill = {
-      root: editor
-    };
-    page.getTableColumnSelectionRange = cell => cell === secondCell ? {
-      cells: ['second-column'],
-      index: 10,
-      length: 4,
-      table
-    } : null;
-    expect(page.getTableColumnSelectionRangeFromPoint(160, 24)).toEqual({
-      cells: ['second-column'],
-      index: 10,
-      length: 4,
-      table
-    });
-    expect(page.getTableColumnSelectionRangeFromPoint(160, 44)).toBeNull();
-  });
-  it('uses exact column cells for table column selection', function () {
-    const firstColumnCell = {
-      id: 'first-column-cell'
-    };
-    const secondColumnCell = {
-      id: 'second-column-cell'
-    };
-    const rowRangeCell = {
-      id: 'row-range-cell'
-    };
-    const page = new EditorPage({});
-    const table = document.createElement('table');
-    page.getTableCellsBetweenRanges = () => [rowRangeCell];
-    expect(page.getTableSelectionCells(table, {
-      cells: [firstColumnCell],
-      index: 1,
-      length: 8
-    }, {
-      cells: [secondColumnCell],
-      index: 20,
-      length: 8
-    })).toEqual([firstColumnCell, secondColumnCell]);
-  });
-  it('uses cells between visual column indexes for dragged column selection', function () {
-    const page = new EditorPage({});
-    const table = document.createElement('table');
-    const firstRow = document.createElement('tr');
-    const secondRow = document.createElement('tr');
-    const cells = Array.from({
-      length: 6
-    }, (_, index) => {
-      const cell = document.createElement('div');
-      cell.className = 'ql-table-cell-inner';
-      cell.dataset.testId = `cell-${index}`;
-      return cell;
-    });
-    firstRow.appendChild(cells[0]);
-    firstRow.appendChild(cells[1]);
-    firstRow.appendChild(cells[2]);
-    secondRow.appendChild(cells[3]);
-    secondRow.appendChild(cells[4]);
-    secondRow.appendChild(cells[5]);
-    table.appendChild(firstRow);
-    table.appendChild(secondRow);
-    page.getTableCellSelectionRange = cell => ({
-      blot: cell.dataset.testId,
-      index: 1,
-      length: 1
-    });
-    expect(page.getTableSelectionCells(table, {
-      columnIndex: 0,
-      index: 1,
-      length: 1
-    }, {
-      columnIndex: 1,
-      index: 4,
-      length: 1
-    })).toEqual(['cell-0', 'cell-1', 'cell-3', 'cell-4']);
-  });
-  it('extends table column selection while dragging', function () {
-    const calls = [];
-    const listeners = {};
-    const page = new EditorPage({});
-    const table = document.createElement('table');
-    const ownerDocument = {
-      addEventListener(eventName, listener) {
-        listeners[eventName] = listener;
-      },
-      removeEventListener(eventName) {
-        delete listeners[eventName];
-      }
-    };
-    const anchorRange = {
-      columnIndex: 0,
-      index: 1,
-      length: 1,
-      table
-    };
-    const focusRange = {
-      columnIndex: 2,
-      index: 8,
-      length: 1,
-      table
-    };
-    page.quill = {};
-    page.getTableColumnSelectionRangeFromPoint = clientX => clientX < 100 ? anchorRange : focusRange;
-    page.selectTableSelectionRanges = (anchor, focus) => {
+    page.handleLineSelectionPointerDown = event => {
       calls.push({
-        anchor,
-        focus,
-        method: 'selectTableSelectionRanges'
+        clientX: event.clientX,
+        clientY: event.clientY
       });
-      return true;
     };
-    page.handleTableColumnPointerDown({
+    page.handleEditorSurfacePointerDownCapture({
+      clientX: 72,
+      clientY: 80
+    });
+    page.handleEditorSurfacePointerDownCapture({
       clientX: 40,
-      clientY: 20,
-      currentTarget: {
-        ownerDocument
-      },
-      preventDefault() {
-        calls.push({
-          method: 'preventDefault'
-        });
-      },
-      stopPropagation() {
-        calls.push({
-          method: 'stopPropagation'
-        });
-      }
+      clientY: 80
     });
-    listeners.pointermove({
-      clientX: 140,
-      clientY: 20,
-      preventDefault() {
-        calls.push({
-          method: 'movePreventDefault'
-        });
-      }
+    page.handleEditorSurfacePointerDownCapture({
+      clientX: 108,
+      clientY: 80
     });
-    listeners.pointerup();
     expect(calls).toEqual([{
-      method: 'preventDefault'
-    }, {
-      method: 'stopPropagation'
-    }, {
-      anchor: anchorRange,
-      focus: anchorRange,
-      method: 'selectTableSelectionRanges'
-    }, {
-      method: 'movePreventDefault'
-    }, {
-      anchor: anchorRange,
-      focus: focusRange,
-      method: 'selectTableSelectionRanges'
+      clientX: 72,
+      clientY: 80
     }]);
-    expect(listeners.pointermove).toBeUndefined();
   });
   it('dispatches editor context menu events through editor interactions', function () {
     const page = new EditorPage({});
@@ -141375,8 +142975,9 @@ describe('EditorPage', function () {
         calls.push({
           eventName,
           dispatchedEvent,
+          hasFindBlot: typeof context.findBlot === 'function',
           hasEditorRoot: Boolean(context.editorRoot),
-          hasSelectTableCell: typeof context.selectTableCell === 'function'
+          hasGetSelection: typeof context.getSelection === 'function'
         });
         return {
           handled: true
@@ -141384,13 +142985,15 @@ describe('EditorPage', function () {
       }
     };
     expect(page.dispatchEditorInteraction('contextmenu', event)).toEqual({
-      handled: true
+      handled: true,
+      target: null
     });
     expect(calls).toEqual([{
       eventName: 'contextmenu',
       dispatchedEvent: event,
+      hasFindBlot: true,
       hasEditorRoot: true,
-      hasSelectTableCell: true
+      hasGetSelection: true
     }]);
   });
   it('dispatches editor keyboard events through editor interactions', function () {
@@ -141414,6 +143017,457 @@ describe('EditorPage', function () {
     expect(calls).toEqual([{
       eventName: 'keydown',
       dispatchedEvent: event
+    }]);
+  });
+  it('dispatches native editor mouse down capture events through editor interactions', function () {
+    const calls = [];
+    const page = new EditorPage({});
+    const event = {
+      button: 0,
+      stopImmediatePropagation() {
+        calls.push({
+          method: 'stopImmediatePropagation'
+        });
+      },
+      stopPropagation() {
+        calls.push({
+          method: 'stopPropagation'
+        });
+      }
+    };
+    page.editorInteractions = {
+      dispatch(eventName, dispatchedEvent) {
+        calls.push({
+          eventName,
+          dispatchedEvent
+        });
+        return {
+          result: {
+            handled: true,
+            stopPropagation: true
+          }
+        };
+      }
+    };
+    page.handleNativeEditorMouseDownCapture(event);
+    expect(calls).toEqual([{
+      eventName: 'mousedown-capture',
+      dispatchedEvent: event
+    }, {
+      method: 'stopPropagation'
+    }, {
+      method: 'stopImmediatePropagation'
+    }]);
+  });
+  it('marks plain table clicks for TableUp suppression without stopping native mousedown', function () {
+    const calls = [];
+    const page = new EditorPage({});
+    const event = {
+      button: 0
+    };
+    page.scheduleBlankTableCellFocus = dispatchedEvent => {
+      calls.push({
+        dispatchedEvent,
+        method: 'scheduleBlankTableCellFocus'
+      });
+    };
+    page.editorInteractions = {
+      dispatch(eventName, dispatchedEvent) {
+        calls.push({
+          eventName,
+          dispatchedEvent
+        });
+        return {
+          handled: true,
+          result: {
+            suppressTableSelection: true
+          }
+        };
+      }
+    };
+    page.handleNativeEditorMouseDownCapture(event);
+    expect(event.mnSuppressTableUpSelection).toBeTrue();
+    expect(calls).toEqual([{
+      eventName: 'mousedown-capture',
+      dispatchedEvent: event
+    }, {
+      method: 'scheduleBlankTableCellFocus',
+      dispatchedEvent: event
+    }]);
+  });
+  it('resolves editor interaction targets from text-node event targets', function () {
+    const page = new EditorPage({});
+    const table = document.createElement('table');
+    const cell = document.createElement('td');
+    const paragraph = document.createElement('p');
+    const text = document.createTextNode('A');
+    const calls = [];
+    paragraph.appendChild(text);
+    cell.appendChild(paragraph);
+    table.appendChild(cell);
+    page.quill = {
+      root: table
+    };
+    page.editorInteractions = {
+      dispatch(eventName, dispatchedEvent, context) {
+        calls.push({
+          element: context.target.element,
+          eventName,
+          serviceName: context.targetServiceName
+        });
+        return {
+          handled: true
+        };
+      },
+      getHandlers(eventName = '') {
+        return eventName && eventName !== 'mousedown-capture' ? [] : [{
+          events: ['mousedown-capture'],
+          id: 'table.editor-region',
+          selector: 'table',
+          serviceName: 'table-controller'
+        }];
+      }
+    };
+    expect(page.dispatchEditorInteraction('mousedown-capture', {
+      target: text,
+      type: 'mousedown'
+    })).toEqual({
+      handled: true,
+      target: jasmine.objectContaining({
+        element: table,
+        serviceName: 'table-controller'
+      })
+    });
+    expect(calls).toEqual([{
+      element: table,
+      eventName: 'mousedown-capture',
+      serviceName: 'table-controller'
+    }]);
+  });
+  it('resolves point-selectable interaction targets from editor coordinates', function () {
+    const page = new EditorPage({});
+    const editorRoot = document.createElement('div');
+    const table = document.createElement('table');
+    const calls = [];
+    editorRoot.appendChild(table);
+    table.getBoundingClientRect = () => ({
+      bottom: 110,
+      height: 100,
+      left: 20,
+      right: 220,
+      top: 10,
+      width: 200
+    });
+    page.quill = {
+      root: editorRoot
+    };
+    page.editorInteractions = {
+      dispatch(eventName, dispatchedEvent, context) {
+        calls.push({
+          element: context.target.element,
+          eventName,
+          point: context.point,
+          serviceName: context.targetServiceName
+        });
+        return {
+          handled: true
+        };
+      },
+      getHandlers(eventName = '') {
+        return eventName && eventName !== 'pointermove' ? [] : [{
+          events: ['pointermove'],
+          id: 'table.editor-region',
+          pointHitMargin: {
+            top: 10
+          },
+          pointSelectable: true,
+          selector: 'table',
+          serviceName: 'table-controller'
+        }];
+      }
+    };
+    expect(page.dispatchEditorInteraction('pointermove', {
+      clientX: 160,
+      clientY: 5,
+      target: editorRoot,
+      type: 'pointermove'
+    })).toEqual({
+      handled: true,
+      target: jasmine.objectContaining({
+        element: table,
+        serviceName: 'table-controller'
+      })
+    });
+    expect(calls).toEqual([{
+      element: table,
+      eventName: 'pointermove',
+      point: {
+        clientX: 160,
+        clientY: 5
+      },
+      serviceName: 'table-controller'
+    }]);
+  });
+  it('applies interaction cursor classes to the Quill container', function () {
+    const page = new EditorPage({});
+    const editorContainer = document.createElement('div');
+    const editorRoot = document.createElement('div');
+    editorContainer.appendChild(editorRoot);
+    page.editorRef.current = editorContainer;
+    page.quill = {
+      root: editorRoot
+    };
+    page.editorInteractions = {
+      dispatch() {
+        return {
+          handled: true,
+          result: {
+            cursorClass: 'mn-table-column-selection-cursor'
+          }
+        };
+      }
+    };
+    page.dispatchEditorInteraction('pointermove', {
+      clientX: 1,
+      clientY: 1,
+      target: editorRoot
+    });
+    expect(editorContainer.classList.contains('mn-table-column-selection-cursor')).toBeTrue();
+    expect(editorRoot.classList.contains('mn-table-column-selection-cursor')).toBeFalse();
+  });
+  it('places the caret in a table cell when a plain click lands on blank cell space', function (done) {
+    const page = new EditorPage({});
+    const cell = document.createElement('div');
+    const calls = [];
+    cell.className = 'ql-table-cell-inner';
+    document.body.appendChild(cell);
+    page.getCurrentTableCellInner = () => null;
+    page.selectTableCell = targetCell => {
+      calls.push({
+        method: 'selectTableCell',
+        targetCell
+      });
+    };
+    page.scheduleBlankTableCellFocus({
+      target: cell
+    });
+    window.setTimeout(() => {
+      document.body.removeChild(cell);
+      expect(calls).toEqual([{
+        method: 'selectTableCell',
+        targetCell: cell
+      }]);
+      done();
+    }, 40);
+  });
+  it('places the caret after a music embed when a table cell embed is clicked', function (done) {
+    const page = new EditorPage({});
+    const wrapper = document.createElement('td');
+    const cell = document.createElement('div');
+    const embed = document.createElement('span');
+    const caption = document.createElement('div');
+    const calls = [];
+    cell.className = 'ql-table-cell-inner';
+    embed.className = 'music-keyboard-embed';
+    caption.className = 'music-embed-caption';
+    embed.appendChild(caption);
+    wrapper.appendChild(cell);
+    cell.appendChild(embed);
+    document.body.appendChild(wrapper);
+    page.selectAfterMusicEmbed = targetEmbed => {
+      calls.push({
+        method: 'selectAfterMusicEmbed',
+        targetEmbed
+      });
+      return true;
+    };
+    page.selectTableCell = () => {
+      calls.push({
+        method: 'selectTableCell'
+      });
+    };
+    page.scheduleBlankTableCellFocus({
+      target: caption
+    });
+    window.setTimeout(() => {
+      document.body.removeChild(wrapper);
+      expect(calls).toEqual([{
+        method: 'selectAfterMusicEmbed',
+        targetEmbed: embed
+      }]);
+      done();
+    }, 40);
+  });
+  it('places the caret after a music embed when clicking text rendered inside the embed', function (done) {
+    const page = new EditorPage({});
+    const wrapper = document.createElement('td');
+    const cell = document.createElement('div');
+    const embed = document.createElement('span');
+    const caption = document.createElement('div');
+    const text = document.createTextNode('Caption');
+    const calls = [];
+    cell.className = 'ql-table-cell-inner';
+    embed.className = 'music-keyboard-embed';
+    caption.className = 'music-embed-caption';
+    caption.appendChild(text);
+    embed.appendChild(caption);
+    wrapper.appendChild(cell);
+    cell.appendChild(embed);
+    document.body.appendChild(wrapper);
+    page.selectAfterMusicEmbed = targetEmbed => {
+      calls.push({
+        method: 'selectAfterMusicEmbed',
+        targetEmbed
+      });
+      return true;
+    };
+    page.selectTableCell = () => {
+      calls.push({
+        method: 'selectTableCell'
+      });
+    };
+    page.scheduleBlankTableCellFocus({
+      target: text
+    });
+    window.setTimeout(() => {
+      document.body.removeChild(wrapper);
+      expect(calls).toEqual([{
+        method: 'selectAfterMusicEmbed',
+        targetEmbed: embed
+      }]);
+      done();
+    }, 40);
+  });
+  it('resolves a table cell inner from a table cell wrapper target', function () {
+    const page = new EditorPage({});
+    const wrapper = document.createElement('td');
+    const cell = document.createElement('div');
+    const embed = document.createElement('span');
+    cell.className = 'ql-table-cell-inner';
+    embed.className = 'music-keyboard-embed';
+    wrapper.appendChild(cell);
+    cell.appendChild(embed);
+    expect(page.getTableCellInnerFromNode(wrapper)).toBe(cell);
+    expect(page.getTableCellInnerFromNode(embed)).toBe(cell);
+  });
+  it('preserves scroll positions while forcing a table-cell Quill selection', function (done) {
+    const page = new EditorPage({});
+    const scrollContainer = {
+      clientHeight: 100,
+      clientWidth: 100,
+      closest: () => null,
+      ownerDocument: document,
+      parentElement: null,
+      scrollHeight: 500,
+      scrollLeft: 11,
+      scrollTop: 22,
+      scrollWidth: 500
+    };
+    const calls = [];
+    page.quill = {
+      focus(options) {
+        calls.push({
+          method: 'focus',
+          options
+        });
+        scrollContainer.scrollLeft = 111;
+        scrollContainer.scrollTop = 222;
+      },
+      root: scrollContainer,
+      setSelection(index, length, source) {
+        calls.push({
+          index,
+          length,
+          method: 'setSelection',
+          source
+        });
+        scrollContainer.scrollLeft = 333;
+        scrollContainer.scrollTop = 444;
+      }
+    };
+    page.setQuillSelectionWithoutScroll(5, 0, 'user', scrollContainer);
+    expect(scrollContainer.scrollLeft).toBe(11);
+    expect(scrollContainer.scrollTop).toBe(22);
+    expect(calls).toEqual([{
+      method: 'focus',
+      options: {
+        preventScroll: true
+      }
+    }, {
+      index: 5,
+      length: 0,
+      method: 'setSelection',
+      source: 'user'
+    }]);
+    scrollContainer.scrollLeft = 333;
+    scrollContainer.scrollTop = 444;
+    window.setTimeout(() => {
+      expect(scrollContainer.scrollLeft).toBe(11);
+      expect(scrollContainer.scrollTop).toBe(22);
+      done();
+    }, 5);
+  });
+  it('does not force table-cell focus for text cursor targets', function (done) {
+    const page = new EditorPage({});
+    const cell = document.createElement('div');
+    const paragraph = document.createElement('p');
+    const text = document.createTextNode('A');
+    const calls = [];
+    cell.className = 'ql-table-cell-inner';
+    paragraph.appendChild(text);
+    cell.appendChild(paragraph);
+    document.body.appendChild(cell);
+    page.selectTableCell = () => {
+      calls.push({
+        method: 'selectTableCell'
+      });
+    };
+    page.scheduleBlankTableCellFocus({
+      target: text
+    });
+    window.setTimeout(() => {
+      document.body.removeChild(cell);
+      expect(calls).toEqual([]);
+      done();
+    }, 40);
+  });
+  it('attaches native editor mouse down interactions in capture mode', function () {
+    const calls = [];
+    const page = new EditorPage({});
+    const root = {
+      addEventListener(eventName, listener, capture) {
+        calls.push({
+          capture,
+          eventName,
+          listener,
+          method: 'addEventListener'
+        });
+      },
+      removeEventListener(eventName, listener, capture) {
+        calls.push({
+          capture,
+          eventName,
+          listener,
+          method: 'removeEventListener'
+        });
+      }
+    };
+    page.quill = {
+      root
+    };
+    page.attachNativeEditorInteractionListeners();
+    page.attachNativeEditorInteractionListeners();
+    page.detachNativeEditorInteractionListeners();
+    expect(calls).toEqual([{
+      capture: true,
+      eventName: 'mousedown',
+      listener: page.handleNativeEditorMouseDownCapture,
+      method: 'addEventListener'
+    }, {
+      capture: true,
+      eventName: 'mousedown',
+      listener: page.handleNativeEditorMouseDownCapture,
+      method: 'removeEventListener'
     }]);
   });
   it('widens the editor content host when a table overflows the page width', function () {
@@ -141463,57 +143517,6 @@ describe('EditorPage', function () {
     });
     page.updateDocumentOverflowWidth();
     expect(content.style.getPropertyValue('--mn-editor-overflow-width')).toBe('');
-  });
-  it('builds a table selection boundary from selected cell rectangles', function () {
-    const page = new EditorPage({});
-    const firstCell = {
-      parent: {
-        domNode: {
-          getBoundingClientRect() {
-            return {
-              bottom: 40,
-              height: 20,
-              left: 50,
-              right: 90,
-              top: 20,
-              width: 40
-            };
-          }
-        }
-      }
-    };
-    const secondCell = {
-      parent: {
-        domNode: {
-          getBoundingClientRect() {
-            return {
-              bottom: 80,
-              height: 20,
-              left: 50,
-              right: 90,
-              top: 60,
-              width: 40
-            };
-          }
-        }
-      }
-    };
-    page.quill = {
-      root: {
-        getBoundingClientRect() {
-          return {
-            left: 10,
-            top: 5
-          };
-        }
-      }
-    };
-    expect(page.getTableSelectionBoundary([firstCell, secondCell])).toEqual({
-      height: 60,
-      width: 40,
-      x: 40,
-      y: 15
-    });
   });
   it('moves table cell navigation from left to right and top to bottom', function () {
     const calls = [];
@@ -143108,7 +145111,7 @@ const TABLE_CONTEXT_MENU_SECTIONS = [[{
   id: 'insert-row-below',
   label: 'Insert row below',
   target: 'row'
-}, {
+}], [{
   id: 'insert-column-left',
   label: 'Insert column left',
   target: 'column'
@@ -143116,6 +145119,22 @@ const TABLE_CONTEXT_MENU_SECTIONS = [[{
   id: 'insert-column-right',
   label: 'Insert column right',
   target: 'column'
+}], [{
+  id: 'split-table-above',
+  label: 'Split table above',
+  target: 'row'
+}, {
+  id: 'split-table-below',
+  label: 'Split table below',
+  target: 'row'
+}], [{
+  id: 'fit-table-to-width',
+  label: 'Fit to width',
+  target: 'table'
+}, {
+  id: 'distribute-table-columns',
+  label: 'Distribute columns',
+  target: 'table'
 }], [{
   id: 'delete-row',
   label: 'Delete row',
@@ -143206,12 +145225,15 @@ class TableContextMenuView extends Service {
 new TableContextMenuView();
 
 const INSERT_TABLE_ITEM_ID = 'table.menu.insert';
+const TABLE_SELECTOR = '.ql-table, .table-up-table, table';
+const TABLE_CELL_INNER_SELECTOR = '.ql-table-cell-inner, .table-up-cell-inner';
+const TABLE_COLUMN_CURSOR_CLASS = 'mn-table-column-selection-cursor';
 
 /** Registers table commands and routes them to the active editor surface. */
 class TableController extends Service {
   constructor(registry) {
     super('table-controller', registry);
-    this.implement(['ready', 'registerMenuItems', 'insertTable', 'handleEditorInteraction', 'handleContextMenuCommand']);
+    this.implement(['ready', 'registerMenuItems', 'insertTable', 'handleEditorEvent', 'handleContextMenuCommand']);
     this.lastContextMenuCommand = null;
   }
   ready() {
@@ -143222,10 +145244,18 @@ class TableController extends Service {
     this.menuSelectedListener = this.mainMenu.listen('item-selected', this.onMenuItemSelected.bind(this));
     this.mainItemAddedListener = this.mainMenu.listen('main-item-added', this.onMainMenuItemAdded.bind(this));
     this.unregisterEditorInteractions = this.editorInteractions?.registerHandler?.({
-      events: ['contextmenu', 'keydown'],
-      handle: this.handleEditorInteraction.bind(this),
-      id: 'table.context-menu',
-      priority: 100
+      events: ['contextmenu', 'gutter-line-select-cancel', 'gutter-line-select-end', 'gutter-line-select-move', 'gutter-line-select-start', 'keydown', 'mousedown-capture', 'pointerdown', 'pointerleave', 'pointermove', 'pointerup', 'pointercancel'],
+      gutterSelectable: true,
+      id: 'table.editor-region',
+      idAttribute: 'data-table-id',
+      pointHitMargin: {
+        top: 10
+      },
+      pointSelectable: true,
+      priority: 100,
+      role: 'table',
+      selector: TABLE_SELECTOR,
+      serviceName: 'table-controller'
     });
     this.registerMenuItems();
   }
@@ -143239,12 +145269,36 @@ class TableController extends Service {
   insertTable() {
     return this.editorSurface?.insertTable?.(1, 2) || false;
   }
-  handleEditorInteraction(event, context) {
-    if (context?.eventName === 'contextmenu') {
+  handleEditorEvent(eventName, event, context) {
+    if (eventName === 'contextmenu') {
       return this.handleTableContextMenu(event, context);
     }
-    if (context?.eventName === 'keydown') {
+    if (eventName === 'keydown') {
       return this.handleTableContextMenuKeyDown(event, context);
+    }
+    if (eventName === 'mousedown-capture') {
+      return this.handleTableMouseDownCapture(event, context);
+    }
+    if (eventName === 'pointerdown') {
+      return this.handleTablePointerDown(event, context);
+    }
+    if (eventName === 'pointermove') {
+      return this.handleTablePointerMove(event, context);
+    }
+    if (eventName === 'pointerleave') {
+      return this.handleTablePointerLeave(event, context);
+    }
+    if (eventName === 'pointerup' || eventName === 'pointercancel') {
+      return this.handleTablePointerEnd(event, context);
+    }
+    if (eventName === 'gutter-line-select-start') {
+      return this.handleTableGutterSelectionStart(event, context);
+    }
+    if (eventName === 'gutter-line-select-move') {
+      return this.handleTableGutterSelectionMove(event, context);
+    }
+    if (eventName === 'gutter-line-select-end' || eventName === 'gutter-line-select-cancel') {
+      return this.handleTableGutterSelectionEnd();
     }
     return false;
   }
@@ -143271,7 +145325,7 @@ class TableController extends Service {
     if (!isContextMenuKey && !isShiftF10) {
       return false;
     }
-    const cell = context.getCurrentTableCellInner?.();
+    const cell = this.getCurrentTableCellInner(context);
     const commandContext = this.getTableCommandContext(cell, context);
     if (!commandContext) {
       return false;
@@ -143303,14 +145357,182 @@ class TableController extends Service {
   closeTableContextMenu(commandContext, interactionContext) {
     this.editorViews?.closeView?.(TABLE_CONTEXT_MENU_VIEW);
     if (commandContext?.cell?.isConnected) {
-      interactionContext?.selectTableCell?.(commandContext.cell);
+      this.selectTableCell(commandContext.cell, interactionContext);
     }
   }
   getTableCellInnerFromNode(node) {
-    return node?.closest?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
+    const element = getElementFromNode(node);
+    const inner = element?.closest?.(TABLE_CELL_INNER_SELECTOR) || null;
+    if (inner) {
+      return inner;
+    }
+    const cell = element?.closest?.('td, th, .ql-table-cell, .table-up-cell') || null;
+    return cell?.querySelector?.(TABLE_CELL_INNER_SELECTOR) || null;
   }
   getTableFromNode(node) {
-    return node?.closest?.('table') || null;
+    const element = getElementFromNode(node);
+    return element?.closest?.('table') || null;
+  }
+  handleTableMouseDownCapture(event, context) {
+    if (this.isContextMenuClickInActiveTableSelection(event, context)) {
+      return {
+        handled: true,
+        suppressBlankTableCellFocus: true,
+        suppressTableSelection: true
+      };
+    }
+    if (!this.isPlainTableCellClick(event, context)) {
+      return false;
+    }
+    this.clearTableSelection(context);
+    return {
+      handled: true,
+      suppressTableSelection: true
+    };
+  }
+  isPlainTableCellClick(event, context) {
+    if (event?.button !== 0 || !this.getTableCellInnerFromNode(event?.target)) {
+      return false;
+    }
+    return !this.isTableSelectionGesture(event, context);
+  }
+  isContextMenuClickInActiveTableSelection(event, context) {
+    if (event?.button !== 2) {
+      return false;
+    }
+    const table = this.getTableFromNode(event?.target) || context?.target?.element || null;
+    const selectedCells = this.getActiveTableSelectionCells(table, context);
+    if (!table || !selectedCells.length) {
+      return false;
+    }
+    const point = {
+      clientX: Number(event?.clientX),
+      clientY: Number(event?.clientY)
+    };
+    if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) {
+      return true;
+    }
+    if (this.isPointInSelectedTableCells(point, selectedCells)) {
+      return true;
+    }
+    const range = this.getTableColumnSelectionRangeFromPoint(point.clientX, point.clientY, {
+      ...context,
+      target: {
+        ...(context?.target || {}),
+        element: table
+      }
+    });
+    return range?.table === table && range.cells?.some?.(cell => selectedCells.includes(cell));
+  }
+  isPointInSelectedTableCells(point, selectedCells = []) {
+    return selectedCells.some(cell => {
+      const rect = this.getTableCellBoundaryElement(cell)?.getBoundingClientRect?.();
+      return rect && rect.width > 0 && rect.height > 0 && rect.left <= point.clientX && point.clientX <= rect.right && rect.top <= point.clientY && point.clientY <= rect.bottom;
+    });
+  }
+  isTableSelectionGesture(event, context) {
+    return !!this.getTableColumnSelectionRangeFromPoint(event?.clientX, event?.clientY, context);
+  }
+  handleTablePointerDown(event, context) {
+    const range = this.getTableColumnSelectionRangeFromPoint(event?.clientX, event?.clientY, context);
+    if (!range) {
+      return false;
+    }
+    this.tableColumnSelectionAnchorRange = range;
+    this.selectTableSelectionRanges(range, range, context);
+    return {
+      capturePointer: true,
+      handled: true,
+      preventDefault: true,
+      stopPropagation: true
+    };
+  }
+  handleTablePointerMove(event, context) {
+    if (this.tableColumnSelectionAnchorRange) {
+      const range = this.getTableColumnSelectionRangeFromPoint(event?.clientX, event?.clientY, context);
+      if (!range || range.table !== this.tableColumnSelectionAnchorRange.table) {
+        return {
+          handled: true
+        };
+      }
+      this.selectTableSelectionRanges(this.tableColumnSelectionAnchorRange, range, context);
+      return {
+        handled: true,
+        preventDefault: true
+      };
+    }
+    const range = this.getTableColumnSelectionRangeFromPoint(event?.clientX, event?.clientY, context);
+    if (!range) {
+      return false;
+    }
+    return {
+      cursorClass: TABLE_COLUMN_CURSOR_CLASS,
+      handled: true
+    };
+  }
+  handleTablePointerLeave(_event, context) {
+    if (!this.tableColumnSelectionAnchorRange && context?.handler?.serviceName === 'table-controller') {
+      return {
+        cursorClass: null,
+        handled: true
+      };
+    }
+    return false;
+  }
+  handleTablePointerEnd() {
+    if (!this.tableColumnSelectionAnchorRange) {
+      return false;
+    }
+    this.tableColumnSelectionAnchorRange = null;
+    return {
+      cursorClass: null,
+      handled: true
+    };
+  }
+  handleTableGutterSelectionStart(event, context) {
+    const range = this.getTableRowSelectionRangeFromGutterEvent(event, context);
+    if (!range) {
+      return false;
+    }
+    this.tableGutterSelectionAnchorRange = range;
+    if (!this.selectTableSelectionRanges(range, range, context)) {
+      this.tableGutterSelectionAnchorRange = null;
+      return false;
+    }
+    return {
+      handled: true,
+      preventDefault: true,
+      stopPropagation: true
+    };
+  }
+  handleTableGutterSelectionMove(event, context) {
+    if (!this.tableGutterSelectionAnchorRange) {
+      return false;
+    }
+    const range = this.getTableRowSelectionRangeFromGutterEvent(event, context);
+    if (!range || range.table !== this.tableGutterSelectionAnchorRange.table) {
+      return {
+        handled: true
+      };
+    }
+    if (!this.selectTableSelectionRanges(this.tableGutterSelectionAnchorRange, range, context)) {
+      return {
+        handled: true
+      };
+    }
+    return {
+      handled: true,
+      preventDefault: true
+    };
+  }
+  handleTableGutterSelectionEnd() {
+    if (!this.tableGutterSelectionAnchorRange) {
+      return false;
+    }
+    this.tableGutterSelectionAnchorRange = null;
+    return {
+      handled: true
+    };
   }
   getTableCommandContext(cell, context, fallbackTable = null) {
     let table = cell?.closest?.('table') || fallbackTable;
@@ -143328,18 +145550,219 @@ class TableController extends Service {
       cell: contextCell,
       cellBlot: contextCellBlot,
       cells: selectedCells.length ? selectedCells : [contextCellBlot],
+      ...(context?.quill ? {
+        quill: context.quill
+      } : {}),
       selectionShape: selectedCells.length ? getTableSelectionShape(table, selectedCells) : 'cell',
       table,
-      tableModule: context.getTableModule?.() || null
+      tableModule: this.getTableModule(context)
     };
   }
   getActiveTableSelectionCells(table, context) {
-    const tableSelection = context.getTableSelectionModule?.();
+    const tableSelection = this.getTableSelectionModule(context);
     const selectedCells = Array.isArray(tableSelection?.selectedTds) ? tableSelection.selectedTds : [];
     if (!table) {
       return selectedCells;
     }
     return selectedCells.filter(cell => getRenderedTableCellInnerFromBlot(cell)?.closest?.('table') === table);
+  }
+  getTableModule(context) {
+    return context?.getModule?.(ni.moduleName) || null;
+  }
+  getTableSelectionModule(context) {
+    return this.getTableModule(context)?.getModule?.(Gr.moduleName) || null;
+  }
+  getCurrentTableCellInner(context) {
+    const range = context?.getSelection?.();
+    if (!range) {
+      return null;
+    }
+    const [line] = context.getLine?.(range.index) || [];
+    const lineNode = line?.domNode;
+    const leafNode = context.getLeaf?.(range.index)?.[0]?.domNode;
+    const node = lineNode || leafNode;
+    return node?.closest?.(TABLE_CELL_INNER_SELECTOR) || null;
+  }
+  selectTableCell(cell, context) {
+    const blot = context?.findBlot?.(cell, true);
+    const index = blot ? context?.getIndex?.(blot) : null;
+    if (!Number.isInteger(index)) {
+      return false;
+    }
+    this.getTableSelectionModule(context)?.hide?.();
+    context?.quill?.focus?.();
+    context?.setSelection?.(index, 0, 'user');
+    return true;
+  }
+  clearTableSelection(context) {
+    const tableSelection = this.getTableSelectionModule(context);
+    tableSelection?.setSelectedTds?.([]);
+    tableSelection?.hide?.();
+  }
+  getTableRowSelectionRangeFromGutterEvent(event, context) {
+    const table = context?.target?.element?.closest?.('table') || context?.target?.element;
+    const clientY = Number(context?.lineHit?.point?.clientY ?? event?.clientY);
+    if (!table || !Number.isFinite(clientY)) {
+      return null;
+    }
+    const rows = Array.from(table.querySelectorAll('tr'));
+    const row = rows.find(candidate => {
+      const rect = candidate.getBoundingClientRect?.();
+      return rect && rect.height > 0 && rect.top <= clientY && clientY <= rect.bottom;
+    });
+    return row ? this.getTableRowSelectionRange(row, context) : null;
+  }
+  getTableRowSelectionRange(row, context) {
+    const ranges = this.getTableCellSelectionRanges(row, context);
+    if (!ranges.length) {
+      return null;
+    }
+    const start = Math.min(...ranges.map(range => range.index));
+    const end = Math.max(...ranges.map(range => range.index + range.length));
+    return {
+      cells: ranges.map(range => range.blot),
+      index: start,
+      length: Math.max(end - start, 1),
+      table: row.closest('table')
+    };
+  }
+  getTableColumnSelectionRangeFromPoint(clientX, clientY, context) {
+    if (!Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {
+      return null;
+    }
+    const tableRoot = context?.target?.element || context?.editorRoot;
+    const tables = tableRoot?.matches?.(TABLE_SELECTOR) ? [tableRoot] : Array.from(tableRoot?.querySelectorAll?.(TABLE_SELECTOR) || []);
+    const table = tables.find(candidate => {
+      const rect = candidate.getBoundingClientRect?.();
+      return rect && rect.width > 0 && rect.height > 0 && rect.left <= clientX && clientX <= rect.right && rect.top - 10 <= clientY && clientY <= rect.top + 18;
+    });
+    if (!table) {
+      return null;
+    }
+    const columnCell = Array.from(table.querySelectorAll(TABLE_CELL_INNER_SELECTOR)).find(cell => {
+      const rect = cell.getBoundingClientRect?.();
+      return rect && rect.width > 0 && rect.left <= clientX && clientX <= rect.right;
+    });
+    return columnCell ? this.getTableColumnSelectionRange(columnCell, context) : null;
+  }
+  getTableColumnSelectionRange(columnCell, context) {
+    const table = columnCell.closest('table');
+    const columnId = columnCell.dataset?.colId;
+    const columnIdSelector = TABLE_CELL_INNER_SELECTOR.split(', ').map(selector => `${selector}[data-col-id="${cssEscape(columnId)}"]`).join(', ');
+    const columnCells = columnId ? Array.from(table?.querySelectorAll(columnIdSelector) || []) : this.getTableColumnCellsByVisualIndex(columnCell);
+    const ranges = columnCells.map(cell => this.getTableCellSelectionRange(cell, context)).filter(Boolean);
+    const columnIndex = this.getTableColumnVisualIndex(columnCell);
+    if (!table || !ranges.length) {
+      return null;
+    }
+    const start = Math.min(...ranges.map(range => range.index));
+    const end = Math.max(...ranges.map(range => range.index + range.length));
+    return {
+      cells: ranges.map(range => range.blot),
+      columnIndex,
+      index: start,
+      length: Math.max(end - start, 1),
+      table
+    };
+  }
+  getTableColumnCellsByVisualIndex(columnCell) {
+    const row = columnCell.closest('tr');
+    const table = columnCell.closest('table');
+    const columnIndex = this.getTableColumnVisualIndex(columnCell);
+    if (!row || !table || columnIndex < 0) {
+      return [];
+    }
+    return Array.from(table.querySelectorAll('tr')).map(tableRow => Array.from(tableRow.querySelectorAll(TABLE_CELL_INNER_SELECTOR))[columnIndex]).filter(Boolean);
+  }
+  getTableColumnVisualIndex(columnCell) {
+    const row = columnCell.closest('tr');
+    const rowCells = Array.from(row?.querySelectorAll(TABLE_CELL_INNER_SELECTOR) || []);
+    return rowCells.indexOf(columnCell);
+  }
+  getTableCellSelectionRanges(container, context) {
+    const cells = Array.from(container.querySelectorAll(TABLE_CELL_INNER_SELECTOR));
+    return cells.map(cell => this.getTableCellSelectionRange(cell, context)).filter(Boolean);
+  }
+  getTableCellSelectionRange(cell, context) {
+    const blot = context?.findBlot?.(cell, true);
+    const index = blot ? context?.getIndex?.(blot) : null;
+    const length = Number(blot?.length?.());
+    if (!Number.isInteger(index)) {
+      return null;
+    }
+    return {
+      blot,
+      index,
+      length: Number.isFinite(length) && length > 0 ? length : 1
+    };
+  }
+  selectTableSelectionRanges(anchorRange, focusRange, context) {
+    if (!anchorRange.table || !focusRange.table || anchorRange.table !== focusRange.table) {
+      return false;
+    }
+    const tableSelection = this.getTableSelectionModule(context);
+    const cells = this.getTableSelectionCells(anchorRange.table, anchorRange, focusRange, context);
+    if (!tableSelection || !cells.length) {
+      return false;
+    }
+    this.applyTableSelection(tableSelection, anchorRange.table, cells, context);
+    context?.setSelection?.(null, 'api');
+    return true;
+  }
+  getTableSelectionCells(table, anchorRange, focusRange, context) {
+    if (Array.isArray(anchorRange.cells) && Array.isArray(focusRange.cells)) {
+      const anchorColumnIndex = Number(anchorRange.columnIndex);
+      const focusColumnIndex = Number(focusRange.columnIndex);
+      if (Number.isInteger(anchorColumnIndex) && Number.isInteger(focusColumnIndex)) {
+        const start = Math.min(anchorColumnIndex, focusColumnIndex);
+        const end = Math.max(anchorColumnIndex, focusColumnIndex);
+        return Array.from(table.querySelectorAll('tr')).flatMap(row => Array.from(row.querySelectorAll(TABLE_CELL_INNER_SELECTOR)).slice(start, end + 1).map(cell => this.getTableCellSelectionRange(cell, context)?.blot)).filter(Boolean);
+      }
+      return Array.from(new Set(anchorRange.cells.concat(focusRange.cells)));
+    }
+    const start = Math.min(anchorRange.index, focusRange.index);
+    const end = Math.max(anchorRange.index + anchorRange.length, focusRange.index + focusRange.length);
+    return this.getTableCellSelectionRanges(table, context).filter(range => range.index < end && range.index + range.length > start).map(range => range.blot);
+  }
+  applyTableSelection(tableSelection, table, cells, context) {
+    tableSelection.setSelectionTable(table);
+    tableSelection.setSelectedTds(cells);
+    const boundary = this.getTableSelectionBoundary(cells, context);
+    if (boundary) {
+      tableSelection.boundary = boundary;
+    }
+    const editor = context?.editorRoot;
+    const tableView = table.parentElement;
+    tableSelection.selectedEditorScrollX = Number(editor?.scrollLeft) || 0;
+    tableSelection.selectedEditorScrollY = Number(editor?.scrollTop) || 0;
+    tableSelection.selectedTableScrollX = Number(tableView?.scrollLeft) || 0;
+    tableSelection.selectedTableScrollY = Number(tableView?.scrollTop) || 0;
+    tableSelection.show?.();
+  }
+  getTableSelectionBoundary(cells, context) {
+    const rootRect = context?.editorRoot?.getBoundingClientRect?.();
+    if (!rootRect) {
+      return null;
+    }
+    const rects = cells.map(cell => this.getTableCellBoundaryElement(cell)?.getBoundingClientRect?.()).filter(rect => rect && rect.width > 0 && rect.height > 0);
+    if (!rects.length) {
+      return null;
+    }
+    const left = Math.min(...rects.map(rect => rect.left));
+    const top = Math.min(...rects.map(rect => rect.top));
+    const right = Math.max(...rects.map(rect => rect.right));
+    const bottom = Math.max(...rects.map(rect => rect.bottom));
+    return {
+      height: bottom - top,
+      width: right - left,
+      x: left - rootRect.left,
+      y: top - rootRect.top
+    };
+  }
+  getTableCellBoundaryElement(cell) {
+    const cellNode = cell?.parent?.domNode || null;
+    const innerNode = getRenderedTableCellInnerFromBlot(cell);
+    return cellNode?.getBoundingClientRect ? cellNode : innerNode?.parentElement || innerNode;
   }
   handleContextMenuCommand(commandId, context) {
     if (!this.performContextMenuCommand(commandId, context)) {
@@ -143354,8 +145777,17 @@ class TableController extends Service {
   }
   performContextMenuCommand(commandId, context = {}) {
     const tableModule = context.tableModule;
+    if (!tableModule) {
+      return false;
+    }
+    if (commandId === 'fit-table-to-width') {
+      return this.fitTableToAvailableWidth(context);
+    }
+    if (commandId === 'distribute-table-columns') {
+      return this.distributeTableColumns(context);
+    }
     const selectedCells = this.getCommandCells(context);
-    if (!tableModule || !selectedCells.length) {
+    if (!selectedCells.length) {
       return false;
     }
     const commandById = {
@@ -143367,12 +145799,233 @@ class TableController extends Service {
       'insert-row-above': ['appendRow', selectedCells, false],
       'insert-row-below': ['appendRow', selectedCells, true]
     };
+    if (commandId === 'split-table-above') {
+      return this.splitTableAtSelection(context, false);
+    }
+    if (commandId === 'split-table-below') {
+      return this.splitTableAtSelection(context, true);
+    }
     const [methodName, ...args] = commandById[commandId] || [];
     const command = tableModule[methodName];
     if (typeof command !== 'function') {
       return false;
     }
     command.apply(tableModule, args);
+    return true;
+  }
+  fitTableToAvailableWidth(context = {}) {
+    const table = context.table || context.cell?.closest?.('table') || null;
+    const availableWidth = this.getAvailableTableWidth(table, context);
+    if (!table || !Number.isFinite(availableWidth) || availableWidth <= 0) {
+      return false;
+    }
+    const columns = this.getTableColumns(table);
+    const columnWidths = this.getColumnWidths(columns);
+    if (!columnWidths.length) {
+      return false;
+    }
+    const currentWidth = columnWidths.reduce((total, width) => total + width, 0);
+    const adjustment = (availableWidth - currentWidth) / columnWidths.length;
+    const nextWidths = columnWidths.map(width => width + adjustment);
+    if (!this.applyTableColumnWidths(table, columns, nextWidths)) {
+      return false;
+    }
+    context.quill?.update?.('user');
+    return true;
+  }
+  distributeTableColumns(context = {}) {
+    const table = context.table || context.cell?.closest?.('table') || null;
+    const columns = this.getTableColumns(table);
+    const columnWidths = this.getColumnWidths(columns);
+    if (!table || !columnWidths.length) {
+      return false;
+    }
+    const tableWidth = this.getTableWidth(table, columnWidths);
+    const columnWidth = tableWidth / columns.length;
+    if (!Number.isFinite(columnWidth) || columnWidth <= 0) {
+      return false;
+    }
+    if (!this.applyTableColumnWidths(table, columns, columns.map(() => columnWidth))) {
+      return false;
+    }
+    context.quill?.update?.('user');
+    return true;
+  }
+  getAvailableTableWidth(table, context = {}) {
+    const contentHost = table?.closest?.('.mn-document-content');
+    const cssWidth = this.getCssPixelValue(contentHost, '--mn-content-width');
+    if (Number.isFinite(cssWidth) && cssWidth > 0) {
+      return cssWidth;
+    }
+    const editorRoot = context.editorRoot || context.quill?.root || null;
+    const rootStyle = editorRoot?.getBoundingClientRect ? getComputedStyle(editorRoot) : null;
+    const rootWidth = Number(editorRoot?.getBoundingClientRect?.().width) || Number(editorRoot?.clientWidth);
+    const paddingLeft = Number.parseFloat(rootStyle?.paddingLeft || '0') || 0;
+    const paddingRight = Number.parseFloat(rootStyle?.paddingRight || '0') || 0;
+    const rootContentWidth = rootWidth - paddingLeft - paddingRight;
+    if (Number.isFinite(rootContentWidth) && rootContentWidth > 0) {
+      return rootContentWidth;
+    }
+    return this.getTableWidth(table, this.getColumnWidths(this.getTableColumns(table)));
+  }
+  getCssPixelValue(element, propertyName) {
+    if (!element?.getBoundingClientRect) {
+      return NaN;
+    }
+    const value = getComputedStyle(element).getPropertyValue(propertyName);
+    const trimmedValue = String(value || '').trim();
+    const number = Number.parseFloat(value);
+    return trimmedValue.endsWith('px') && Number.isFinite(number) ? number : NaN;
+  }
+  getTableColumns(table) {
+    return Array.from(table?.querySelectorAll?.('colgroup col') || []);
+  }
+  getColumnWidths(columns = []) {
+    return columns.map(column => {
+      const width = Number.parseFloat(column.getAttribute('width') || '');
+      if (Number.isFinite(width) && width > 0) {
+        return width;
+      }
+      return Number(column.getBoundingClientRect?.().width) || 0;
+    }).filter(width => Number.isFinite(width) && width > 0);
+  }
+  getTableWidth(table, columnWidths = []) {
+    const styleWidth = Number.parseFloat(table?.style?.width || '');
+    if (Number.isFinite(styleWidth) && styleWidth > 0) {
+      return styleWidth;
+    }
+    const rectWidth = Number(table?.getBoundingClientRect?.().width);
+    if (Number.isFinite(rectWidth) && rectWidth > 0) {
+      return rectWidth;
+    }
+    return columnWidths.reduce((total, width) => total + width, 0);
+  }
+  applyTableColumnWidths(table, columns = [], widths = []) {
+    if (!table || !columns.length || columns.length !== widths.length) {
+      return false;
+    }
+    const roundedWidths = this.roundColumnWidths(widths);
+    const tableWidth = roundedWidths.reduce((total, width) => total + width, 0);
+    columns.forEach((column, index) => {
+      const width = `${roundedWidths[index]}px`;
+      column.removeAttribute('data-full');
+      column.setAttribute('width', width);
+    });
+    const colgroup = columns[0]?.closest?.('colgroup');
+    colgroup?.removeAttribute?.('data-full');
+    table.removeAttribute?.('data-full');
+    table.style.width = `${tableWidth}px`;
+    return true;
+  }
+  roundColumnWidths(widths = []) {
+    const rounded = widths.map(width => Math.max(1, Math.round(width)));
+    const target = Math.max(1, Math.round(widths.reduce((total, width) => total + width, 0)));
+    const delta = target - rounded.reduce((total, width) => total + width, 0);
+    if (rounded.length) {
+      rounded[rounded.length - 1] = Math.max(1, rounded[rounded.length - 1] + delta);
+    }
+    return rounded;
+  }
+  splitTableAtSelection(context = {}, below = false) {
+    const selectedCells = this.getCommandCells(context);
+    const rows = this.getSelectedTableRows(selectedCells);
+    const tableBlot = this.getTableBlotFromRows(rows);
+    const tableRows = tableBlot?.getRows?.() || [];
+    if (!tableBlot || !rows.length || !tableRows.length) {
+      return false;
+    }
+    const selectedIndexes = rows.map(row => tableRows.indexOf(row)).filter(index => index >= 0);
+    if (!selectedIndexes.length) {
+      return false;
+    }
+    const firstIndex = Math.min(...selectedIndexes);
+    const lastIndex = Math.max(...selectedIndexes);
+    const splitIndex = below ? lastIndex + 1 : firstIndex;
+    const tableWrapper = this.getTableWrapperFromTableBlot(tableBlot);
+    const splitRow = tableRows[splitIndex];
+    if (!splitRow || !tableWrapper || splitIndex <= 0 || splitIndex >= tableRows.length) {
+      return false;
+    }
+    const newTableBlot = tableBlot.split(splitRow.offset(tableBlot));
+    if (!newTableBlot || newTableBlot === tableBlot) {
+      return false;
+    }
+    this.copyColumnGroupToSplitTable(tableBlot, newTableBlot);
+    const newTableWrapper = tableWrapper.split(newTableBlot.offset(tableWrapper));
+    if (!newTableWrapper || newTableWrapper === tableWrapper) {
+      return false;
+    }
+    this.assignNewTableId(newTableWrapper);
+    this.insertBlockBetweenTables(tableWrapper, newTableWrapper);
+    context.quill?.update?.('user');
+    return true;
+  }
+  getSelectedTableRows(selectedCells = []) {
+    return Array.from(new Set(selectedCells.map(cell => cell?.getTableRow?.()).filter(Boolean)));
+  }
+  getTableBlotFromRows(rows = []) {
+    const row = rows[0];
+    let parent = row?.parent || null;
+    while (parent) {
+      if (typeof parent.getRows === 'function') {
+        return parent;
+      }
+      parent = parent.parent || null;
+    }
+    return null;
+  }
+  getTableWrapperFromTableBlot(tableBlot) {
+    let parent = tableBlot?.parent || null;
+    while (parent) {
+      if (parent.domNode?.classList?.contains('ql-table-wrapper')) {
+        return parent;
+      }
+      parent = parent.parent || null;
+    }
+    return null;
+  }
+  assignNewTableId(tableWrapper) {
+    const tableId = createTableId();
+    const nodes = [tableWrapper?.domNode].concat(Array.from(tableWrapper?.domNode?.querySelectorAll?.('[data-table-id]') || [])).filter(Boolean);
+    nodes.forEach(node => {
+      node.dataset.tableId = tableId;
+    });
+    return tableId;
+  }
+  copyColumnGroupToSplitTable(sourceTableBlot, targetTableBlot) {
+    const sourceColgroup = this.getFirstChildBlot(sourceTableBlot, child => child?.domNode?.tagName?.toLowerCase?.() === 'colgroup');
+    const targetColgroup = this.getFirstChildBlot(targetTableBlot, child => child?.domNode?.tagName?.toLowerCase?.() === 'colgroup');
+    if (!sourceColgroup || !targetTableBlot || targetColgroup) {
+      return false;
+    }
+    targetTableBlot.insertBefore(this.cloneBlotTree(sourceColgroup), targetTableBlot.children?.head || null);
+    return true;
+  }
+  getFirstChildBlot(parent, predicate) {
+    let result = null;
+    parent?.children?.forEach?.(child => {
+      if (!result && predicate(child)) {
+        result = child;
+      }
+    });
+    return result;
+  }
+  cloneBlotTree(blot) {
+    const clone = blot.clone();
+    blot.children?.forEach?.(child => {
+      clone.appendChild(this.cloneBlotTree(child));
+    });
+    return clone;
+  }
+  insertBlockBetweenTables(tableWrapper, newTableWrapper) {
+    if (!tableWrapper?.parent || !newTableWrapper || tableWrapper.next !== newTableWrapper) {
+      return false;
+    }
+    const block = tableWrapper.scroll?.create?.('block');
+    if (!block) {
+      return false;
+    }
+    tableWrapper.parent.insertBefore(block, newTableWrapper);
     return true;
   }
   getCommandCells(context = {}) {
@@ -143393,6 +146046,33 @@ class TableController extends Service {
       this.registerMenuItems();
     }
   }
+}
+function cssEscape(value) {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, '\\$&');
+}
+function getElementFromNode(node) {
+  if (!node) {
+    return null;
+  }
+  if (node.nodeType === getNodeType('ELEMENT_NODE')) {
+    return node;
+  }
+  return node.parentElement || null;
+}
+function getNodeType(name) {
+  if (typeof Node !== 'undefined') {
+    return Node[name];
+  }
+  return {
+    ELEMENT_NODE: 1,
+    TEXT_NODE: 3
+  }[name];
+}
+function createTableId() {
+  return `table-${Math.random().toString(36).slice(2)}`;
 }
 new TableController();
 
@@ -143425,10 +146105,14 @@ class EditorInteractionsMock extends Service {
     };
   }
   dispatch(eventName, event, context = {}) {
-    return this.handlers.filter(handler => handler.events.includes(eventName)).map(handler => handler.handle(event, {
-      ...context,
-      eventName
-    })).find(result => result === true || result?.handled === true) || false;
+    return this.handlers.filter(handler => handler.events.includes(eventName)).map(handler => {
+      const service = this.registry.subscribe(handler.serviceName);
+      return service?.handleEditorEvent?.(eventName, event, {
+        ...context,
+        eventName,
+        handler
+      });
+    }).find(result => result === true || result?.handled === true) || false;
   }
 }
 class EditorViewsMock extends Service {
@@ -143569,9 +146253,363 @@ describe('TableController', function () {
       context
     });
   });
+  it('fits a table to the available editor width while preserving column differences', function () {
+    const calls = [];
+    const editorRoot = document.createElement('div');
+    const table = document.createElement('table');
+    const colgroup = document.createElement('colgroup');
+    const columns = [100, 150, 200].map(width => {
+      const column = document.createElement('col');
+      column.setAttribute('width', `${width}px`);
+      colgroup.appendChild(column);
+      return column;
+    });
+    editorRoot.appendChild(table);
+    table.appendChild(colgroup);
+    editorRoot.getBoundingClientRect = () => ({
+      width: 600
+    });
+    expect(tableController.handleContextMenuCommand('fit-table-to-width', {
+      editorRoot,
+      quill: {
+        update(source) {
+          calls.push({
+            method: 'update',
+            source
+          });
+        }
+      },
+      table,
+      tableModule: {}
+    })).toBeTrue();
+    expect(columns.map(column => column.getAttribute('width'))).toEqual(['150px', '200px', '250px']);
+    expect(table.style.width).toBe('600px');
+    expect(calls).toEqual([{
+      method: 'update',
+      source: 'user'
+    }]);
+  });
+  it('distributes table columns without changing the table width', function () {
+    const calls = [];
+    const table = document.createElement('table');
+    const colgroup = document.createElement('colgroup');
+    const columns = [120, 180, 300].map(width => {
+      const column = document.createElement('col');
+      column.setAttribute('width', `${width}px`);
+      colgroup.appendChild(column);
+      return column;
+    });
+    table.style.width = '600px';
+    table.appendChild(colgroup);
+    expect(tableController.handleContextMenuCommand('distribute-table-columns', {
+      quill: {
+        update(source) {
+          calls.push({
+            method: 'update',
+            source
+          });
+        }
+      },
+      table,
+      tableModule: {}
+    })).toBeTrue();
+    expect(columns.map(column => column.getAttribute('width'))).toEqual(['200px', '200px', '200px']);
+    expect(table.style.width).toBe('600px');
+    expect(calls).toEqual([{
+      method: 'update',
+      source: 'user'
+    }]);
+  });
+  it('splits a table above and below the selected row range', function () {
+    const calls = [];
+    const wrapperNode = document.createElement('div');
+    wrapperNode.className = 'ql-table-wrapper';
+    const parent = {
+      insertBefore(block, ref) {
+        calls.push({
+          block,
+          method: 'insertBefore',
+          ref
+        });
+      }
+    };
+    const newTables = [20, 40].map((offset, index) => {
+      const domNode = document.createElement('table');
+      const bodyNode = document.createElement('tbody');
+      const rowNode = document.createElement('tr');
+      const cellNode = document.createElement('td');
+      const tableBlot = {
+        children: {
+          forEach(callback) {
+            this.items.forEach(callback);
+          },
+          head: null,
+          items: []
+        },
+        domNode,
+        offset(parentBlot) {
+          return parentBlot === wrapper ? 200 + index * 200 : -1;
+        },
+        insertBefore(child, ref) {
+          calls.push({
+            child,
+            method: 'insertTableChild',
+            ref,
+            table: tableBlot
+          });
+          this.children.items.unshift(child);
+          this.children.head = child;
+          this.domNode.insertBefore(child.domNode, this.domNode.firstChild);
+        }
+      };
+      domNode.dataset.tableId = 'original-table';
+      bodyNode.dataset.tableId = 'original-table';
+      rowNode.dataset.tableId = 'original-table';
+      cellNode.dataset.tableId = 'original-table';
+      rowNode.appendChild(cellNode);
+      bodyNode.appendChild(rowNode);
+      domNode.appendChild(bodyNode);
+      return {
+        offset,
+        tableBlot
+      };
+    });
+    const newWrappers = [200, 400].map((offset, index) => {
+      const domNode = document.createElement('div');
+      domNode.dataset.tableId = 'original-table';
+      domNode.appendChild(newTables[index].tableBlot.domNode);
+      return {
+        domNode,
+        offset
+      };
+    });
+    const wrapper = {
+      domNode: wrapperNode,
+      next: null,
+      parent,
+      scroll: {
+        create(name) {
+          calls.push({
+            method: 'create',
+            name
+          });
+          return {
+            name
+          };
+        }
+      },
+      split(offset) {
+        const newWrapper = newWrappers.find(candidate => candidate.offset === offset);
+        this.next = newWrapper;
+        calls.push({
+          method: 'splitWrapper',
+          offset
+        });
+        return newWrapper;
+      }
+    };
+    const table = {
+      children: {
+        forEach(callback) {
+          this.items.forEach(callback);
+        },
+        head: null,
+        items: []
+      },
+      domNode: document.createElement('table'),
+      getRows() {
+        return rows;
+      },
+      parent: wrapper,
+      split(offset) {
+        const newTable = newTables.find(candidate => candidate.offset === offset)?.tableBlot;
+        calls.push({
+          method: 'splitTable',
+          offset
+        });
+        return newTable;
+      }
+    };
+    const colBlot = {
+      clone() {
+        const domNode = document.createElement('col');
+        domNode.dataset.tableId = 'original-table';
+        return {
+          domNode
+        };
+      },
+      domNode: document.createElement('col')
+    };
+    const colgroupBlot = {
+      appendChild(child) {
+        this.children.items.push(child);
+        this.domNode.appendChild(child.domNode);
+      },
+      children: {
+        forEach(callback) {
+          this.items.forEach(callback);
+        },
+        items: [colBlot]
+      },
+      clone() {
+        const domNode = document.createElement('colgroup');
+        domNode.dataset.tableId = 'original-table';
+        return {
+          appendChild(child) {
+            this.children.items.push(child);
+            this.domNode.appendChild(child.domNode);
+          },
+          children: {
+            items: []
+          },
+          domNode
+        };
+      },
+      domNode: document.createElement('colgroup')
+    };
+    colBlot.domNode.dataset.tableId = 'original-table';
+    colgroupBlot.domNode.dataset.tableId = 'original-table';
+    colgroupBlot.domNode.appendChild(colBlot.domNode);
+    table.children.items.push(colgroupBlot);
+    table.children.head = colgroupBlot;
+    table.domNode.appendChild(colgroupBlot.domNode);
+    const body = {
+      parent: table
+    };
+    const rows = [10, 20, 30, 40].map(offset => ({
+      offset(parent) {
+        return parent === table ? offset : -1;
+      },
+      parent: body
+    }));
+    const selectedCells = [{
+      getTableRow: () => rows[1]
+    }, {
+      getTableRow: () => rows[2]
+    }];
+    const quill = {
+      update(source) {
+        calls.push({
+          method: 'update',
+          source
+        });
+      }
+    };
+    const context = {
+      cells: selectedCells,
+      quill,
+      tableModule: {}
+    };
+    expect(tableController.handleContextMenuCommand('split-table-above', context)).toBeTrue();
+    expect(tableController.handleContextMenuCommand('split-table-below', context)).toBeTrue();
+    expect(calls.slice(0, 10)).toEqual([{
+      method: 'splitTable',
+      offset: 20
+    }, {
+      child: newTables[0].tableBlot.children.head,
+      method: 'insertTableChild',
+      ref: null,
+      table: newTables[0].tableBlot
+    }, {
+      method: 'splitWrapper',
+      offset: 200
+    }, {
+      method: 'create',
+      name: 'block'
+    }, {
+      block: {
+        name: 'block'
+      },
+      method: 'insertBefore',
+      ref: newWrappers[0]
+    }, {
+      method: 'update',
+      source: 'user'
+    }, {
+      method: 'splitTable',
+      offset: 40
+    }, {
+      child: newTables[1].tableBlot.children.head,
+      method: 'insertTableChild',
+      ref: null,
+      table: newTables[1].tableBlot
+    }, {
+      method: 'splitWrapper',
+      offset: 400
+    }, {
+      method: 'create',
+      name: 'block'
+    }]);
+    expect(calls.slice(10, 12)).toEqual([{
+      block: {
+        name: 'block'
+      },
+      method: 'insertBefore',
+      ref: newWrappers[1]
+    }, {
+      method: 'update',
+      source: 'user'
+    }]);
+    expect(newWrappers[0].domNode.dataset.tableId).not.toBe('original-table');
+    expect(newWrappers[0].domNode.querySelector('table').dataset.tableId).toBe(newWrappers[0].domNode.dataset.tableId);
+    expect(newWrappers[0].domNode.querySelector('colgroup')).not.toBeNull();
+    expect(newWrappers[0].domNode.querySelector('col').dataset.tableId).toBe(newWrappers[0].domNode.dataset.tableId);
+    expect(newWrappers[0].domNode.querySelector('td').dataset.tableId).toBe(newWrappers[0].domNode.dataset.tableId);
+    expect(newWrappers[1].domNode.dataset.tableId).not.toBe('original-table');
+  });
+  it('does not split a table outside the table row range', function () {
+    const calls = [];
+    const wrapper = {
+      domNode: document.createElement('div'),
+      split(offset) {
+        calls.push({
+          method: 'splitWrapper',
+          offset
+        });
+      }
+    };
+    wrapper.domNode.className = 'ql-table-wrapper';
+    const table = {
+      getRows() {
+        return rows;
+      },
+      parent: wrapper
+    };
+    const body = {
+      parent: table
+    };
+    const rows = [10, 20].map(offset => ({
+      offset() {
+        return offset;
+      },
+      parent: body
+    }));
+    const firstRowContext = {
+      cells: [{
+        getTableRow: () => rows[0]
+      }],
+      tableModule: {}
+    };
+    const lastRowContext = {
+      cells: [{
+        getTableRow: () => rows[1]
+      }],
+      tableModule: {}
+    };
+    expect(tableController.handleContextMenuCommand('split-table-above', firstRowContext)).toBeFalse();
+    expect(tableController.handleContextMenuCommand('split-table-below', lastRowContext)).toBeFalse();
+    expect(calls).toEqual([]);
+  });
   it('registers table context menu editor interactions', function () {
-    expect(editorInteractions.handlers.map(handler => handler.id)).toContain('table.context-menu');
-    expect(editorInteractions.handlers[0].events).toEqual(['contextmenu', 'keydown']);
+    expect(editorInteractions.handlers.map(handler => handler.id)).toContain('table.editor-region');
+    expect(editorInteractions.handlers[0].serviceName).toBe('table-controller');
+    expect(editorInteractions.handlers[0].selector).toBe('.ql-table, .table-up-table, table');
+    expect(editorInteractions.handlers[0].gutterSelectable).toBeTrue();
+    expect(editorInteractions.handlers[0].pointSelectable).toBeTrue();
+    expect(editorInteractions.handlers[0].pointHitMargin).toEqual({
+      top: 10
+    });
+    expect(editorInteractions.handlers[0].events).toEqual(['contextmenu', 'gutter-line-select-cancel', 'gutter-line-select-end', 'gutter-line-select-move', 'gutter-line-select-start', 'keydown', 'mousedown-capture', 'pointerdown', 'pointerleave', 'pointermove', 'pointerup', 'pointercancel']);
   });
   it('opens a table context menu from a table cell right-click interaction', function () {
     const calls = [];
@@ -143598,7 +146636,7 @@ describe('TableController', function () {
       }
     }, {
       findBlot: () => cellBlot,
-      getTableSelectionModule: () => null
+      getModule: () => null
     })).toEqual({
       handled: true
     });
@@ -143633,6 +146671,11 @@ describe('TableController', function () {
         domNode: cell
       }
     };
+    const tableModule = {
+      getModule: () => ({
+        selectedTds: [selectedCell]
+      })
+    };
     cell.className = 'ql-table-cell-inner';
     table.appendChild(cell);
     editorInteractions.dispatch('contextmenu', {
@@ -143643,9 +146686,7 @@ describe('TableController', function () {
       stopPropagation() {}
     }, {
       findBlot: () => cellBlot,
-      getTableSelectionModule: () => ({
-        selectedTds: [selectedCell]
-      })
+      getModule: () => tableModule
     });
     expect(editorViews.requestedViews[0].props.context).toEqual({
       cell,
@@ -143653,7 +146694,7 @@ describe('TableController', function () {
       cells: [selectedCell],
       selectionShape: 'cell',
       table,
-      tableModule: null
+      tableModule
     });
   });
   it('opens the table context menu from an empty selected column area', function () {
@@ -143676,6 +146717,11 @@ describe('TableController', function () {
         domNode: firstColumnBottom
       }
     };
+    const tableModule = {
+      getModule: () => ({
+        selectedTds: [selectedTop, selectedBottom]
+      })
+    };
     [firstColumnTop, firstColumnBottom, secondColumnTop, secondColumnBottom].forEach(cell => {
       cell.className = 'ql-table-cell-inner';
     });
@@ -143693,9 +146739,7 @@ describe('TableController', function () {
       stopPropagation() {}
     }, {
       findBlot: () => null,
-      getTableSelectionModule: () => ({
-        selectedTds: [selectedTop, selectedBottom]
-      })
+      getModule: () => tableModule
     })).toEqual({
       handled: true
     });
@@ -143709,8 +146753,113 @@ describe('TableController', function () {
       cells: [selectedTop, selectedBottom],
       selectionShape: 'column',
       table,
-      tableModule: null
+      tableModule
     });
+  });
+  it('preserves selected columns when right-clicking their column selection area', function () {
+    const calls = [];
+    const table = document.createElement('table');
+    const firstRow = document.createElement('tr');
+    const secondRow = document.createElement('tr');
+    const firstColumnTop = document.createElement('div');
+    const firstColumnBottom = document.createElement('div');
+    const secondColumnTop = document.createElement('div');
+    const secondColumnBottom = document.createElement('div');
+    const selectedTop = {
+      id: 'selected-top',
+      parent: {
+        domNode: firstColumnTop
+      }
+    };
+    const selectedBottom = {
+      id: 'selected-bottom',
+      parent: {
+        domNode: firstColumnBottom
+      }
+    };
+    const tableSelection = {
+      hide() {
+        calls.push({
+          method: 'hide'
+        });
+      },
+      selectedTds: [selectedTop, selectedBottom],
+      setSelectedTds(cells) {
+        calls.push({
+          cells,
+          method: 'setSelectedTds'
+        });
+        this.selectedTds = cells;
+      }
+    };
+    const tableModule = {
+      getModule: () => tableSelection
+    };
+    table.getBoundingClientRect = () => ({
+      bottom: 90,
+      height: 80,
+      left: 10,
+      right: 110,
+      top: 10,
+      width: 100
+    });
+    [firstColumnTop, firstColumnBottom, secondColumnTop, secondColumnBottom].forEach((cell, index) => {
+      const column = index % 2;
+      const row = Math.floor(index / 2);
+      const left = 10 + column * 50;
+      const top = 10 + row * 35;
+      cell.className = 'ql-table-cell-inner';
+      cell.getBoundingClientRect = () => ({
+        bottom: top + 30,
+        height: 30,
+        left,
+        right: left + 50,
+        top,
+        width: 50
+      });
+    });
+    firstRow.appendChild(firstColumnTop);
+    firstRow.appendChild(secondColumnTop);
+    secondRow.appendChild(firstColumnBottom);
+    secondRow.appendChild(secondColumnBottom);
+    table.appendChild(firstRow);
+    table.appendChild(secondRow);
+    expect(editorInteractions.dispatch('mousedown-capture', {
+      button: 2,
+      clientX: 30,
+      clientY: 12,
+      target: table
+    }, {
+      editorRoot: table,
+      findBlot: cell => cell === firstColumnTop ? selectedTop : selectedBottom,
+      getIndex: () => 0,
+      getModule: () => tableModule,
+      target: {
+        element: table,
+        serviceName: 'table-controller'
+      },
+      targetServiceName: 'table-controller'
+    })).toEqual({
+      handled: true,
+      suppressBlankTableCellFocus: true,
+      suppressTableSelection: true
+    });
+    expect(tableSelection.selectedTds).toEqual([selectedTop, selectedBottom]);
+    expect(calls).toEqual([]);
+    expect(editorInteractions.dispatch('contextmenu', {
+      clientX: 30,
+      clientY: 12,
+      target: table,
+      preventDefault() {},
+      stopPropagation() {}
+    }, {
+      findBlot: () => null,
+      getModule: () => tableModule
+    })).toEqual({
+      handled: true
+    });
+    expect(editorViews.requestedViews[0].props.context.selectionShape).toBe('column');
+    expect(editorViews.requestedViews[0].props.context.cells).toEqual([selectedTop, selectedBottom]);
   });
   it('opens a table context menu from keyboard context menu interaction', function () {
     const table = document.createElement('table');
@@ -143732,8 +146881,15 @@ describe('TableController', function () {
       stopPropagation() {}
     }, {
       findBlot: () => cellBlot,
-      getCurrentTableCellInner: () => cell,
-      getTableSelectionModule: () => null
+      getLeaf: () => [],
+      getLine: () => [{
+        domNode: cell
+      }],
+      getModule: () => null,
+      getSelection: () => ({
+        index: 0,
+        length: 0
+      })
     })).toEqual({
       handled: true
     });
@@ -143742,6 +146898,433 @@ describe('TableController', function () {
       top: 72
     });
     expect(editorViews.requestedViews[0].props.context.cell).toBe(cell);
+  });
+  it('does not turn a normal first-row cell click into column selection', function () {
+    const table = document.createElement('table');
+    const cell = document.createElement('div');
+    cell.className = 'ql-table-cell-inner';
+    table.getBoundingClientRect = () => ({
+      bottom: 80,
+      height: 80,
+      left: 0,
+      right: 120,
+      top: 10,
+      width: 120
+    });
+    cell.getBoundingClientRect = () => ({
+      bottom: 54,
+      height: 36,
+      left: 8,
+      right: 112,
+      top: 18,
+      width: 104
+    });
+    table.appendChild(cell);
+    expect(editorInteractions.dispatch('pointerdown', {
+      clientX: 24,
+      clientY: 24,
+      target: cell
+    }, {
+      editorRoot: table,
+      target: {
+        element: table,
+        serviceName: 'table-controller'
+      },
+      targetServiceName: 'table-controller'
+    })).toBeFalse();
+  });
+  it('clears TableUp cell selection on a simple cell click without forcing Quill selection', function () {
+    const calls = [];
+    const table = document.createElement('table');
+    const cell = document.createElement('div');
+    const tableSelection = {
+      hide() {
+        calls.push({
+          method: 'hide'
+        });
+      },
+      setSelectedTds(cells) {
+        calls.push({
+          cells,
+          method: 'setSelectedTds'
+        });
+      }
+    };
+    cell.className = 'ql-table-cell-inner';
+    table.getBoundingClientRect = () => ({
+      bottom: 80,
+      height: 80,
+      left: 0,
+      right: 120,
+      top: 10,
+      width: 120
+    });
+    cell.getBoundingClientRect = () => ({
+      bottom: 54,
+      height: 36,
+      left: 8,
+      right: 112,
+      top: 18,
+      width: 104
+    });
+    table.appendChild(cell);
+    expect(editorInteractions.dispatch('mousedown-capture', {
+      button: 0,
+      clientX: 24,
+      clientY: 24,
+      preventDefault() {
+        calls.push({
+          method: 'preventDefault'
+        });
+      },
+      target: cell
+    }, {
+      editorRoot: table,
+      getModule: () => ({
+        getModule: () => tableSelection
+      }),
+      quill: {
+        focus(options) {
+          calls.push({
+            method: 'focus',
+            options
+          });
+        }
+      },
+      setSelection(...args) {
+        calls.push({
+          args,
+          method: 'setSelection'
+        });
+      },
+      target: {
+        element: table,
+        serviceName: 'table-controller'
+      },
+      targetServiceName: 'table-controller'
+    })).toEqual({
+      handled: true,
+      suppressTableSelection: true
+    });
+    expect(calls).toEqual([{
+      cells: [],
+      method: 'setSelectedTds'
+    }, {
+      method: 'hide'
+    }]);
+  });
+  it('lets intentional table selection gestures reach the selection handler', function () {
+    const calls = [];
+    const table = document.createElement('table');
+    const row = document.createElement('tr');
+    const cell = document.createElement('div');
+    const cellBlot = {
+      length: () => 1
+    };
+    cell.className = 'ql-table-cell-inner';
+    table.getBoundingClientRect = () => ({
+      bottom: 80,
+      height: 80,
+      left: 0,
+      right: 120,
+      top: 10,
+      width: 120
+    });
+    cell.getBoundingClientRect = () => ({
+      bottom: 54,
+      height: 36,
+      left: 8,
+      right: 112,
+      top: 18,
+      width: 104
+    });
+    row.appendChild(cell);
+    table.appendChild(row);
+    expect(editorInteractions.dispatch('mousedown-capture', {
+      button: 0,
+      clientX: 24,
+      clientY: 10,
+      target: cell
+    }, {
+      editorRoot: table,
+      findBlot: () => cellBlot,
+      getIndex: () => 4,
+      getModule: () => ({
+        getModule: () => ({
+          hide() {
+            calls.push({
+              method: 'hide'
+            });
+          },
+          setSelectedTds(cells) {
+            calls.push({
+              cells,
+              method: 'setSelectedTds'
+            });
+          }
+        })
+      }),
+      target: {
+        element: table,
+        serviceName: 'table-controller'
+      },
+      targetServiceName: 'table-controller'
+    })).toBeFalse();
+    expect(calls).toEqual([]);
+  });
+  it('selects the second column and extends selection while dragging', function () {
+    const table = document.createElement('table');
+    const rows = [document.createElement('tr'), document.createElement('tr')];
+    const cells = Array.from({
+      length: 6
+    }, () => document.createElement('td'));
+    const inners = cells.map(() => document.createElement('div'));
+    const blots = cells.map((cell, index) => ({
+      id: `cell-${index}`,
+      length: () => 1,
+      parent: {
+        domNode: cell
+      }
+    }));
+    const selectedCalls = [];
+    const tableSelection = {
+      setSelectedTds(selectedCells) {
+        selectedCalls.push({
+          cells: selectedCells.map(cell => cell.id),
+          method: 'setSelectedTds'
+        });
+        this.selectedTds = selectedCells;
+      },
+      setSelectionTable(selectedTable) {
+        selectedCalls.push({
+          method: 'setSelectionTable',
+          table: selectedTable
+        });
+        this.table = selectedTable;
+      },
+      show() {
+        selectedCalls.push({
+          method: 'show'
+        });
+      }
+    };
+    const context = {
+      editorRoot: {
+        getBoundingClientRect: () => ({
+          left: 0,
+          top: 0
+        })
+      },
+      findBlot: cell => blots[inners.indexOf(cell)],
+      getIndex: blot => blots.indexOf(blot),
+      getModule: () => ({
+        getModule: () => tableSelection
+      }),
+      setSelection() {},
+      target: {
+        element: table,
+        serviceName: 'table-controller'
+      },
+      targetServiceName: 'table-controller'
+    };
+    table.getBoundingClientRect = () => ({
+      bottom: 90,
+      height: 80,
+      left: 10,
+      right: 160,
+      top: 10,
+      width: 150
+    });
+    cells.forEach((cell, index) => {
+      const column = index % 3;
+      const row = Math.floor(index / 3);
+      const left = 10 + column * 50;
+      const top = 10 + row * 35;
+      cell.getBoundingClientRect = () => ({
+        bottom: top + 30,
+        height: 30,
+        left,
+        right: left + 50,
+        top,
+        width: 50
+      });
+      inners[index].className = 'ql-table-cell-inner';
+      inners[index].getBoundingClientRect = () => ({
+        bottom: top + 30,
+        height: 30,
+        left,
+        right: left + 50,
+        top,
+        width: 50
+      });
+      cell.appendChild(inners[index]);
+      rows[row].appendChild(cell);
+    });
+    rows.forEach(row => table.appendChild(row));
+    expect(editorInteractions.dispatch('pointerdown', {
+      clientX: 75,
+      clientY: 15,
+      preventDefault() {},
+      stopPropagation() {},
+      target: table
+    }, context)).toEqual({
+      capturePointer: true,
+      handled: true,
+      preventDefault: true,
+      stopPropagation: true
+    });
+    expect(tableSelection.selectedTds.map(cell => cell.id)).toEqual(['cell-1', 'cell-4']);
+    expect(editorInteractions.dispatch('pointermove', {
+      clientX: 125,
+      clientY: 15,
+      preventDefault() {},
+      target: table
+    }, context)).toEqual({
+      handled: true,
+      preventDefault: true
+    });
+    expect(tableSelection.selectedTds.map(cell => cell.id)).toEqual(['cell-1', 'cell-2', 'cell-4', 'cell-5']);
+    expect(selectedCalls.map(call => call.method)).toEqual(['setSelectionTable', 'setSelectedTds', 'show', 'setSelectionTable', 'setSelectedTds', 'show']);
+  });
+  it('resolves table cells from text-node event targets', function () {
+    const cell = document.createElement('div');
+    const paragraph = document.createElement('p');
+    const text = document.createTextNode('A');
+    cell.className = 'ql-table-cell-inner';
+    paragraph.appendChild(text);
+    cell.appendChild(paragraph);
+    expect(tableController.getTableCellInnerFromNode(text)).toBe(cell);
+  });
+  it('resolves table cells from table cell wrapper event targets', function () {
+    const wrapper = document.createElement('td');
+    const cell = document.createElement('div');
+    const embed = document.createElement('span');
+    cell.className = 'ql-table-cell-inner';
+    embed.className = 'music-keyboard-embed';
+    wrapper.appendChild(cell);
+    cell.appendChild(embed);
+    expect(tableController.getTableCellInnerFromNode(wrapper)).toBe(cell);
+    expect(tableController.getTableCellInnerFromNode(embed)).toBe(cell);
+  });
+  it('selects a table row from a gutter selection interaction', function () {
+    const table = document.createElement('table');
+    const row = document.createElement('tr');
+    const firstOuterCell = document.createElement('td');
+    const secondOuterCell = document.createElement('td');
+    const firstCell = document.createElement('div');
+    const secondCell = document.createElement('div');
+    const firstBlot = {
+      id: 'first-blot',
+      length: () => 1,
+      parent: {
+        domNode: firstOuterCell
+      }
+    };
+    const secondBlot = {
+      id: 'second-blot',
+      length: () => 1,
+      parent: {
+        domNode: secondOuterCell
+      }
+    };
+    const selectedCalls = [];
+    const tableSelection = {
+      setSelectedTds(cells) {
+        selectedCalls.push({
+          cells,
+          method: 'setSelectedTds'
+        });
+        this.selectedTds = cells;
+      },
+      setSelectionTable(selectedTable) {
+        selectedCalls.push({
+          method: 'setSelectionTable',
+          table: selectedTable
+        });
+        this.table = selectedTable;
+      },
+      show() {
+        selectedCalls.push({
+          method: 'show'
+        });
+      }
+    };
+    [firstOuterCell, secondOuterCell].forEach((cell, index) => {
+      cell.getBoundingClientRect = () => ({
+        bottom: 34,
+        height: 28,
+        left: 6 + index * 48,
+        right: 54 + index * 48,
+        top: 6,
+        width: 48
+      });
+      row.appendChild(cell);
+    });
+    [firstCell, secondCell].forEach((cell, index) => {
+      cell.className = 'ql-table-cell-inner';
+      cell.getBoundingClientRect = () => ({
+        bottom: 30,
+        height: 20,
+        left: 10 + index * 40,
+        right: 50 + index * 40,
+        top: 10,
+        width: 40
+      });
+    });
+    firstOuterCell.appendChild(firstCell);
+    secondOuterCell.appendChild(secondCell);
+    row.getBoundingClientRect = () => ({
+      bottom: 30,
+      height: 20,
+      top: 10
+    });
+    table.appendChild(row);
+    expect(editorInteractions.dispatch('gutter-line-select-start', {
+      clientY: 20,
+      preventDefault() {},
+      stopPropagation() {}
+    }, {
+      editorRoot: {
+        getBoundingClientRect: () => ({
+          left: 4,
+          top: 5
+        })
+      },
+      findBlot: cell => cell === firstCell ? firstBlot : secondBlot,
+      getIndex: blot => blot === firstBlot ? 4 : 5,
+      getModule: () => ({
+        getModule: () => tableSelection
+      }),
+      lineHit: {
+        point: {
+          clientY: 20
+        }
+      },
+      target: {
+        element: table,
+        serviceName: 'table-controller'
+      },
+      targetServiceName: 'table-controller'
+    })).toEqual({
+      handled: true,
+      preventDefault: true,
+      stopPropagation: true
+    });
+    expect(selectedCalls).toEqual([{
+      method: 'setSelectionTable',
+      table
+    }, {
+      cells: [firstBlot, secondBlot],
+      method: 'setSelectedTds'
+    }, {
+      method: 'show'
+    }]);
+    expect(tableSelection.boundary).toEqual({
+      height: 28,
+      width: 96,
+      x: 2,
+      y: 1
+    });
   });
 });
 
@@ -143801,7 +147384,7 @@ describe('TableContextMenu', function () {
       }
     });
     const itemIds = menu.getVisibleSections().flatMap(section => section.map(item => item.id));
-    expect(itemIds).toEqual(['insert-column-left', 'insert-column-right', 'delete-column', 'delete-table']);
+    expect(itemIds).toEqual(['insert-column-left', 'insert-column-right', 'fit-table-to-width', 'distribute-table-columns', 'delete-column', 'delete-table']);
   });
   it('hides column commands for row table context menu selections', function () {
     const menu = new TableContextMenu({
@@ -143810,9 +147393,253 @@ describe('TableContextMenu', function () {
       }
     });
     const itemIds = menu.getVisibleSections().flatMap(section => section.map(item => item.id));
-    expect(itemIds).toEqual(['insert-row-above', 'insert-row-below', 'delete-row', 'delete-table']);
+    expect(itemIds).toEqual(['insert-row-above', 'insert-row-below', 'split-table-above', 'split-table-below', 'fit-table-to-width', 'distribute-table-columns', 'delete-row', 'delete-table']);
   });
 });
+
+var EditIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z"
+}), 'Edit');
+
+var PlayArrowIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M8 5v14l11-7z"
+}), 'PlayArrow');
+
+var StopIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M6 6h12v12H6z"
+}), 'Stop');
+
+var TuneIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M3 17v2h6v-2zM3 5v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zM7 9v2H3v2h4v2h2V9zm14 4v-2H11v2zm-6-4h2V7h4V5h-4V3h-2z"
+}), 'Tune');
+
+/**
+ * @license @tabler/icons-react v3.44.0 - MIT
+ *
+ * This source code is licensed under the MIT license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+
+var defaultAttributes = {
+  outline: {
+    xmlns: "http://www.w3.org/2000/svg",
+    width: 24,
+    height: 24,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  },
+  filled: {
+    xmlns: "http://www.w3.org/2000/svg",
+    width: 24,
+    height: 24,
+    viewBox: "0 0 24 24",
+    fill: "currentColor",
+    stroke: "none"
+  }
+};
+
+/**
+ * @license @tabler/icons-react v3.44.0 - MIT
+ *
+ * This source code is licensed under the MIT license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+
+const createReactComponent = (type, iconName, iconNamePascal, iconNode) => {
+  const Component = reactExports.forwardRef(
+    ({ color = "currentColor", size = 24, stroke = 2, title, className, children, ...rest }, ref) => reactExports.createElement(
+      "svg",
+      {
+        ref,
+        ...defaultAttributes[type],
+        width: size,
+        height: size,
+        className: [`tabler-icon`, `tabler-icon-${iconName}`, className].join(" "),
+        ...type === "filled" ? {
+          fill: color
+        } : {
+          strokeWidth: stroke,
+          stroke: color
+        },
+        ...rest
+      },
+      [
+        title && reactExports.createElement("title", { key: "svg-title" }, title),
+        ...iconNode.map(([tag, attrs]) => reactExports.createElement(tag, attrs)),
+        ...Array.isArray(children) ? children : [children]
+      ]
+    )
+  );
+  Component.displayName = `${iconNamePascal}`;
+  return Component;
+};
+
+/**
+ * @license @tabler/icons-react v3.44.0 - MIT
+ *
+ * This source code is licensed under the MIT license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+
+const __iconNode$1 = [["path", { "d": "M15 15h6", "key": "svg-0" }], ["path", { "d": "M15 11h6", "key": "svg-1" }], ["path", { "d": "M11 19h10", "key": "svg-2" }], ["path", { "d": "M11 12a4.16 4.16 0 0 1 -5.62 3.89a3.78 3.78 0 0 1 -2.38 -3.39a3.42 3.42 0 0 1 2.34 -3.38l3.79 -1.42a2.89 2.89 0 0 0 1.87 -2.7a2 2 0 0 0 -2 -2a2 2 0 0 0 -2 2v14a2 2 0 0 1 -2 2a2 2 0 0 1 -2 -2", "key": "svg-3" }]];
+const IconClefStaff = createReactComponent("outline", "clef-staff", "ClefStaff", __iconNode$1);
+
+/**
+ * @license @tabler/icons-react v3.44.0 - MIT
+ *
+ * This source code is licensed under the MIT license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+
+const __iconNode = [["path", { "d": "M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10", "key": "svg-0" }], ["path", { "d": "M9 19v-6", "key": "svg-1" }], ["path", { "d": "M8 5v8h2v-8", "key": "svg-2" }], ["path", { "d": "M15 19v-6", "key": "svg-3" }], ["path", { "d": "M14 5v8h2v-8", "key": "svg-4" }]];
+const IconPiano = createReactComponent("outline", "piano", "Piano", __iconNode);
+
+/**
+ * Provides Music Notebook context and refreshes it from watched app data.
+ *
+ * @extends {React.Component<MusicNotebookProviderProps, MusicNotebookProviderState>}
+ */
+class MusicNotebookProvider extends React$1.Component {
+  /**
+   * Initializes provider state from the context value.
+   *
+   * @param {MusicNotebookProviderProps} props
+   */
+  constructor(props) {
+    super(props);
+    this.defaultLocalize = createDefaultLocalize();
+    this.state = {
+      locale: this.getLocale(props.contextValue)
+    };
+    this.handleLocaleUpdated = this.handleLocaleUpdated.bind(this);
+  }
+
+  /**
+   * Subscribes to watched locale updates.
+   *
+   * @returns {void}
+   */
+  componentDidMount() {
+    this.subscribeToAppData();
+  }
+
+  /**
+   * Refreshes subscriptions when the context service set changes.
+   *
+   * @param {MusicNotebookProviderProps} prevProps
+   * @returns {void}
+   */
+  componentDidUpdate(prevProps) {
+    if (this.getAppData(prevProps.contextValue) !== this.getAppData(this.props.contextValue)) {
+      this.unsubscribeFromAppData(prevProps.contextValue);
+      this.subscribeToAppData();
+    }
+    const nextLocale = this.getLocale(this.props.contextValue);
+    if (nextLocale !== this.state.locale) {
+      this.setState({
+        locale: nextLocale
+      });
+    }
+  }
+
+  /**
+   * Removes watched locale subscriptions.
+   *
+   * @returns {void}
+   */
+  componentWillUnmount() {
+    this.unsubscribeFromAppData();
+  }
+
+  /**
+   * Gets the app-data service for a context value.
+   *
+   * @param {MusicNotebookContextValue} contextValue
+   * @returns {AppDataService | null}
+   */
+  getAppData(contextValue = this.props.contextValue) {
+    return contextValue.appData || contextValue.registry?.subscribe?.('app-data') || null;
+  }
+
+  /**
+   * Gets the active locale from watched data or localization.
+   *
+   * @param {MusicNotebookContextValue} contextValue
+   * @returns {string}
+   */
+  getLocale(contextValue = this.props.contextValue) {
+    const appData = this.getAppData(contextValue);
+    const localize = contextValue.localize || this.defaultLocalize;
+    const defaultLocale = contextValue.locale || localize.getLocale?.() || 'en-US-u-ms-ussystem';
+    return /** @type {string} */appData?.watch?.('locale', defaultLocale) || defaultLocale;
+  }
+
+  /**
+   * Subscribes to app-data locale changes.
+   *
+   * @returns {void}
+   */
+  subscribeToAppData() {
+    const appData = this.getAppData();
+    if (!appData?.listen) {
+      return;
+    }
+    this.appData = appData;
+    this.localeListener = appData.listen('updated:locale', this.handleLocaleUpdated);
+  }
+
+  /**
+   * Removes app-data locale subscriptions.
+   *
+   * @param {MusicNotebookContextValue} [contextValue]
+   * @returns {void}
+   */
+  unsubscribeFromAppData(contextValue = this.props.contextValue) {
+    const appData = this.appData || this.getAppData(contextValue);
+    if (appData && this.localeListener) {
+      appData.unlisten?.('updated:locale', this.localeListener);
+    }
+    this.appData = null;
+    this.localeListener = null;
+  }
+
+  /**
+   * Handles watched locale updates.
+   *
+   * @param {string} locale
+   * @returns {void}
+   */
+  handleLocaleUpdated(locale) {
+    this.setState({
+      locale
+    });
+  }
+
+  /**
+   * Renders the context provider.
+   *
+   * @returns {React.ReactElement}
+   */
+  render() {
+    const contextValue = {
+      ...this.props.contextValue,
+      appData: this.getAppData(),
+      localize: this.props.contextValue.localize || this.defaultLocalize,
+      locale: this.state.locale
+    };
+    return /*#__PURE__*/React$1.createElement(MusicNotebookContext.Provider, {
+      value: contextValue
+    }, this.props.children);
+  }
+}
+
+var ErrorOutlinedIcon = createSvgIcon(/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+  d: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m1 15h-2v-2h2zm0-4h-2V7h2z"
+}), 'ErrorOutlined');
 
 var lookup = [];
 var revLookup = [];
@@ -149204,6 +153031,7 @@ class MusicEmbedView extends reactExports.Component {
       formatDialogOpen: false,
       playbackState: 'idle',
       selected: false,
+      sessionUnavailable: false,
       actions: getDefaultEmbedActions('idle', props.payload),
       fitPreviewWidth: false
     };
@@ -149211,13 +153039,9 @@ class MusicEmbedView extends reactExports.Component {
     this.dialogSnapshot = props.initialDialogOpen === true ? cloneDialogSnapshot(initialState) : null;
     this.formatDialogSnapshot = null;
     this.removeOnCancel = props.initialDialogOpen === true;
-    this.playback = {
-      timer: null,
-      token: 0
-    };
-    this.playerService = null;
     this.embedSession = null;
     this.embedSessionListener = null;
+    this.sessionUnavailableReported = false;
     this.contentRef = /*#__PURE__*/reactExports.createRef();
     this.lastAppliedPayload = props.payload;
     this.resizeDraftActive = false;
@@ -149250,13 +153074,9 @@ class MusicEmbedView extends reactExports.Component {
    * @returns {void}
    */
   componentWillUnmount() {
-    const hadEmbedSession = Boolean(this.embedSession);
     this.clearTableCellFitClass();
     this.detachEmbedSession();
     this.detachEmbedSelectionListener();
-    if (!hadEmbedSession) {
-      this.stopPlayback();
-    }
   }
 
   /**
@@ -149265,8 +153085,16 @@ class MusicEmbedView extends reactExports.Component {
    * @returns {void}
    */
   attachEmbedSession() {
-    const controller = this.context?.registry?.subscribe?.('music-object-controller');
+    const registry = this.context?.registry || null;
+    const controller = registry?.subscribe?.('music-object-controller');
     if (!controller?.attachEmbed) {
+      if (registry) {
+        this.reportSessionUnavailable();
+        this.setState({
+          actions: [],
+          sessionUnavailable: true
+        });
+      }
       return;
     }
     this.embedSession = controller.attachEmbed({
@@ -149294,6 +153122,13 @@ class MusicEmbedView extends reactExports.Component {
         selected: sessionState.selected === true
       });
     }
+  }
+  reportSessionUnavailable() {
+    if (this.sessionUnavailableReported) {
+      return;
+    }
+    this.sessionUnavailableReported = true;
+    console.error('MusicEmbedView could not attach music-object-controller session. Rendering preview without interactive controls.');
   }
 
   /**
@@ -149581,88 +153416,18 @@ class MusicEmbedView extends reactExports.Component {
    * Handles playback button activation.
    *
    * @param {React.MouseEvent<HTMLElement>} event - Triggering click event.
-   * @returns {Promise<void>}
+   * @returns {void}
    */
-  handlePlaybackButtonClick = async event => {
+  handlePlaybackButtonClick = event => {
     event.stopPropagation();
-    if (this.embedSession?.performAction?.('playback')) {
-      return;
-    }
-    if (this.state.playbackState === 'playing') {
-      this.stopPlayback();
-      this.setPlaybackState('idle');
-      return;
-    }
-    if (this.state.playbackState === 'loading') {
-      return;
-    }
-    this.setPlaybackState('loading');
-    this.stopPlayback();
-    const playerService = this.getPlayerService();
-    if (!playerService) {
-      console.warn('[MusicEmbedView] Player service is unavailable.');
-      this.setPlaybackState('idle');
-      return;
-    }
-    const token = this.playback.token + 1;
-    this.playback.token = token;
-    try {
-      const playback = await playerService.play(this.state.currentPayload);
-      if (this.playback.token !== token) {
-        return;
-      }
-      this.setPlaybackState('playing');
-      this.playback.timer = window.setTimeout(() => {
-        if (this.playback.token === token) {
-          this.stopPlayback();
-          this.setPlaybackState('idle');
-        }
-      }, Math.max(playback.duration || 0, 250) + 250);
-    } catch (error) {
-      console.warn('[MusicEmbedView] MusicXML playback failed.', error);
-      this.stopPlayback();
-      this.setPlaybackState('idle');
+    if (!this.embedSession?.performAction?.('playback')) {
+      this.reportSessionUnavailable();
+      this.setState({
+        actions: [],
+        sessionUnavailable: true
+      });
     }
   };
-
-  /**
-   * Updates fallback playback state and derived action data.
-   *
-   * @param {MusicEmbedPlaybackState} playbackState
-   * @returns {void}
-   */
-  setPlaybackState(playbackState) {
-    this.setState({
-      actions: getDefaultEmbedActions(playbackState, this.state.currentPayload),
-      playbackState
-    });
-  }
-
-  /**
-   * Stops active playback and removes playback resources.
-   *
-   * @returns {void}
-   */
-  stopPlayback() {
-    this.playback.token += 1;
-    if (this.playback.timer) {
-      window.clearTimeout(this.playback.timer);
-      this.playback.timer = null;
-    }
-    this.getPlayerService()?.stop?.();
-  }
-
-  /**
-   * Gets the shared player service from the registry.
-   *
-   * @returns {PlayerService | null}
-   */
-  getPlayerService() {
-    if (!this.playerService) {
-      this.playerService = this.context?.registry?.subscribe?.('player') || null;
-    }
-    return this.playerService;
-  }
 
   /**
    * Handles controller-provided embed toolbar actions.
@@ -150165,13 +153930,39 @@ class MusicEmbedView extends reactExports.Component {
   renderToolbar() {
     const {
       actions,
-      currentPayload
+      currentPayload,
+      sessionUnavailable
     } = this.state;
+    if (sessionUnavailable) {
+      return null;
+    }
     const toolbarActions = getVisibleEmbedActions(actions || getDefaultEmbedActions(this.state.playbackState, currentPayload), currentPayload);
     return /*#__PURE__*/React$1.createElement("div", {
       className: "music-embed-toolbar music-embed-hover-toolbar",
       "aria-label": "Music object actions"
     }, toolbarActions.map(action => this.renderToolbarAction(action)));
+  }
+
+  /**
+   * Renders a non-interactive warning when behavior services are unavailable.
+   *
+   * @returns {React.ReactElement | null}
+   */
+  renderSessionErrorIndicator() {
+    if (this.state.sessionUnavailable !== true) {
+      return null;
+    }
+    return /*#__PURE__*/React$1.createElement(LocalizedTooltip, {
+      phrase: "music.object.error_loading",
+      labelChild: true
+    }, /*#__PURE__*/React$1.createElement("span", {
+      className: "music-embed-session-error",
+      role: "img",
+      tabIndex: 0
+    }, /*#__PURE__*/React$1.createElement(ErrorOutlinedIcon, {
+      "aria-hidden": "true",
+      fontSize: "small"
+    })));
   }
 
   /**
@@ -150181,14 +153972,10 @@ class MusicEmbedView extends reactExports.Component {
    * @returns {React.ReactElement}
    */
   renderToolbarAction(action) {
-    const label = /*#__PURE__*/React$1.createElement(LocaleString, {
-      phrase: action.labelKey
-    });
     const labelText = this.context?.localize?.translate?.(action.labelKey) || action.fallback || action.id;
-    return /*#__PURE__*/React$1.createElement(Tooltip$2, {
+    return /*#__PURE__*/React$1.createElement(LocalizedTooltip, {
       key: action.id,
-      title: label,
-      describeChild: true
+      phrase: action.labelKey
     }, /*#__PURE__*/React$1.createElement(IconButton$1, {
       "aria-label": labelText,
       "aria-disabled": action.disabled ? 'true' : undefined,
@@ -150234,6 +154021,9 @@ class MusicEmbedView extends reactExports.Component {
    * @returns {React.ReactElement}
    */
   renderResizeHandle() {
+    if (this.state.sessionUnavailable) {
+      return null;
+    }
     if (this.state.fitPreviewWidth) {
       return null;
     }
@@ -150256,6 +154046,9 @@ class MusicEmbedView extends reactExports.Component {
    * @returns {React.ReactElement}
    */
   renderDialog() {
+    if (this.state.sessionUnavailable) {
+      return null;
+    }
     const {
       currentPayload,
       dialogOpen,
@@ -150299,6 +154092,9 @@ class MusicEmbedView extends reactExports.Component {
    * @returns {React.ReactElement}
    */
   renderFormatDialog() {
+    if (this.state.sessionUnavailable) {
+      return null;
+    }
     return /*#__PURE__*/React$1.createElement(MusicEmbedFormatDialog, {
       format: this.state.currentPayload.format,
       onCancel: this.handleFormatDialogCancel,
@@ -150327,7 +154123,7 @@ class MusicEmbedView extends reactExports.Component {
       onMouseEnter: this.handleEmbedMouseEnter,
       onMouseLeave: this.handleEmbedMouseLeave,
       ref: this.contentRef
-    }, this.renderToolbar(), /*#__PURE__*/React$1.createElement(MusicPreview, {
+    }, this.renderToolbar(), this.renderSessionErrorIndicator(), /*#__PURE__*/React$1.createElement(MusicPreview, {
       fitWidth: fitPreviewWidth,
       payload: currentPayload
     }), captionText ? /*#__PURE__*/React$1.createElement("div", {
@@ -150398,7 +154194,7 @@ function getDefaultEmbedActions(playbackState = 'idle', payload = null) {
     iconId: 'music-object.format',
     labelKey: 'music.controls.format'
   }];
-  if (!isPayloadPlayable(payload)) {
+  if (!isPayloadPlayable$1(payload)) {
     return actions;
   }
   return [{
@@ -150412,12 +154208,12 @@ function getDefaultEmbedActions(playbackState = 'idle', payload = null) {
   }, ...actions];
 }
 function getVisibleEmbedActions(actions, payload) {
-  if (isPayloadPlayable(payload)) {
+  if (isPayloadPlayable$1(payload)) {
     return actions;
   }
   return (actions || []).filter(action => action.id !== 'playback');
 }
-function isPayloadPlayable(payload) {
+function isPayloadPlayable$1(payload) {
   return Array.isArray(payload?.notes) && payload.notes.length > 0;
 }
 function getCaptionStyle(captionFormat) {
@@ -150612,145 +154408,6 @@ function getScaleNameFromId(scaleId) {
   return match?.[1] || '';
 }
 
-/**
- * Provides Music Notebook context and refreshes it from watched app data.
- *
- * @extends {React.Component<MusicNotebookProviderProps, MusicNotebookProviderState>}
- */
-class MusicNotebookProvider extends React$1.Component {
-  /**
-   * Initializes provider state from the context value.
-   *
-   * @param {MusicNotebookProviderProps} props
-   */
-  constructor(props) {
-    super(props);
-    this.defaultLocalize = createDefaultLocalize();
-    this.state = {
-      locale: this.getLocale(props.contextValue)
-    };
-    this.handleLocaleUpdated = this.handleLocaleUpdated.bind(this);
-  }
-
-  /**
-   * Subscribes to watched locale updates.
-   *
-   * @returns {void}
-   */
-  componentDidMount() {
-    this.subscribeToAppData();
-  }
-
-  /**
-   * Refreshes subscriptions when the context service set changes.
-   *
-   * @param {MusicNotebookProviderProps} prevProps
-   * @returns {void}
-   */
-  componentDidUpdate(prevProps) {
-    if (this.getAppData(prevProps.contextValue) !== this.getAppData(this.props.contextValue)) {
-      this.unsubscribeFromAppData(prevProps.contextValue);
-      this.subscribeToAppData();
-    }
-    const nextLocale = this.getLocale(this.props.contextValue);
-    if (nextLocale !== this.state.locale) {
-      this.setState({
-        locale: nextLocale
-      });
-    }
-  }
-
-  /**
-   * Removes watched locale subscriptions.
-   *
-   * @returns {void}
-   */
-  componentWillUnmount() {
-    this.unsubscribeFromAppData();
-  }
-
-  /**
-   * Gets the app-data service for a context value.
-   *
-   * @param {MusicNotebookContextValue} contextValue
-   * @returns {AppDataService | null}
-   */
-  getAppData(contextValue = this.props.contextValue) {
-    return contextValue.appData || contextValue.registry?.subscribe?.('app-data') || null;
-  }
-
-  /**
-   * Gets the active locale from watched data or localization.
-   *
-   * @param {MusicNotebookContextValue} contextValue
-   * @returns {string}
-   */
-  getLocale(contextValue = this.props.contextValue) {
-    const appData = this.getAppData(contextValue);
-    const localize = contextValue.localize || this.defaultLocalize;
-    const defaultLocale = contextValue.locale || localize.getLocale?.() || 'en-US-u-ms-ussystem';
-    return /** @type {string} */appData?.watch?.('locale', defaultLocale) || defaultLocale;
-  }
-
-  /**
-   * Subscribes to app-data locale changes.
-   *
-   * @returns {void}
-   */
-  subscribeToAppData() {
-    const appData = this.getAppData();
-    if (!appData?.listen) {
-      return;
-    }
-    this.appData = appData;
-    this.localeListener = appData.listen('updated:locale', this.handleLocaleUpdated);
-  }
-
-  /**
-   * Removes app-data locale subscriptions.
-   *
-   * @param {MusicNotebookContextValue} [contextValue]
-   * @returns {void}
-   */
-  unsubscribeFromAppData(contextValue = this.props.contextValue) {
-    const appData = this.appData || this.getAppData(contextValue);
-    if (appData && this.localeListener) {
-      appData.unlisten?.('updated:locale', this.localeListener);
-    }
-    this.appData = null;
-    this.localeListener = null;
-  }
-
-  /**
-   * Handles watched locale updates.
-   *
-   * @param {string} locale
-   * @returns {void}
-   */
-  handleLocaleUpdated(locale) {
-    this.setState({
-      locale
-    });
-  }
-
-  /**
-   * Renders the context provider.
-   *
-   * @returns {React.ReactElement}
-   */
-  render() {
-    const contextValue = {
-      ...this.props.contextValue,
-      appData: this.getAppData(),
-      localize: this.props.contextValue.localize || this.defaultLocalize,
-      locale: this.state.locale
-    };
-    return /*#__PURE__*/React$1.createElement(MusicNotebookContext.Provider, {
-      value: contextValue
-    }, this.props.children);
-  }
-}
-
 const KEYBOARD_CHORD_PRESETS = Object.freeze([Object.freeze({
   chordId: 'c-dim7',
   label: 'Cdim7',
@@ -150776,6 +154433,7 @@ const Embed = Quill.import('blots/embed');
 const Delta = Quill.import('delta');
 const KEYBOARD_EMBED_BLOT = 'music-keyboard';
 const KEYBOARD_EMBED_CLASS = 'music-keyboard-embed';
+const KEYBOARD_EMBED_SELECTOR = `.${KEYBOARD_EMBED_CLASS}`;
 const REGISTER_FLAG = '__MUSIC_NOTEBOOK_KEYBOARD_EMBED_REGISTERED__';
 const DEFAULT_DISPLAY_MODE = 'keyboard';
 const DEFAULT_STAFF_OCTAVE = 4;
@@ -150822,6 +154480,14 @@ class MusicKeyboardEmbed extends Embed {
     const payload = setKeyboardNodePayload(this.domNode, nextPayload);
     renderKeyboardComponent(this.domNode, payload);
   }
+  html() {
+    const node = this.domNode.ownerDocument.createElement(MusicKeyboardEmbed.tagName);
+    node.className = KEYBOARD_EMBED_CLASS;
+    node.setAttribute('contenteditable', 'false');
+    node.setAttribute('role', 'group');
+    setKeyboardNodePayload(node, MusicKeyboardEmbed.value(this.domNode));
+    return node.outerHTML;
+  }
   detach() {
     delete this.domNode.__musicNotebookKeyboardRoot;
     super.detach();
@@ -150836,6 +154502,14 @@ function registerKeyboardEmbed() {
 }
 function configureKeyboardEmbedContext(contextValue) {
   musicNotebookContextValue = contextValue || null;
+}
+function matchKeyboardEmbedClipboard(node) {
+  return new Delta().insert({
+    [KEYBOARD_EMBED_BLOT]: MusicKeyboardEmbed.value(node)
+  });
+}
+function getKeyboardEmbedClipboardMatchers() {
+  return [[KEYBOARD_EMBED_SELECTOR, matchKeyboardEmbedClipboard]];
 }
 function shouldOpenInitialDialog(value, payload) {
   if (value?.openEditor !== true) {
@@ -151124,8 +154798,348 @@ function restoreDialogFocus(snapshot) {
   ownerWindow?.setTimeout?.(restore, 0);
 }
 
+/**
+ * Owns controller behavior for one rendered music object embed.
+ */
+class MusicObjectEmbedSession {
+  constructor(controller, options = {}) {
+    makeEventable(this);
+    this.controller = controller;
+    this.options = options;
+    this.playback = {
+      timer: null,
+      token: 0
+    };
+    this.state = {
+      dialogOpen: options.initialDialogOpen === true,
+      hovered: false,
+      playbackState: 'idle',
+      selected: false
+    };
+  }
+  getState() {
+    return {
+      ...this.state,
+      actions: this.getActions()
+    };
+  }
+  fireChanged() {
+    this.fire('changed', this.getState());
+  }
+  setState(patch = {}) {
+    this.state = {
+      ...this.state,
+      ...patch
+    };
+    this.fireChanged();
+  }
+  getActions() {
+    const isPlaying = this.state.playbackState === 'playing';
+    const actions = [{
+      id: 'edit',
+      className: 'music-keyboard-edit-button',
+      fallback: 'Edit',
+      iconId: 'music-object.edit',
+      labelKey: 'music.controls.edit'
+    }, {
+      id: 'format',
+      className: 'music-keyboard-format-button',
+      fallback: 'Format',
+      iconId: 'music-object.format',
+      labelKey: 'music.controls.format'
+    }];
+    if (!isPayloadPlayable(this.options.getValue?.())) {
+      return actions;
+    }
+    return [{
+      id: 'playback',
+      className: 'music-keyboard-play-button',
+      disabled: this.state.playbackState === 'loading',
+      fallback: isPlaying ? 'Stop' : 'Play',
+      iconId: isPlaying ? 'music-object.stop' : 'music-object.play',
+      labelKey: isPlaying ? 'music.controls.stop' : 'music.controls.play',
+      pressed: isPlaying
+    }, ...actions];
+  }
+  setHovered(hovered) {
+    this.setState({
+      hovered: hovered === true
+    });
+  }
+  setSelected(selected) {
+    this.setState({
+      selected: selected === true
+    });
+  }
+  performAction(actionId) {
+    if (actionId === 'playback') {
+      if (!isPayloadPlayable(this.options.getValue?.())) {
+        return false;
+      }
+      this.togglePlayback();
+      return true;
+    }
+    if (actionId === 'edit') {
+      this.options.onOpenDialog?.();
+      this.setState({
+        dialogOpen: true
+      });
+      return true;
+    }
+    if (actionId === 'format') {
+      this.options.onOpenFormatDialog?.();
+      return true;
+    }
+    return false;
+  }
+  closeDialog() {
+    this.setState({
+      dialogOpen: false
+    });
+  }
+  async togglePlayback() {
+    if (this.state.playbackState === 'playing') {
+      this.stopPlayback();
+      this.setState({
+        playbackState: 'idle'
+      });
+      return;
+    }
+    if (this.state.playbackState === 'loading') {
+      return;
+    }
+    this.setState({
+      playbackState: 'loading'
+    });
+    this.stopPlayback(false);
+    const playerService = this.controller.getPlayerService();
+    if (!playerService) {
+      console.warn('[MusicObjectEmbedSession] Player service is unavailable.');
+      this.setState({
+        playbackState: 'idle'
+      });
+      return;
+    }
+    const token = this.playback.token + 1;
+    this.playback.token = token;
+    try {
+      const playback = await playerService.play(this.options.getValue?.());
+      if (this.playback.token !== token) {
+        return;
+      }
+      this.setState({
+        playbackState: 'playing'
+      });
+      this.playback.timer = window.setTimeout(() => {
+        if (this.playback.token === token) {
+          this.stopPlayback(false);
+          this.setState({
+            playbackState: 'idle'
+          });
+        }
+      }, Math.max(playback.duration || 0, 250) + 250);
+    } catch (error) {
+      console.warn('[MusicObjectEmbedSession] MusicXML playback failed.', error);
+      this.stopPlayback(false);
+      this.setState({
+        playbackState: 'idle'
+      });
+    }
+  }
+  stopPlayback(stopPlayer = true) {
+    this.playback.token += 1;
+    if (this.playback.timer) {
+      window.clearTimeout(this.playback.timer);
+      this.playback.timer = null;
+    }
+    if (stopPlayer) {
+      this.controller.getPlayerService()?.stop?.();
+    }
+  }
+  detach() {
+    this.stopPlayback();
+    this.eventBus.listeners = {};
+  }
+}
+function isPayloadPlayable(payload) {
+  return Array.isArray(payload?.notes) && payload.notes.length > 0;
+}
+
+/**
+ * Registers music object document type, toolbar commands, icons, and Quill embed rendering.
+ */
+class MusicObjectController extends Service {
+  constructor(registry) {
+    super('music-object-controller', registry);
+    this.implement(['ready', 'attachEmbed', 'getPlayerService']);
+  }
+  ready() {
+    this.documentModel = this.registry.subscribe('document-model');
+    this.editorToolbar = this.registry.subscribe('editor-toolbar');
+    this.editorSurface = this.registry.subscribe('editor-surface');
+    this.iconRegistry = this.registry.subscribe('icon-registry');
+    this.objectTypes = this.registry.subscribe('object-type-registry');
+    this.player = null;
+    registerKeyboardEmbed();
+    this.registerObjectType();
+    this.registerToolbarIcons();
+    this.registerToolbarItems();
+    this.toolbarSelectedListener = this.editorToolbar.listen('item-selected', this.onToolbarItemSelected.bind(this));
+  }
+  attachEmbed(options = {}) {
+    return new MusicObjectEmbedSession(this, options);
+  }
+  getPlayerService() {
+    if (!this.player) {
+      this.player = this.registry.subscribe('player');
+    }
+    return this.player;
+  }
+  registerObjectType() {
+    this.objectTypes.registerType('music-object', {
+      blotName: KEYBOARD_EMBED_BLOT,
+      changeEventName: 'music-keyboard-change',
+      clipboardMatchers: getKeyboardEmbedClipboardMatchers(),
+      removeEventName: 'music-keyboard-remove',
+      configureContext: configureKeyboardEmbedContext,
+      createDefaultObject: (options = {}) => {
+        const displayMode = options.displayMode === 'staff' ? 'staff' : 'keyboard';
+        return {
+          type: 'music-object',
+          data: {
+            ...DEFAULT_KEYBOARD_PAYLOAD,
+            chordId: '',
+            displayMode,
+            displayKey: 'C',
+            height: displayMode === 'staff' ? 266 : DEFAULT_KEYBOARD_PAYLOAD.height,
+            initialEditMode: 'none',
+            label: 'C major key',
+            notes: [],
+            openEditor: true,
+            rootNote: ''
+          }
+        };
+      },
+      toEmbedValue: object => ({
+        ...(object.data || {}),
+        id: object.id
+      }),
+      fromEmbedValue: value => ({
+        type: 'music-object',
+        data: value
+      })
+    });
+  }
+  registerToolbarIcons() {
+    this.iconRegistry.registerIcon('music-object.insert.keyboard', IconPiano, 'default', 'editor.insert_keyboard_object');
+    this.iconRegistry.registerIcon('music-object.insert.staff', IconClefStaff, 'default', 'editor.insert_staff_object');
+    this.iconRegistry.registerIcon('music-object.play', PlayArrowIcon, 'default', 'music.controls.play');
+    this.iconRegistry.registerIcon('music-object.stop', StopIcon, 'default', 'music.controls.stop');
+    this.iconRegistry.registerIcon('music-object.edit', EditIcon, 'default', 'music.controls.edit');
+    this.iconRegistry.registerIcon('music-object.format', TuneIcon, 'default', 'music.controls.format');
+  }
+  registerToolbarItems() {
+    this.editorToolbar.addItem(EDITOR_TOOLBAR_SECTIONS.INSERT, 100, 'music-object.insert.keyboard', 'editor.insert_keyboard_object', 'music-object.insert.keyboard', {
+      commandId: 'music-object.insert',
+      commandPayload: {
+        displayMode: 'keyboard'
+      },
+      ownerFeature: 'music-object'
+    });
+    this.editorToolbar.addItem(EDITOR_TOOLBAR_SECTIONS.INSERT, 200, 'music-object.insert.staff', 'editor.insert_staff_object', 'music-object.insert.staff', {
+      commandId: 'music-object.insert',
+      commandPayload: {
+        displayMode: 'staff'
+      },
+      ownerFeature: 'music-object'
+    });
+  }
+  onToolbarItemSelected(event) {
+    const commandId = event?.item?.commandId || event?.item?.id;
+    if (commandId === 'music-object.insert') {
+      this.insertMusicObject(event.item.commandPayload || {});
+    }
+  }
+  insertMusicObject(options = {}) {
+    const definition = this.objectTypes.getType('music-object');
+    const partialObject = definition?.createDefaultObject?.(options) || {
+      type: 'music-object',
+      data: {}
+    };
+    const object = this.documentModel.createObject('music-object', partialObject.data || {}, partialObject);
+    this.editorSurface.insertObject(object);
+    return object;
+  }
+}
+new MusicObjectController();
+
+describe('MusicObjectController', function () {
+  it('creates controller-owned embed sessions that route playback through the player service', async function () {
+    const {
+      controller,
+      player
+    } = makeController();
+    const session = controller.attachEmbed({
+      getValue: () => ({
+        id: 'music-object-session-spec',
+        notes: ['C4', 'E4', 'G4']
+      })
+    });
+    await session.togglePlayback();
+    expect(player.playedPayloads).toEqual([jasmine.objectContaining({
+      id: 'music-object-session-spec'
+    })]);
+    expect(session.getState().playbackState).toBe('playing');
+    await session.togglePlayback();
+    expect(player.stopCount).toBe(1);
+    expect(session.getState().playbackState).toBe('idle');
+  });
+});
+class PlayerMock extends Service {
+  constructor(registry) {
+    super('player', registry);
+    this.implement(['play', 'stop']);
+    this.playedPayloads = [];
+    this.stopCount = 0;
+  }
+  play(payload) {
+    this.playedPayloads.push(payload);
+    return Promise.resolve({
+      duration: 0
+    });
+  }
+  stop() {
+    this.stopCount += 1;
+  }
+}
+function makeController() {
+  const registry = new Registry$1();
+  const documentModel = new DocumentModelService(registry);
+  const editorSurface = new EditorSurfaceService(registry);
+  const editorToolbar = new EditorToolbarService(registry);
+  const iconRegistry = new IconRegistryService(registry);
+  const objectTypes = new ObjectTypeRegistryService(registry);
+  const player = new PlayerMock(registry);
+  const controller = new MusicObjectController(registry);
+  documentModel.start();
+  editorSurface.start();
+  editorToolbar.start();
+  iconRegistry.start();
+  objectTypes.start();
+  controller.ready();
+  return {
+    controller,
+    player
+  };
+}
+
 /* global describe it expect */
 describe('MusicEmbedView', function () {
+  let harness;
+  afterEach(function () {
+    harness?.unmount();
+    harness = null;
+  });
   it('keeps keyboard table-cell sizing at the piano aspect ratio', function () {
     const view = new MusicEmbedView({
       payload: {
@@ -151151,6 +155165,26 @@ describe('MusicEmbedView', function () {
     expect(embed.style.getPropertyValue('--music-embed-height')).toBe(`${getKeyboardEmbedHeight(view.state.currentPayload, 240)}px`);
     expect(embed.style.getPropertyValue('--music-embedded-layout-width')).toBe('240px');
     expect(embed.style.getPropertyValue('--music-embedded-layout-height')).toBe(`${getKeyboardEmbedHeight(view.state.currentPayload, 240)}px`);
+  });
+  it('renders a non-interactive preview with an error marker when the controller session is unavailable', function () {
+    spyOn(console, 'error');
+    harness = createTestHarness();
+    const result = harness.render(MusicEmbedView, {
+      payload: {
+        ...DEFAULT_KEYBOARD_PAYLOAD,
+        id: 'missing-session-preview-spec',
+        label: 'C major',
+        notes: ['C4', 'E4', 'G4']
+      }
+    });
+    const errorMarker = result.container.querySelector('.music-embed-session-error');
+    expect(result.container.querySelector('.ReactPiano__Keyboard')).toBeTruthy();
+    expect(errorMarker).toBeTruthy();
+    expect(errorMarker.getAttribute('aria-label')).toBe('Error loading object');
+    expect(errorMarker.getAttribute('tabindex')).toBe('0');
+    expect(result.container.querySelector('.music-embed-toolbar')).toBeFalsy();
+    expect(result.container.querySelector('.music-embed-resize-handle')).toBeFalsy();
+    expect(console.error).toHaveBeenCalledWith('MusicEmbedView could not attach music-object-controller session. Rendering preview without interactive controls.');
   });
 });
 
@@ -151738,6 +155772,72 @@ describe('KeyboardEmbed', function () {
     expect(embed.getAttribute('contenteditable')).toBe('false');
     expect(embed.querySelector('.music-keyboard-embed-content')).toBeTruthy();
   });
+  it('pastes copied music object HTML as one embed without rendered control text', function () {
+    const pasteContainer = document.createElement('div');
+    const embed = document.createElement('span');
+    const payload = {
+      caption: {
+        template: '{{short}}'
+      },
+      id: 'keyboard-paste-embed-spec',
+      label: 'Degree 3: F#m',
+      notes: ['F#4', 'A4', 'C#5']
+    };
+    embed.className = 'music-keyboard-embed';
+    embed.dataset.keyboardPayload = JSON.stringify(payload);
+    embed.innerHTML = ['<span>Play</span>', '<span>Edit</span>', '<span>Format</span>', '<div class="music-embed-caption">Degree 3: F#m</div>', '<button>Resize music object</button>'].join('');
+    pasteContainer.appendChild(embed);
+    const clipboardQuill = new Quill(document.createElement('div'), {
+      modules: {
+        clipboard: {
+          matchers: getKeyboardEmbedClipboardMatchers()
+        }
+      }
+    });
+    const delta = clipboardQuill.clipboard.convert({
+      html: pasteContainer.innerHTML,
+      text: pasteContainer.textContent
+    });
+    const serializedDelta = JSON.stringify(delta.ops);
+    expect(delta.ops).toEqual([{
+      insert: {
+        [KEYBOARD_EMBED_BLOT]: jasmine.objectContaining({
+          id: 'keyboard-paste-embed-spec',
+          label: 'Degree 3: F#m'
+        })
+      }
+    }]);
+    expect(serializedDelta).not.toContain('Play');
+    expect(serializedDelta).not.toContain('Edit');
+    expect(serializedDelta).not.toContain('Format');
+    expect(serializedDelta).not.toContain('Resize music object');
+  });
+  it('copies music object semantic HTML without rendered control text', function () {
+    reactExports.act(() => {
+      quill.setContents([{
+        insert: {
+          [KEYBOARD_EMBED_BLOT]: {
+            caption: {
+              template: '{{short}}'
+            },
+            id: 'keyboard-copy-embed-spec',
+            label: 'Degree 3: F#m',
+            notes: ['F#4', 'A4', 'C#5']
+          }
+        }
+      }, {
+        insert: '\n'
+      }]);
+    });
+    const html = quill.getSemanticHTML(0, 1);
+    expect(html).toContain('music-keyboard-embed');
+    expect(html).toContain('keyboard-copy-embed-spec');
+    expect(html).not.toContain('Play');
+    expect(html).not.toContain('Edit');
+    expect(html).not.toContain('Format');
+    expect(html).not.toContain('Resize music object');
+    expect(html).not.toContain('class="music-embed-caption');
+  });
   it('renders context-aware caption fields for chords and scales', function () {
     reactExports.act(() => {
       quill.setContents([{
@@ -152066,14 +156166,17 @@ describe('KeyboardEmbed', function () {
       },
       registry: {
         subscribe(serviceName) {
-          if (serviceName !== 'icon-registry') {
-            return null;
+          if (serviceName === 'music-object-controller') {
+            return makeMusicObjectControllerMock();
           }
-          return {
-            getIcon() {
-              return TestIcon;
-            }
-          };
+          if (serviceName === 'icon-registry') {
+            return {
+              getIcon() {
+                return TestIcon;
+              }
+            };
+          }
+          return null;
         }
       }
     });
@@ -152120,7 +156223,13 @@ describe('KeyboardEmbed', function () {
       locale,
       registry: {
         subscribe(serviceName) {
-          return serviceName === 'app-data' ? appData : localize;
+          if (serviceName === 'app-data') {
+            return appData;
+          }
+          if (serviceName === 'music-object-controller') {
+            return makeMusicObjectControllerMock();
+          }
+          return localize;
         }
       }
     });
@@ -153332,6 +157441,26 @@ function dispatchPointerEvent(target, type, options = {}) {
     });
   }
   target.dispatchEvent(event);
+}
+function makeMusicObjectControllerMock() {
+  return {
+    attachEmbed() {
+      return {
+        closeDialog() {},
+        detach() {},
+        getState() {
+          return {};
+        },
+        listen() {},
+        performAction() {
+          return false;
+        },
+        setHovered() {},
+        setSelected() {},
+        unlisten() {}
+      };
+    }
+  };
 }
 function makeAppDataMock(initialValues = {}) {
   const values = {

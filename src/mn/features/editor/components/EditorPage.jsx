@@ -5,6 +5,7 @@ import TableUp, {
 	TableSelection,
 } from 'quill-table-up';
 import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
+import EditorInteractionDispatcher from './EditorInteractionDispatcher.js';
 import EditorToolbar from './EditorToolbar.jsx';
 import ViewModePane from '../../view-mode/components/ViewModePane.jsx';
 import 'quill/dist/quill.snow.css';
@@ -57,11 +58,26 @@ export default class EditorPage extends React.Component {
 		this.activeTabId = '';
 		this.isApplyingDocumentModelContent = false;
 		this.selectionOwnerDocument = null;
+		this.editorPointerInteraction = null;
+		this.editorPointerInteractionOwnerDocument = null;
+		this.nativeEditorMouseDownRoot = null;
 		this.lineSelectionAnchorRange = null;
 		this.lineSelectionOwnerDocument = null;
-		this.tableColumnSelectionAnchorRange = null;
-		this.tableColumnSelectionClassNode = null;
-		this.tableColumnSelectionOwnerDocument = null;
+		this.gutterSelectionInteraction = null;
+		this.tableSelectionMouseDownGate = null;
+		this.tableDebugEnabled = false;
+		this.tableDebugEventSequence = 0;
+		this.tableDebugNativeListeners = [];
+		this.tableDebugPatchedListeners = [];
+		this.tableDebugPatchedMethods = [];
+		this.tableDebugPatchedSelection = null;
+		this.objectTypeClipboardMatcherKeys = new Set();
+		this.editorInteractionDispatcher = new EditorInteractionDispatcher({
+			getEditorInteractions: () => this.editorInteractions,
+			getCursorRoot: () => this.editorRef.current || this.quill?.root || null,
+			getEditorRoot: () => this.quill?.root || this.editorRef.current || null,
+			getQuill: () => this.quill,
+		});
 	}
 
 	/**
@@ -116,9 +132,11 @@ export default class EditorPage extends React.Component {
 		this.unsubscribeFromEditorViews();
 		this.removeObjectTypeEventListeners();
 		this.disconnectEditorMutationObserver();
+		this.detachNativeEditorInteractionListeners();
+		this.detachEditorPointerCaptureListeners();
 		this.detachLineSelectionDragListeners();
-		this.detachTableColumnSelectionDragListeners();
-		this.clearTableColumnSelectionCursor();
+		this.detachTableDebugInstrumentation();
+		this.detachTableSelectionMouseDownGate();
 		window.clearTimeout(this.documentOverflowWidthTimer);
 		window.clearTimeout(this.pagedPreviewHtmlTimer);
 		window.clearTimeout(this.whiteSpaceMarkerTimer);
@@ -243,6 +261,16 @@ export default class EditorPage extends React.Component {
 	onObjectTypesChanged() {
 		this.configureObjectTypeContext();
 		this.listenForObjectTypeChanges();
+		this.registerObjectTypeClipboardMatchers();
+	}
+
+	getObjectTypeClipboardMatchers() {
+		return (this.objectTypes?.getTypes?.() || [])
+			.flatMap((definition) => (
+				Array.isArray(definition.clipboardMatchers)
+					? definition.clipboardMatchers
+					: []
+			));
 	}
 
 	/**
@@ -261,9 +289,17 @@ export default class EditorPage extends React.Component {
 			modules: {
 				[TableUp.moduleName]: {
 					modules: [
-						{ module: TableSelection },
+						{
+							module: TableSelection,
+							options: {
+								selectColor: 'var(--mn-selection-color)',
+							},
+						},
 						{ module: TableResizeLine },
 					],
+				},
+				clipboard: {
+					matchers: this.getObjectTypeClipboardMatchers(),
 				},
 				toolbar: false,
 			},
@@ -291,17 +327,44 @@ export default class EditorPage extends React.Component {
 		this.quill.on('text-change', (delta, oldDelta, source) => {
 			this.onEditorTextChange(source);
 		});
+		this.attachNativeEditorInteractionListeners();
 		this.selectionOwnerDocument = this.editorRef.current.ownerDocument;
 		this.selectionOwnerDocument.addEventListener('selectionchange', this.updateEmbedSelectionState);
 		this.attachEditorSurface();
 		this.listenForObjectTypeChanges();
+		this.registerObjectTypeClipboardMatchers();
 		this.connectEditorMutationObserver();
+		this.attachTableSelectionMouseDownGate();
+		this.attachTableDebugInstrumentation();
 
 		this.loadActiveTabContent();
 		this.updatePagedPreviewHtml();
 		this.updateDocumentOverflowWidth();
 		this.scheduleWhiteSpaceMarkerUpdate();
 
+	}
+
+	registerObjectTypeClipboardMatchers() {
+		const clipboard = this.quill?.clipboard;
+
+		if (!clipboard?.addMatcher) {
+			return;
+		}
+
+		this.getObjectTypeClipboardMatchers().forEach(([selector, matcher]) => {
+			if (!selector || typeof matcher !== 'function') {
+				return;
+			}
+
+			const key = `${String(selector)}:${matcher.name || 'anonymous'}`;
+
+			if (this.objectTypeClipboardMatcherKeys.has(key)) {
+				return;
+			}
+
+			clipboard.addMatcher(selector, matcher);
+			this.objectTypeClipboardMatcherKeys.add(key);
+		});
 	}
 
 	/**
@@ -407,8 +470,7 @@ export default class EditorPage extends React.Component {
 		}
 
 		this.getTableSelectionModule()?.hide?.();
-		this.quill.focus?.();
-		this.quill.setSelection(index, 0, 'user');
+		this.setQuillSelectionWithoutScroll(index, 0, 'user', cell);
 		this.updateToolbarState();
 		this.updateEmbedSelectionState();
 		return false;
@@ -451,24 +513,186 @@ export default class EditorPage extends React.Component {
 		this.dispatchEditorInteraction('keydown', event);
 	};
 
-	dispatchEditorInteraction(eventName, event) {
-		return this.editorInteractions?.dispatch?.(
+	handleNativeEditorMouseDownCapture = (event) => {
+		const result = this.dispatchEditorInteraction('mousedown-capture', event);
+
+		if (result?.result?.suppressTableSelection === true) {
+			event.mnSuppressTableUpSelection = true;
+			if (result?.result?.suppressBlankTableCellFocus !== true) {
+				this.scheduleBlankTableCellFocus(event);
+			}
+		}
+	};
+
+	attachNativeEditorInteractionListeners() {
+		const root = this.quill?.root;
+
+		if (!root || this.nativeEditorMouseDownRoot === root) {
+			return;
+		}
+
+		this.detachNativeEditorInteractionListeners();
+		root.addEventListener('mousedown', this.handleNativeEditorMouseDownCapture, true);
+		this.nativeEditorMouseDownRoot = root;
+	}
+
+	detachNativeEditorInteractionListeners() {
+		if (!this.nativeEditorMouseDownRoot) {
+			return;
+		}
+
+		this.nativeEditorMouseDownRoot.removeEventListener('mousedown', this.handleNativeEditorMouseDownCapture, true);
+		this.nativeEditorMouseDownRoot = null;
+	}
+
+	handleEditorSurfacePointerDownCapture = (event) => {
+		if (!this.isLineSelectionGutterPoint(event)) {
+			return;
+		}
+
+		this.handleLineSelectionPointerDown(event);
+	};
+
+	isLineSelectionGutterPoint(event) {
+		const content = this.documentContentRef.current;
+		const rect = content?.getBoundingClientRect?.();
+		const clientX = Number(event?.clientX);
+		const clientY = Number(event?.clientY);
+
+		if (!rect || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+			return false;
+		}
+
+		return rect.top <= clientY
+			&& clientY <= rect.bottom
+			&& rect.left - 56 <= clientX
+			&& clientX <= rect.left + 2;
+	}
+
+	handleEditorPointerDown = (event) => {
+		const result = this.dispatchEditorInteraction('pointerdown', event);
+
+		if (this.shouldCaptureEditorPointer(result)) {
+			this.startEditorPointerCapture(event, result);
+		}
+	};
+
+	handleEditorPointerMove = (event) => {
+		if (this.editorPointerInteraction) {
+			return;
+		}
+
+		this.dispatchEditorInteraction('pointermove', event);
+	};
+
+	handleEditorPointerLeave = (event) => {
+		if (this.editorPointerInteraction) {
+			return;
+		}
+
+		this.dispatchEditorInteraction('pointerleave', event);
+	};
+
+	handleEditorPointerUp = (event) => {
+		if (this.editorPointerInteraction) {
+			return;
+		}
+
+		this.dispatchEditorInteraction('pointerup', event);
+	};
+
+	handleEditorPointerCancel = (event) => {
+		if (this.editorPointerInteraction) {
+			return;
+		}
+
+		this.dispatchEditorInteraction('pointercancel', event);
+	};
+
+	dispatchEditorInteraction(eventName, event, extraContext = {}) {
+		this.logTableDebug(`app-dispatch:${eventName}:before`, {
 			eventName,
-			event,
-			this.getEditorInteractionContext(),
-		) || { handled: false };
+			event: this.getTableDebugEventSummary(event),
+			extraContext: this.getTableDebugContextSummary(extraContext),
+		});
+		const result = this.editorInteractionDispatcher.dispatch(eventName, event, extraContext);
+		const resultSummary = this.getTableDebugDispatchResultSummary(result);
+
+		this.logTableDebug(`app-dispatch:${eventName}:after:${this.getTableDebugResultLabel(resultSummary)}`, {
+			eventName,
+			event: this.getTableDebugEventSummary(event),
+			result: resultSummary,
+			snapshot: this.getTableDebugSnapshot(event),
+		});
+		return result;
+	}
+
+	shouldCaptureEditorPointer(result) {
+		return result?.handled === true && result?.result?.capturePointer === true;
+	}
+
+	startEditorPointerCapture(event, result) {
+		const ownerDocument = event.currentTarget?.ownerDocument || event.target?.ownerDocument;
+
+		if (!ownerDocument) {
+			return;
+		}
+
+		this.detachEditorPointerCaptureListeners();
+		this.editorPointerInteraction = {
+			handlerId: result.handlerId || '',
+			serviceName: result.serviceName || result.target?.serviceName || '',
+			target: result.target || null,
+		};
+		this.editorPointerInteractionOwnerDocument = ownerDocument;
+		ownerDocument.addEventListener('pointermove', this.handleCapturedEditorPointerMove);
+		ownerDocument.addEventListener('pointerup', this.handleCapturedEditorPointerUp);
+		ownerDocument.addEventListener('pointercancel', this.handleCapturedEditorPointerUp);
+	}
+
+	handleCapturedEditorPointerMove = (event) => {
+		if (!this.editorPointerInteraction) {
+			return;
+		}
+
+		this.dispatchEditorInteraction('pointermove', event, this.getCapturedEditorPointerContext());
+	};
+
+	handleCapturedEditorPointerUp = (event) => {
+		if (!this.editorPointerInteraction) {
+			return;
+		}
+
+		const eventName = event.type === 'pointercancel' ? 'pointercancel' : 'pointerup';
+
+		this.dispatchEditorInteraction(eventName, event, this.getCapturedEditorPointerContext());
+		this.detachEditorPointerCaptureListeners();
+	};
+
+	getCapturedEditorPointerContext() {
+		return {
+			captured: true,
+			handlerId: this.editorPointerInteraction?.handlerId || '',
+			target: this.editorPointerInteraction?.target || null,
+			targetServiceName: this.editorPointerInteraction?.serviceName || '',
+		};
+	}
+
+	detachEditorPointerCaptureListeners() {
+		if (!this.editorPointerInteractionOwnerDocument) {
+			this.editorPointerInteraction = null;
+			return;
+		}
+
+		this.editorPointerInteractionOwnerDocument.removeEventListener('pointermove', this.handleCapturedEditorPointerMove);
+		this.editorPointerInteractionOwnerDocument.removeEventListener('pointerup', this.handleCapturedEditorPointerUp);
+		this.editorPointerInteractionOwnerDocument.removeEventListener('pointercancel', this.handleCapturedEditorPointerUp);
+		this.editorPointerInteractionOwnerDocument = null;
+		this.editorPointerInteraction = null;
 	}
 
 	getEditorInteractionContext() {
-		return {
-			editorRoot: this.quill?.root || null,
-			findBlot: (node, bubble = true) => Quill.find(node, bubble),
-			getCurrentTableCellInner: this.getCurrentTableCellInner.bind(this),
-			getTableModule: () => this.quill?.getModule?.(TableUp.moduleName) || null,
-			getTableSelectionModule: this.getTableSelectionModule.bind(this),
-			quill: this.quill,
-			selectTableCell: this.selectTableCell.bind(this),
-		};
+		return this.editorInteractionDispatcher.getInteractionContext();
 	}
 
 	getEditorViewContext() {
@@ -1094,15 +1318,33 @@ export default class EditorPage extends React.Component {
 			return;
 		}
 
-		const range = this.getTableRowSelectionRangeFromPoint(event.clientY)
-			|| this.getLineSelectionRangeFromPoint(event.clientY);
+		event.preventDefault();
+		event.stopPropagation();
+
+		const range = this.getLineSelectionRangeFromPoint(event.clientY);
 
 		if (!range) {
 			return;
 		}
 
-		event.preventDefault();
-		event.stopPropagation();
+		const lineHit = this.getGutterLineSelectionHit(range, event);
+		const target = this.editorInteractionDispatcher.resolveGutterTarget('gutter-line-select-start', range);
+		const result = target
+			? this.dispatchEditorInteraction('gutter-line-select-start', event, {
+				anchorLineHit: lineHit,
+				lineHit,
+				target,
+				targetServiceName: target.serviceName,
+			})
+			: { handled: false };
+
+		if (result.handled) {
+			event.preventDefault();
+			event.stopPropagation();
+			this.startGutterSelectionInteraction(event, result, lineHit);
+			return;
+		}
+
 		this.lineSelectionAnchorRange = range;
 		this.selectLineSelectionRanges(range, range);
 
@@ -1119,12 +1361,28 @@ export default class EditorPage extends React.Component {
 	 * @returns {void}
 	 */
 	handleLineSelectionPointerMove = (event) => {
+		if (this.gutterSelectionInteraction) {
+			const range = this.getLineSelectionRangeFromPoint(event.clientY);
+
+			if (!range) {
+				return;
+			}
+
+			event.preventDefault();
+			this.dispatchEditorInteraction('gutter-line-select-move', event, {
+				anchorLineHit: this.gutterSelectionInteraction.anchorLineHit,
+				lineHit: this.getGutterLineSelectionHit(range, event),
+				target: this.gutterSelectionInteraction.target,
+				targetServiceName: this.gutterSelectionInteraction.serviceName,
+			});
+			return;
+		}
+
 		if (!this.lineSelectionAnchorRange) {
 			return;
 		}
 
-		const range = this.getTableRowSelectionRangeFromPoint(event.clientY)
-			|| this.getLineSelectionRangeFromPoint(event.clientY);
+		const range = this.getLineSelectionRangeFromPoint(event.clientY);
 
 		if (!range) {
 			return;
@@ -1139,10 +1397,54 @@ export default class EditorPage extends React.Component {
 	 *
 	 * @returns {void}
 	 */
-	handleLineSelectionPointerUp = () => {
+	handleLineSelectionPointerUp = (event) => {
+		if (this.gutterSelectionInteraction) {
+			this.dispatchEditorInteraction(
+				event?.type === 'pointercancel' ? 'gutter-line-select-cancel' : 'gutter-line-select-end',
+				event,
+				{
+					anchorLineHit: this.gutterSelectionInteraction.anchorLineHit,
+					target: this.gutterSelectionInteraction.target,
+					targetServiceName: this.gutterSelectionInteraction.serviceName,
+				},
+			);
+			this.gutterSelectionInteraction = null;
+			this.detachLineSelectionDragListeners();
+			return;
+		}
+
 		this.lineSelectionAnchorRange = null;
 		this.detachLineSelectionDragListeners();
 	};
+
+	startGutterSelectionInteraction(event, result, anchorLineHit) {
+		const ownerDocument = event.currentTarget?.ownerDocument || event.target?.ownerDocument;
+
+		if (!ownerDocument) {
+			return;
+		}
+
+		this.gutterSelectionInteraction = {
+			anchorLineHit,
+			handlerId: result.handlerId || '',
+			serviceName: result.serviceName || result.target?.serviceName || '',
+			target: result.target || null,
+		};
+		this.lineSelectionOwnerDocument = ownerDocument;
+		ownerDocument.addEventListener('pointermove', this.handleLineSelectionPointerMove);
+		ownerDocument.addEventListener('pointerup', this.handleLineSelectionPointerUp);
+		ownerDocument.addEventListener('pointercancel', this.handleLineSelectionPointerUp);
+	}
+
+	getGutterLineSelectionHit(range, event) {
+		return {
+			point: this.editorInteractionDispatcher.getPoint(event),
+			range: {
+				index: range.index,
+				length: range.length,
+			},
+		};
+	}
 
 	/**
 	 * Removes document-level gutter drag listeners.
@@ -1168,10 +1470,6 @@ export default class EditorPage extends React.Component {
 	 * @returns {void}
 	 */
 	selectLineSelectionRanges(anchorRange, focusRange) {
-		if (this.selectTableSelectionRanges(anchorRange, focusRange)) {
-			return;
-		}
-
 		const start = Math.min(anchorRange.index, focusRange.index);
 		const end = Math.max(anchorRange.index + anchorRange.length, focusRange.index + focusRange.length);
 		const length = Math.max(end - start, 0);
@@ -1179,172 +1477,6 @@ export default class EditorPage extends React.Component {
 		this.quill?.setSelection(start, length, 'user');
 		this.updateToolbarState();
 		this.updateEmbedSelectionState();
-	}
-
-	/**
-	 * Selects whole table cells through TableUp when gutter selection hits rows.
-	 *
-	 * @param {{index: number, length: number, table?: HTMLTableElement}} anchorRange
-	 * @param {{index: number, length: number, table?: HTMLTableElement}} focusRange
-	 * @returns {boolean}
-	 */
-	selectTableSelectionRanges(anchorRange, focusRange) {
-		if (!anchorRange.table || !focusRange.table || anchorRange.table !== focusRange.table) {
-			return false;
-		}
-
-		const tableSelection = this.getTableSelectionModule();
-		const cells = this.getTableSelectionCells(anchorRange.table, anchorRange, focusRange);
-
-		if (!tableSelection || !cells.length) {
-			return false;
-		}
-
-		this.applyTableSelection(tableSelection, anchorRange.table, cells);
-		this.quill?.setSelection?.(null, 'api');
-		this.updateToolbarState();
-		this.updateEmbedSelectionState();
-		return true;
-	}
-
-	/**
-	 * Applies explicit selected cells without asking TableUp to recompute the selection rectangle.
-	 *
-	 * @param {unknown} tableSelection
-	 * @param {HTMLTableElement} table
-	 * @param {unknown[]} cells
-	 * @returns {void}
-	 */
-	applyTableSelection(tableSelection, table, cells) {
-		tableSelection.setSelectionTable(table);
-		tableSelection.setSelectedTds(cells);
-
-		const boundary = this.getTableSelectionBoundary(cells);
-
-		if (boundary) {
-			tableSelection.boundary = boundary;
-		}
-
-		const editor = this.quill?.root;
-		const tableView = table.parentElement;
-
-		tableSelection.selectedEditorScrollX = Number(editor?.scrollLeft) || 0;
-		tableSelection.selectedEditorScrollY = Number(editor?.scrollTop) || 0;
-		tableSelection.selectedTableScrollX = Number(tableView?.scrollLeft) || 0;
-		tableSelection.selectedTableScrollY = Number(tableView?.scrollTop) || 0;
-		tableSelection.show?.();
-	}
-
-	/**
-	 * Selects a table column when the pointer is in the table's top selection band.
-	 *
-	 * @param {React.PointerEvent<HTMLElement>} event
-	 * @returns {void}
-	 */
-	handleTableColumnPointerDown = (event) => {
-		const range = this.getTableColumnSelectionRangeFromPoint(event.clientX, event.clientY);
-
-		if (!range) {
-			return;
-		}
-
-		event.preventDefault();
-		event.stopPropagation();
-		this.tableColumnSelectionAnchorRange = range;
-		this.selectTableSelectionRanges(range, range);
-
-		this.tableColumnSelectionOwnerDocument = event.currentTarget.ownerDocument;
-		this.tableColumnSelectionOwnerDocument.addEventListener('pointermove', this.handleTableColumnSelectionPointerMove);
-		this.tableColumnSelectionOwnerDocument.addEventListener('pointerup', this.handleTableColumnSelectionPointerUp);
-		this.tableColumnSelectionOwnerDocument.addEventListener('pointercancel', this.handleTableColumnSelectionPointerUp);
-	};
-
-	/**
-	 * Shows the table column selection cursor while the pointer is in a column selection band.
-	 *
-	 * @param {React.PointerEvent<HTMLElement>} event
-	 * @returns {void}
-	 */
-	handleTableColumnPointerMove = (event) => {
-		if (this.tableColumnSelectionAnchorRange) {
-			return;
-		}
-
-		const range = this.getTableColumnSelectionRangeFromPoint(event.clientX, event.clientY);
-		const node = event.currentTarget;
-
-		if (range) {
-			node.classList.add('mn-table-column-selection-cursor');
-			this.tableColumnSelectionClassNode = node;
-		} else if (this.tableColumnSelectionClassNode === node) {
-			this.clearTableColumnSelectionCursor();
-		}
-	};
-
-	/**
-	 * Clears the table column selection cursor.
-	 *
-	 * @returns {void}
-	 */
-	handleTableColumnPointerLeave = () => {
-		this.clearTableColumnSelectionCursor();
-	};
-
-	/**
-	 * Extends column selection while dragging through the table top band.
-	 *
-	 * @param {PointerEvent} event
-	 * @returns {void}
-	 */
-	handleTableColumnSelectionPointerMove = (event) => {
-		if (!this.tableColumnSelectionAnchorRange) {
-			return;
-		}
-
-		const range = this.getTableColumnSelectionRangeFromPoint(event.clientX, event.clientY);
-
-		if (!range || range.table !== this.tableColumnSelectionAnchorRange.table) {
-			return;
-		}
-
-		event.preventDefault();
-		this.selectTableSelectionRanges(this.tableColumnSelectionAnchorRange, range);
-	};
-
-	/**
-	 * Ends active table column drag selection.
-	 *
-	 * @returns {void}
-	 */
-	handleTableColumnSelectionPointerUp = () => {
-		this.tableColumnSelectionAnchorRange = null;
-		this.detachTableColumnSelectionDragListeners();
-	};
-
-	/**
-	 * Removes document-level column drag listeners.
-	 *
-	 * @returns {void}
-	 */
-	detachTableColumnSelectionDragListeners() {
-		if (!this.tableColumnSelectionOwnerDocument) {
-			return;
-		}
-
-		this.tableColumnSelectionOwnerDocument.removeEventListener('pointermove', this.handleTableColumnSelectionPointerMove);
-		this.tableColumnSelectionOwnerDocument.removeEventListener('pointerup', this.handleTableColumnSelectionPointerUp);
-		this.tableColumnSelectionOwnerDocument.removeEventListener('pointercancel', this.handleTableColumnSelectionPointerUp);
-		this.tableColumnSelectionOwnerDocument = null;
-	}
-
-	/**
-	 * Clears the table column selection cursor class from the current editor node.
-	 *
-	 * @returns {void}
-	 */
-	clearTableColumnSelectionCursor() {
-		this.tableColumnSelectionClassNode?.classList?.remove?.('mn-table-column-selection-cursor');
-		this.tableColumnSelectionClassNode = null;
 	}
 
 	/**
@@ -1362,6 +1494,12 @@ export default class EditorPage extends React.Component {
 		}
 
 		const y = clampNumber(clientY, rect.top + 1, rect.bottom - 1);
+		const renderedRange = this.getRenderedLineSelectionRangeFromPoint(y);
+
+		if (renderedRange) {
+			return renderedRange;
+		}
+
 		const startRange = this.getQuillRangeFromPoint(rect.left + 1, y);
 		const endRange = this.getQuillRangeFromPoint(rect.right - 1, y);
 		const startIndex = startRange?.index;
@@ -1381,6 +1519,134 @@ export default class EditorPage extends React.Component {
 
 		const index = Number.isInteger(startIndex) ? startIndex : endIndex;
 		return this.getLogicalLineRangeAtIndex(index);
+	}
+
+	getRenderedLineSelectionRangeFromPoint(clientY) {
+		const editor = this.quill?.root;
+		const ownerDocument = editor?.ownerDocument || document;
+
+		if (!editor?.nodeType || !ownerDocument?.createTreeWalker) {
+			return null;
+		}
+
+		const candidates = this.getRenderedTextLineCandidates(editor, clientY);
+		const line = this.getClosestRenderedTextLine(candidates, clientY);
+
+		if (!line) {
+			return null;
+		}
+
+		return {
+			index: line.index,
+			length: Math.max(line.end - line.index, 1),
+		};
+	}
+
+	getRenderedTextLineCandidates(editor, clientY) {
+		const ownerDocument = editor.ownerDocument || document;
+		const nodeFilter = ownerDocument.defaultView?.NodeFilter
+			|| (typeof NodeFilter === 'undefined' ? null : NodeFilter);
+
+		if (!nodeFilter) {
+			return [];
+		}
+
+		const walker = ownerDocument.createTreeWalker(
+			editor,
+			nodeFilter.SHOW_TEXT,
+			{
+				acceptNode(node) {
+					if (!node.nodeValue || !node.nodeValue.trim()) {
+						return nodeFilter.FILTER_REJECT;
+					}
+
+					if (node.parentElement?.closest?.('.music-keyboard-embed, .ql-ui')) {
+						return nodeFilter.FILTER_REJECT;
+					}
+
+					return nodeFilter.FILTER_ACCEPT;
+				},
+			},
+		);
+		const candidates = [];
+
+		while (walker.nextNode()) {
+			const node = walker.currentNode;
+
+			for (let offset = 0; offset < node.nodeValue.length; offset += 1) {
+				const rect = getTextRangeRect(node, offset, offset + 1);
+
+				if (!rect || rect.width <= 0 || rect.height <= 0) {
+					continue;
+				}
+
+				if (rect.bottom < clientY - 8 || rect.top > clientY + 8) {
+					continue;
+				}
+
+				const start = this.getQuillRangeFromTextOffset(node, offset)?.index;
+				const end = this.getQuillRangeFromTextOffset(node, offset + 1)?.index;
+
+				if (!Number.isInteger(start) || !Number.isInteger(end)) {
+					continue;
+				}
+
+				candidates.push({
+					bottom: rect.bottom,
+					center: rect.top + (rect.height / 2),
+					end: Math.max(start, end),
+					index: Math.min(start, end),
+					top: rect.top,
+				});
+			}
+		}
+
+		return candidates;
+	}
+
+	getClosestRenderedTextLine(candidates, clientY) {
+		const lines = [];
+
+		candidates.forEach((candidate) => {
+			const line = lines.find((entry) => Math.abs(entry.center - candidate.center) <= 3);
+
+			if (line) {
+				line.bottom = Math.max(line.bottom, candidate.bottom);
+				line.center = (line.center + candidate.center) / 2;
+				line.end = Math.max(line.end, candidate.end);
+				line.index = Math.min(line.index, candidate.index);
+				line.top = Math.min(line.top, candidate.top);
+				return;
+			}
+
+			lines.push({ ...candidate });
+		});
+
+		return lines
+			.filter((line) => line.top - 4 <= clientY && clientY <= line.bottom + 4)
+			.sort((first, second) => (
+				Math.abs(first.center - clientY) - Math.abs(second.center - clientY)
+				|| first.index - second.index
+			))[0] || null;
+	}
+
+	getQuillRangeFromTextOffset(node, offset) {
+		const ownerDocument = node?.ownerDocument || document;
+		const range = ownerDocument.createRange?.();
+
+		if (!range) {
+			return null;
+		}
+
+		try {
+			range.setStart(node, offset);
+			range.setEnd(node, offset);
+			const normalized = this.quill?.selection?.normalizeNative?.(range);
+
+			return normalized ? this.quill.selection.normalizedToRange(normalized) : null;
+		} finally {
+			range.detach?.();
+		}
 	}
 
 	/**
@@ -1433,287 +1699,6 @@ export default class EditorPage extends React.Component {
 	}
 
 	/**
-	 * Resolves a gutter y-position to a whole rendered table row when possible.
-	 *
-	 * @param {number} clientY
-	 * @returns {{index: number, length: number} | null}
-	 */
-	getTableRowSelectionRangeFromPoint(clientY) {
-		const editor = this.quill?.root;
-
-		if (!editor) {
-			return null;
-		}
-
-		const rows = Array.from(editor.querySelectorAll('.ql-table tr, .table-up-table tr, table tr'));
-		const row = rows.find((candidate) => {
-			const rect = candidate.getBoundingClientRect?.();
-
-			return rect && rect.height > 0 && rect.top <= clientY && clientY <= rect.bottom;
-		});
-
-		return row ? this.getTableRowSelectionRange(row) : null;
-	}
-
-	/**
-	 * Converts a rendered table row to the Quill range covering its cells.
-	 *
-	 * @param {HTMLTableRowElement} row
-	 * @returns {{index: number, length: number} | null}
-	 */
-	getTableRowSelectionRange(row) {
-		const ranges = this.getTableCellSelectionRanges(row);
-
-		if (!ranges.length) {
-			return null;
-		}
-
-		const start = Math.min(...ranges.map((range) => range.index));
-		const end = Math.max(...ranges.map((range) => range.index + range.length));
-
-		return {
-			index: start,
-			length: Math.max(end - start, 1),
-			table: row.closest('table'),
-		};
-	}
-
-	/**
-	 * Resolves a pointer position to a whole table column when it is in the top selection band.
-	 *
-	 * @param {number} clientX
-	 * @param {number} clientY
-	 * @returns {{index: number, length: number, table?: HTMLTableElement, cells?: unknown[]} | null}
-	 */
-	getTableColumnSelectionRangeFromPoint(clientX, clientY) {
-		const editor = this.quill?.root;
-
-		if (!editor) {
-			return null;
-		}
-
-		const tables = Array.from(editor.querySelectorAll('.ql-table, .table-up-table, table'));
-		const table = tables.find((candidate) => {
-			const rect = candidate.getBoundingClientRect?.();
-
-			return rect
-				&& rect.width > 0
-				&& rect.height > 0
-				&& rect.left <= clientX
-				&& clientX <= rect.right
-				&& rect.top - 10 <= clientY
-				&& clientY <= rect.top + 18;
-		});
-
-		if (!table) {
-			return null;
-		}
-
-		const columnCell = Array.from(table.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'))
-			.find((cell) => {
-				const rect = cell.getBoundingClientRect?.();
-
-				return rect && rect.width > 0 && rect.left <= clientX && clientX <= rect.right;
-			});
-
-		return columnCell ? this.getTableColumnSelectionRange(columnCell) : null;
-	}
-
-	/**
-	 * Converts a rendered table column cell to the selection range for all cells in that column.
-	 *
-	 * @param {HTMLElement} columnCell
-	 * @returns {{index: number, length: number, table?: HTMLTableElement, cells?: unknown[]} | null}
-	 */
-	getTableColumnSelectionRange(columnCell) {
-		const table = columnCell.closest('table');
-		const columnId = columnCell.dataset?.colId;
-		const columnCells = columnId
-			? Array.from(table?.querySelectorAll(`.ql-table-cell-inner[data-col-id="${cssEscape(columnId)}"], .table-up-cell-inner[data-col-id="${cssEscape(columnId)}"]`) || [])
-			: this.getTableColumnCellsByVisualIndex(columnCell);
-		const ranges = columnCells
-			.map((cell) => this.getTableCellSelectionRange(cell))
-			.filter(Boolean);
-		const columnIndex = this.getTableColumnVisualIndex(columnCell);
-
-		if (!table || !ranges.length) {
-			return null;
-		}
-
-		const start = Math.min(...ranges.map((range) => range.index));
-		const end = Math.max(...ranges.map((range) => range.index + range.length));
-
-		return {
-			cells: ranges.map((range) => range.blot),
-			columnIndex,
-			index: start,
-			length: Math.max(end - start, 1),
-			table,
-		};
-	}
-
-	/**
-	 * Gets column cells by row-local visual index when TableUp column ids are not present.
-	 *
-	 * @param {HTMLElement} columnCell
-	 * @returns {HTMLElement[]}
-	 */
-	getTableColumnCellsByVisualIndex(columnCell) {
-		const table = columnCell.closest('table');
-		const row = columnCell.closest('tr');
-		const rowCells = Array.from(row?.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner') || []);
-		const columnIndex = rowCells.indexOf(columnCell);
-
-		if (!table || columnIndex < 0) {
-			return [];
-		}
-
-		return Array.from(table.querySelectorAll('tr'))
-			.map((tableRow) => Array.from(tableRow.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'))[columnIndex])
-			.filter(Boolean);
-	}
-
-	/**
-	 * Gets the visual index of a rendered cell within its table row.
-	 *
-	 * @param {HTMLElement} columnCell
-	 * @returns {number}
-	 */
-	getTableColumnVisualIndex(columnCell) {
-		const row = columnCell.closest('tr');
-		const rowCells = Array.from(row?.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner') || []);
-
-		return rowCells.indexOf(columnCell);
-	}
-
-	/**
-	 * Gets Quill ranges for table cell inners under a rendered element.
-	 *
-	 * @param {HTMLElement} container
-	 * @returns {Array<{index: number, length: number, blot: unknown}>}
-	 */
-	getTableCellSelectionRanges(container) {
-		const cells = Array.from(container.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'));
-
-		return cells
-			.map((cell) => this.getTableCellSelectionRange(cell))
-			.filter(Boolean);
-	}
-
-	/**
-	 * Gets a Quill range for one rendered table cell inner.
-	 *
-	 * @param {HTMLElement} cell
-	 * @returns {{index: number, length: number, blot: unknown} | null}
-	 */
-	getTableCellSelectionRange(cell) {
-		const blot = Quill.find(cell, true);
-
-		if (!blot || !this.quill?.getIndex) {
-			return null;
-		}
-
-		const index = this.quill.getIndex(blot);
-		const blotLength = typeof blot.length === 'function' ? blot.length() : 1;
-		const length = Math.max(Number(blotLength) || 1, 1);
-
-		return Number.isInteger(index) ? { blot, index, length } : null;
-	}
-
-	/**
-	 * Gets TableUp cell blots between two row selection ranges.
-	 *
-	 * @param {HTMLTableElement} table
-	 * @param {{index: number, length: number}} anchorRange
-	 * @param {{index: number, length: number}} focusRange
-	 * @returns {unknown[]}
-	 */
-	getTableCellsBetweenRanges(table, anchorRange, focusRange) {
-		const start = Math.min(anchorRange.index, focusRange.index);
-		const end = Math.max(anchorRange.index + anchorRange.length, focusRange.index + focusRange.length);
-
-		return this.getTableCellSelectionRanges(table)
-			.filter((range) => start <= range.index && range.index < end)
-			.map((range) => range.blot);
-	}
-
-	/**
-	 * Gets exact TableUp cell blots from table selection range data.
-	 *
-	 * @param {HTMLTableElement} table
-	 * @param {{index: number, length: number, cells?: unknown[]}} anchorRange
-	 * @param {{index: number, length: number, cells?: unknown[]}} focusRange
-	 * @returns {unknown[]}
-	 */
-	getTableSelectionCells(table, anchorRange, focusRange) {
-		if (
-			Number.isInteger(anchorRange.columnIndex)
-			&& Number.isInteger(focusRange.columnIndex)
-		) {
-			return this.getTableCellsBetweenColumns(table, anchorRange.columnIndex, focusRange.columnIndex);
-		}
-
-		if (anchorRange.cells?.length && focusRange.cells?.length) {
-			return Array.from(new Set([...anchorRange.cells, ...focusRange.cells]));
-		}
-
-		return this.getTableCellsBetweenRanges(table, anchorRange, focusRange);
-	}
-
-	/**
-	 * Gets exact cell blots for all columns between two visual column indexes.
-	 *
-	 * @param {HTMLTableElement} table
-	 * @param {number} anchorColumnIndex
-	 * @param {number} focusColumnIndex
-	 * @returns {unknown[]}
-	 */
-	getTableCellsBetweenColumns(table, anchorColumnIndex, focusColumnIndex) {
-		const start = Math.min(anchorColumnIndex, focusColumnIndex);
-		const end = Math.max(anchorColumnIndex, focusColumnIndex);
-
-		return Array.from(table.querySelectorAll('tr'))
-			.flatMap((row) => Array.from(row.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'))
-				.slice(start, end + 1))
-			.map((cell) => this.getTableCellSelectionRange(cell)?.blot)
-			.filter(Boolean);
-	}
-
-	/**
-	 * Gets a TableUp overlay boundary for explicit table cells.
-	 *
-	 * @param {unknown[]} cells
-	 * @returns {{x: number, y: number, width: number, height: number} | null}
-	 */
-	getTableSelectionBoundary(cells) {
-		const rootRect = this.quill?.root?.getBoundingClientRect?.();
-
-		if (!rootRect) {
-			return null;
-		}
-
-		const rects = cells
-			.map((cell) => cell?.parent?.domNode?.getBoundingClientRect?.() || cell?.domNode?.getBoundingClientRect?.())
-			.filter((rect) => rect && rect.width > 0 && rect.height > 0);
-
-		if (!rects.length) {
-			return null;
-		}
-
-		const left = Math.min(...rects.map((rect) => rect.left));
-		const top = Math.min(...rects.map((rect) => rect.top));
-		const right = Math.max(...rects.map((rect) => rect.right));
-		const bottom = Math.max(...rects.map((rect) => rect.bottom));
-
-		return {
-			height: bottom - top,
-			width: right - left,
-			x: left - rootRect.left,
-			y: top - rootRect.top,
-		};
-	}
-
-	/**
 	 * Gets the TableUp selection helper when it is available.
 	 *
 	 * @returns {unknown | null}
@@ -1722,6 +1707,956 @@ export default class EditorPage extends React.Component {
 		const tableModule = this.quill?.getModule?.(TableUp.moduleName);
 
 		return tableModule?.getModule?.(TableSelection.moduleName) || null;
+	}
+
+	/**
+	 * Gates TableUp's default root mousedown cell-selection behavior.
+	 *
+	 * The app uses TableUp's selection module for explicit row/column
+	 * selection, but a plain click inside a cell should remain a Quill/browser
+	 * caret placement gesture.
+	 *
+	 * @returns {void}
+	 */
+	attachTableSelectionMouseDownGate() {
+		const tableSelection = this.getTableSelectionModule();
+		const root = this.quill?.root;
+		const original = tableSelection?.tableSelectMouseDownHandler;
+
+		if (!root || !tableSelection || typeof original !== 'function' || this.tableSelectionMouseDownGate) {
+			return;
+		}
+
+		const gated = (event) => {
+			if (event?.mnSuppressTableUpSelection === true) {
+				this.logTableDebug('table-selection:root-mousedown:suppressed', {
+					event: this.getTableDebugEventSummary(event),
+					snapshot: this.getTableDebugSnapshot(event),
+				});
+				return;
+			}
+
+			return original.call(tableSelection, event);
+		};
+
+		root.removeEventListener('mousedown', original);
+		root.addEventListener('mousedown', gated);
+		tableSelection.tableSelectMouseDownHandler = gated;
+		this.tableSelectionMouseDownGate = {
+			gated,
+			original,
+			root,
+			tableSelection,
+		};
+	}
+
+	/**
+	 * Restores TableUp's original root mousedown handler.
+	 *
+	 * @returns {void}
+	 */
+	detachTableSelectionMouseDownGate() {
+		const gate = this.tableSelectionMouseDownGate;
+
+		if (!gate) {
+			return;
+		}
+
+		gate.root?.removeEventListener?.('mousedown', gate.gated);
+		gate.root?.addEventListener?.('mousedown', gate.original);
+
+		if (gate.tableSelection?.tableSelectMouseDownHandler === gate.gated) {
+			gate.tableSelection.tableSelectMouseDownHandler = gate.original;
+		}
+
+		this.tableSelectionMouseDownGate = null;
+	}
+
+	/**
+	 * Places the caret in a table cell when a plain click lands on blank cell space.
+	 *
+	 * @param {MouseEvent | unknown} event - Source mousedown event.
+	 * @returns {void}
+	 */
+	scheduleBlankTableCellFocus(event) {
+		const target = this.getElementFromNode(event?.target);
+		const cell = this.getTableCellInnerFromNode(target);
+		const musicEmbed = this.getMusicEmbedFromNode(target);
+
+		if (!cell || this.isTableTextCursorTarget(event?.target)) {
+			this.logTableDebug('table-cell-focus:skip', {
+				cell: this.describeTableDebugNode(cell),
+				reason: cell ? 'text-cursor-target' : 'no-cell',
+				target: this.describeTableDebugNode(target),
+			});
+			return;
+		}
+
+		this.logTableDebug('table-cell-focus:scheduled', {
+			cell: this.describeTableDebugNode(cell),
+			musicEmbed: this.describeTableDebugNode(musicEmbed),
+			target: this.describeTableDebugNode(target),
+		});
+		this.schedulePostMouseGestureTask(() => {
+			if (!cell.isConnected) {
+				this.logTableDebug('table-cell-focus:skip', {
+					cell: this.describeTableDebugNode(cell),
+					reason: 'disconnected-cell',
+				});
+				return;
+			}
+
+			if (musicEmbed?.isConnected && this.selectAfterMusicEmbed(musicEmbed)) {
+				this.logTableDebug('table-cell-focus:selected-after-embed', {
+					cell: this.describeTableDebugNode(cell),
+					musicEmbed: this.describeTableDebugNode(musicEmbed),
+					snapshot: this.getTableDebugSnapshot(),
+				});
+				return;
+			}
+
+			if (this.isQuillSelectionInTableCell(cell)) {
+				this.logTableDebug('table-cell-focus:skip', {
+					cell: this.describeTableDebugNode(cell),
+					reason: 'selection-already-in-cell',
+					snapshot: this.getTableDebugSnapshot(),
+				});
+				return;
+			}
+
+			this.logTableDebug('table-cell-focus:selected-cell-start', {
+				cell: this.describeTableDebugNode(cell),
+				snapshot: this.getTableDebugSnapshot(),
+			});
+			this.selectTableCell(cell);
+		});
+	}
+
+	/**
+	 * Runs a task after the current mouse gesture has had a chance to settle.
+	 *
+	 * @param {() => void} task - Task to run.
+	 * @returns {void}
+	 */
+	schedulePostMouseGestureTask(task) {
+		window.setTimeout(() => {
+			if (typeof window.requestAnimationFrame === 'function') {
+				window.requestAnimationFrame(task);
+				return;
+			}
+
+			window.setTimeout(task, 0);
+		}, 0);
+	}
+
+	/**
+	 * Gets a rendered TableUp cell-inner element from any table-cell descendant.
+	 *
+	 * @param {Node | Element | unknown} node - Source node.
+	 * @returns {Element | null}
+	 */
+	getTableCellInnerFromNode(node) {
+		const element = this.getElementFromNode(node);
+		const inner = element?.closest?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
+
+		if (inner) {
+			return inner;
+		}
+
+		const cell = element?.closest?.('td, th, .ql-table-cell, .table-up-cell') || null;
+
+		return cell?.querySelector?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
+	}
+
+	/**
+	 * Gets a music embed from an event target.
+	 *
+	 * @param {Node | Element | unknown} node - Source node.
+	 * @returns {Element | null}
+	 */
+	getMusicEmbedFromNode(node) {
+		const element = this.getElementFromNode(node);
+
+		return element?.closest?.('.music-keyboard-embed') || null;
+	}
+
+	/**
+	 * Places the Quill selection immediately after a clicked music embed.
+	 *
+	 * @param {Element} embed - Rendered music embed root.
+	 * @returns {boolean}
+	 */
+	selectAfterMusicEmbed(embed) {
+		const blot = embed ? (Quill.find(embed) || Quill.find(embed, true)) : null;
+
+		if (!blot || !this.quill?.getIndex) {
+			this.logTableDebug('table-cell-focus:select-after-embed-failed', {
+				musicEmbed: this.describeTableDebugNode(embed),
+				reason: blot ? 'missing-quill-index' : 'missing-blot',
+			});
+			return false;
+		}
+
+		const index = this.quill.getIndex(blot);
+		const length = Number(blot.length?.());
+
+		if (!Number.isInteger(index)) {
+			this.logTableDebug('table-cell-focus:select-after-embed-failed', {
+				index,
+				musicEmbed: this.describeTableDebugNode(embed),
+				reason: 'invalid-index',
+			});
+			return false;
+		}
+
+		this.getTableSelectionModule()?.hide?.();
+		this.setQuillSelectionWithoutScroll(
+			index + (Number.isFinite(length) && length > 0 ? length : 1),
+			0,
+			'user',
+			embed,
+		);
+		this.updateToolbarState();
+		this.updateEmbedSelectionState();
+		return true;
+	}
+
+	/**
+	 * Sets a Quill selection while preserving visible scroll positions.
+	 *
+	 * @param {number} index - Selection index.
+	 * @param {number} length - Selection length.
+	 * @param {string} source - Quill selection source.
+	 * @param {Element | null} anchor - DOM anchor used to find scroll containers.
+	 * @returns {void}
+	 */
+	setQuillSelectionWithoutScroll(index, length, source, anchor = null) {
+		const snapshots = this.captureScrollSnapshots(anchor);
+
+		try {
+			this.quill?.focus?.({ preventScroll: true });
+			this.quill?.setSelection?.(index, length, source);
+		} finally {
+			this.restoreScrollSnapshots(snapshots);
+			window.setTimeout(() => this.restoreScrollSnapshots(snapshots), 0);
+		}
+	}
+
+	/**
+	 * Captures scroll positions that programmatic focus/selection might disturb.
+	 *
+	 * @param {Element | null} anchor - DOM anchor used to find scroll containers.
+	 * @returns {Array<Record<string, unknown>>}
+	 */
+	captureScrollSnapshots(anchor = null) {
+		const snapshots = [];
+		const ownerDocument = anchor?.ownerDocument || this.quill?.root?.ownerDocument || document;
+		const ownerWindow = ownerDocument?.defaultView || window;
+		const seen = new Set();
+
+		if (ownerWindow) {
+			snapshots.push({
+				target: ownerWindow,
+				type: 'window',
+				x: ownerWindow.scrollX,
+				y: ownerWindow.scrollY,
+			});
+		}
+
+		[
+			this.documentContentRef?.current,
+			this.quill?.root,
+			anchor,
+			anchor?.closest?.('.ql-editor, .mn-document-content, .mn-editor-page, .mn-editor-scroll, [data-scroll-container]'),
+		].filter(Boolean).forEach((node) => {
+			let current = node;
+
+			while (current && current !== ownerDocument?.body && current !== ownerDocument?.documentElement) {
+				if (!seen.has(current) && this.isScrollableElement(current)) {
+					seen.add(current);
+					snapshots.push({
+						target: current,
+						type: 'element',
+						x: current.scrollLeft,
+						y: current.scrollTop,
+					});
+				}
+
+				current = current.parentElement;
+			}
+		});
+
+		return snapshots;
+	}
+
+	/**
+	 * Restores scroll positions captured before a forced Quill selection.
+	 *
+	 * @param {Array<Record<string, unknown>>} snapshots - Captured scroll positions.
+	 * @returns {void}
+	 */
+	restoreScrollSnapshots(snapshots = []) {
+		snapshots.forEach((snapshot) => {
+			if (snapshot.type === 'window') {
+				snapshot.target?.scrollTo?.(snapshot.x, snapshot.y);
+				return;
+			}
+
+			if (snapshot.target) {
+				snapshot.target.scrollLeft = snapshot.x;
+				snapshot.target.scrollTop = snapshot.y;
+			}
+		});
+	}
+
+	/**
+	 * Checks whether an element can scroll.
+	 *
+	 * @param {Element | unknown} element - Candidate element.
+	 * @returns {boolean}
+	 */
+	isScrollableElement(element) {
+		return Boolean(element
+			&& (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth));
+	}
+
+	/**
+	 * Checks whether a native event target already gives the browser a text cursor target.
+	 *
+	 * @param {Node | Element | unknown} target - Native event target.
+	 * @returns {boolean}
+	 */
+	isTableTextCursorTarget(target) {
+		const element = this.getElementFromNode(target);
+
+		if (element?.closest?.('.music-keyboard-embed, [contenteditable="false"]')) {
+			return false;
+		}
+
+		if (target?.nodeType === getNodeType('TEXT_NODE')) {
+			return true;
+		}
+
+		if (!element) {
+			return false;
+		}
+
+		const textBlock = element.closest?.('p, li, h1, h2, h3, h4, h5, h6, blockquote');
+
+		return Boolean(textBlock && element !== textBlock);
+	}
+
+	/**
+	 * Checks whether the current Quill selection is already inside a table cell.
+	 *
+	 * @param {HTMLElement} cell - Rendered table cell inner.
+	 * @returns {boolean}
+	 */
+	isQuillSelectionInTableCell(cell) {
+		const currentCell = this.getCurrentTableCellInner();
+
+		return currentCell === cell || Boolean(currentCell && cell.contains(currentCell));
+	}
+
+	/**
+	 * Gets an element from a DOM node.
+	 *
+	 * @param {Node | Element | unknown} node - Source node.
+	 * @returns {Element | null}
+	 */
+	getElementFromNode(node) {
+		if (!node) {
+			return null;
+		}
+
+		if (node.nodeType === getNodeType('ELEMENT_NODE')) {
+			return node;
+		}
+
+		return node.parentElement || null;
+	}
+
+	/**
+	 * Attaches optional table debugging instrumentation for event-flow tracing.
+	 *
+	 * Enable with localStorage.setItem('mn.tableDebug', '1') and reload, or by
+	 * adding ?mnTableDebug=1 to the app URL.
+	 *
+	 * @returns {void}
+	 */
+	attachTableDebugInstrumentation() {
+		this.tableDebugEnabled = this.isTableDebugEnabled();
+
+		if (!this.tableDebugEnabled) {
+			return;
+		}
+
+		this.logTableDebug('debug:attached', {
+			snapshot: this.getTableDebugSnapshot(),
+		});
+		this.attachTableDebugNativeListeners();
+		this.patchTableSelectionDebugMethods();
+	}
+
+	/**
+	 * Removes table debugging instrumentation and restores patched methods.
+	 *
+	 * @returns {void}
+	 */
+	detachTableDebugInstrumentation() {
+		this.detachTableDebugNativeListeners();
+		this.restoreTableSelectionDebugMethods();
+		this.tableDebugEnabled = false;
+	}
+
+	/**
+	 * Checks whether table instrumentation should be active.
+	 *
+	 * @returns {boolean}
+	 */
+	isTableDebugEnabled() {
+		const params = new URLSearchParams(window.location?.search || '');
+
+		if (params.get('mnTableDebug') === '1') {
+			return true;
+		}
+
+		try {
+			return window.localStorage?.getItem?.('mn.tableDebug') === '1';
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Attaches native event listeners around the Quill root and document.
+	 *
+	 * @returns {void}
+	 */
+	attachTableDebugNativeListeners() {
+		const root = this.quill?.root;
+		const ownerDocument = root?.ownerDocument;
+
+		if (!root || !ownerDocument || this.tableDebugNativeListeners.length) {
+			return;
+		}
+
+		[
+			'mousedown',
+			'mouseup',
+			'click',
+			'pointerdown',
+			'pointerup',
+		].forEach((eventName) => {
+			this.addTableDebugNativeListener(root, eventName, true);
+			this.addTableDebugNativeListener(root, eventName, false);
+		});
+		this.addTableDebugNativeListener(ownerDocument, 'selectionchange', false);
+	}
+
+	/**
+	 * Adds one table debug native listener and stores it for cleanup.
+	 *
+	 * @param {EventTarget} target - Native event target.
+	 * @param {string} eventName - Event name to trace.
+	 * @param {boolean} capture - Whether to listen in capture phase.
+	 * @returns {void}
+	 */
+	addTableDebugNativeListener(target, eventName, capture) {
+		const listener = (event) => {
+			this.logTableDebug(`native:${eventName}:${capture ? 'capture' : 'bubble'}`, {
+				event: this.getTableDebugEventSummary(event),
+				snapshot: this.getTableDebugSnapshot(event),
+			});
+		};
+
+		target.addEventListener(eventName, listener, capture);
+		this.tableDebugNativeListeners.push({
+			capture,
+			eventName,
+			listener,
+			target,
+		});
+	}
+
+	/**
+	 * Removes table debug native listeners.
+	 *
+	 * @returns {void}
+	 */
+	detachTableDebugNativeListeners() {
+		this.tableDebugNativeListeners.forEach((record) => {
+			record.target?.removeEventListener?.(record.eventName, record.listener, record.capture);
+		});
+		this.tableDebugNativeListeners = [];
+	}
+
+	/**
+	 * Wraps live TableUp selection methods to trace TableUp's own decisions.
+	 *
+	 * @returns {void}
+	 */
+	patchTableSelectionDebugMethods() {
+		const tableSelection = this.getTableSelectionModule();
+
+		if (!tableSelection || this.tableDebugPatchedSelection === tableSelection) {
+			return;
+		}
+
+		this.restoreTableSelectionDebugMethods();
+		this.tableDebugPatchedSelection = tableSelection;
+		this.patchTableSelectionDebugBoundListeners(tableSelection);
+		[
+			'setSelectionTable',
+			'setSelectedTds',
+			'show',
+			'hide',
+			'computeSelectedTds',
+			'updateWithSelectedTds',
+			'update',
+		].forEach((methodName) => this.patchTableSelectionDebugMethod(tableSelection, methodName));
+	}
+
+	/**
+	 * Wraps one TableUp selection method.
+	 *
+	 * @param {unknown} tableSelection - TableUp selection module instance.
+	 * @param {string} methodName - Method to wrap.
+	 * @returns {void}
+	 */
+	patchTableSelectionDebugMethod(tableSelection, methodName) {
+		const original = tableSelection?.[methodName];
+
+		if (typeof original !== 'function') {
+			return;
+		}
+
+		const page = this;
+		const wrapped = function(...args) {
+			page.logTableDebug(`table-selection:${methodName}:before`, {
+				args: page.getTableDebugArgsSummary(args),
+				snapshot: page.getTableDebugSnapshot(args[0]),
+			});
+
+			try {
+				return original.apply(this, args);
+			} finally {
+				page.logTableDebug(`table-selection:${methodName}:after`, {
+					args: page.getTableDebugArgsSummary(args),
+					snapshot: page.getTableDebugSnapshot(args[0]),
+				});
+			}
+		};
+
+		tableSelection[methodName] = wrapped;
+		this.tableDebugPatchedMethods.push({
+			methodName,
+			original,
+			tableSelection,
+		});
+	}
+
+	/**
+	 * Restores patched TableUp selection methods.
+	 *
+	 * @returns {void}
+	 */
+	restoreTableSelectionDebugMethods() {
+		this.restoreTableSelectionDebugBoundListeners();
+		this.tableDebugPatchedMethods.forEach((record) => {
+			if (record.tableSelection?.[record.methodName]) {
+				record.tableSelection[record.methodName] = record.original;
+			}
+		});
+		this.tableDebugPatchedMethods = [];
+		this.tableDebugPatchedSelection = null;
+	}
+
+	/**
+	 * Rewires TableUp listeners that were bound before method wrapping.
+	 *
+	 * @param {unknown} tableSelection - TableUp selection module instance.
+	 * @returns {void}
+	 */
+	patchTableSelectionDebugBoundListeners(tableSelection) {
+		this.patchTableSelectionDebugDomListener({
+			eventName: 'mousedown',
+			label: 'table-selection:bound-root-mousedown',
+			listenerProperty: 'tableSelectMouseDownHandler',
+			target: this.quill?.root || null,
+			tableSelection,
+		});
+		this.patchTableSelectionDebugDomListener({
+			eventName: 'selectionchange',
+			label: 'table-selection:bound-document-selectionchange',
+			listenerProperty: 'selectionChangeHandler',
+			target: this.quill?.root?.ownerDocument || null,
+			tableSelection,
+		});
+		this.patchTableSelectionDebugQuillListener(tableSelection);
+	}
+
+	/**
+	 * Rewires one TableUp DOM listener.
+	 *
+	 * @param {Record<string, unknown>} options - Listener patch options.
+	 * @returns {void}
+	 */
+	patchTableSelectionDebugDomListener(options) {
+		const {
+			eventName,
+			label,
+			listenerProperty,
+			tableSelection,
+			target,
+		} = options;
+		const original = tableSelection?.[listenerProperty];
+
+		if (!target?.removeEventListener || typeof original !== 'function') {
+			return;
+		}
+
+		const wrapped = (...args) => {
+			this.logTableDebug(`${label}:before`, {
+				args: this.getTableDebugArgsSummary(args),
+				snapshot: this.getTableDebugSnapshot(args[0]),
+			});
+
+			try {
+				return original.apply(tableSelection, args);
+			} finally {
+				this.logTableDebug(`${label}:after`, {
+					args: this.getTableDebugArgsSummary(args),
+					snapshot: this.getTableDebugSnapshot(args[0]),
+				});
+			}
+		};
+
+		target.removeEventListener(eventName, original);
+		target.addEventListener(eventName, wrapped);
+		tableSelection[listenerProperty] = wrapped;
+		this.tableDebugPatchedListeners.push({
+			eventName,
+			original,
+			propertyName: listenerProperty,
+			tableSelection,
+			target,
+			type: 'dom',
+			wrapped,
+		});
+	}
+
+	/**
+	 * Rewires TableUp's Quill selection-change listener.
+	 *
+	 * @param {unknown} tableSelection - TableUp selection module instance.
+	 * @returns {void}
+	 */
+	patchTableSelectionDebugQuillListener(tableSelection) {
+		const original = tableSelection?.quillSelectionChangeHandler;
+
+		if (!this.quill?.off || !this.quill?.on || typeof original !== 'function') {
+			return;
+		}
+
+		const eventName = Quill.events.SELECTION_CHANGE;
+		const wrapped = (...args) => {
+			this.logTableDebug('table-selection:bound-quill-selection-change:before', {
+				args: this.getTableDebugArgsSummary(args),
+				snapshot: this.getTableDebugSnapshot(),
+			});
+
+			try {
+				return original.apply(tableSelection, args);
+			} finally {
+				this.logTableDebug('table-selection:bound-quill-selection-change:after', {
+					args: this.getTableDebugArgsSummary(args),
+					snapshot: this.getTableDebugSnapshot(),
+				});
+			}
+		};
+
+		this.quill.off(eventName, original);
+		this.quill.on(eventName, wrapped);
+		tableSelection.quillSelectionChangeHandler = wrapped;
+		this.tableDebugPatchedListeners.push({
+			eventName,
+			original,
+			propertyName: 'quillSelectionChangeHandler',
+			tableSelection,
+			type: 'quill',
+			wrapped,
+		});
+	}
+
+	/**
+	 * Restores TableUp listeners rewired for debug tracing.
+	 *
+	 * @returns {void}
+	 */
+	restoreTableSelectionDebugBoundListeners() {
+		this.tableDebugPatchedListeners.forEach((record) => {
+			if (record.type === 'dom') {
+				record.target?.removeEventListener?.(record.eventName, record.wrapped);
+				record.target?.addEventListener?.(record.eventName, record.original);
+			}
+
+			if (record.type === 'quill') {
+				this.quill?.off?.(record.eventName, record.wrapped);
+				this.quill?.on?.(record.eventName, record.original);
+			}
+
+			if (record.tableSelection?.[record.propertyName]) {
+				record.tableSelection[record.propertyName] = record.original;
+			}
+		});
+		this.tableDebugPatchedListeners = [];
+	}
+
+	/**
+	 * Logs a normalized table debug event.
+	 *
+	 * @param {string} label - Debug label.
+	 * @param {Record<string, unknown>} detail - Debug detail.
+	 * @returns {void}
+	 */
+	logTableDebug(label, detail = {}) {
+		if (!this.tableDebugEnabled) {
+			return;
+		}
+
+		this.tableDebugEventSequence += 1;
+		const payload = {
+			label,
+			sequence: this.tableDebugEventSequence,
+			time: Number((typeof performance !== 'undefined' && performance.now?.()) || Date.now()).toFixed(2),
+			...detail,
+		};
+
+		console.groupCollapsed?.(`[mn-table-debug #${payload.sequence}] ${label}`);
+		console.log(payload);
+		console.groupEnd?.();
+	}
+
+	/**
+	 * Builds a compact event summary for table debug logs.
+	 *
+	 * @param {Event | unknown} event - Event-like object.
+	 * @returns {Record<string, unknown> | null}
+	 */
+	getTableDebugEventSummary(event) {
+		if (!event?.type) {
+			return null;
+		}
+
+		return {
+			button: event.button,
+			buttons: event.buttons,
+			cancelBubble: event.cancelBubble,
+			clientX: Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : null,
+			clientY: Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : null,
+			defaultPrevented: event.defaultPrevented,
+			eventPhase: this.getTableDebugEventPhaseName(event.eventPhase),
+			target: this.describeTableDebugNode(event.target),
+			type: event.type,
+		};
+	}
+
+	/**
+	 * Builds a compact interaction context summary.
+	 *
+	 * @param {Partial<EditorInteractionContext>} context - Interaction context.
+	 * @returns {Record<string, unknown>}
+	 */
+	getTableDebugContextSummary(context = {}) {
+		return {
+			captured: context.captured === true,
+			handlerId: context.handlerId || context.handler?.id || '',
+			target: this.getTableDebugTargetSummary(context.target),
+			targetServiceName: context.targetServiceName || '',
+		};
+	}
+
+	/**
+	 * Builds a compact dispatch result summary.
+	 *
+	 * @param {EditorInteractionDispatchResult | unknown} result - Dispatch result.
+	 * @returns {Record<string, unknown>}
+	 */
+	getTableDebugDispatchResultSummary(result = {}) {
+		return {
+			handlerId: result.handlerId || '',
+			handled: result.handled === true,
+			preventDefault: result.result?.preventDefault === true,
+			serviceName: result.serviceName || '',
+			stopPropagation: result.result?.stopPropagation === true,
+			target: this.getTableDebugTargetSummary(result.target),
+		};
+	}
+
+	/**
+	 * Formats a dispatch result summary for compact debug labels.
+	 *
+	 * @param {Record<string, unknown>} result - Dispatch result summary.
+	 * @returns {string}
+	 */
+	getTableDebugResultLabel(result = {}) {
+		const flags = [
+			result.handled === true ? 'handled' : 'open',
+			result.preventDefault === true ? 'prevent' : '',
+			result.stopPropagation === true ? 'stop' : '',
+			result.serviceName || '',
+			result.handlerId || '',
+		].filter(Boolean);
+
+		return flags.join(':');
+	}
+
+	/**
+	 * Builds a snapshot of Quill and TableUp state for a table debug log.
+	 *
+	 * @param {Event | unknown} event - Optional event-like source.
+	 * @returns {Record<string, unknown>}
+	 */
+	getTableDebugSnapshot(event = null) {
+		const tableSelection = this.getTableSelectionModule();
+		const selectedTds = Array.isArray(tableSelection?.selectedTds)
+			? tableSelection.selectedTds
+			: [];
+		const targetCell = this.getTableCellInnerFromNode(event?.target);
+		const activeElement = this.quill?.root?.ownerDocument?.activeElement || null;
+
+		return {
+			activeElement: this.describeTableDebugNode(activeElement),
+			quillSelection: this.getTableDebugQuillSelection(),
+			selectedCells: selectedTds.map((cell) => this.describeTableDebugNode(cell?.domNode || cell?.parent?.domNode || null)),
+			selectedTdsCount: selectedTds.length,
+			tableSelectionDisplay: tableSelection?.isDisplaySelection === true,
+			tableSelectionTable: this.describeTableDebugNode(tableSelection?.table || null),
+			targetCell: this.describeTableDebugNode(targetCell),
+		};
+	}
+
+	/**
+	 * Gets the current Quill selection without forcing focus.
+	 *
+	 * @returns {Record<string, number> | null}
+	 */
+	getTableDebugQuillSelection() {
+		const range = this.quill?.getSelection?.();
+
+		if (!range) {
+			return null;
+		}
+
+		return {
+			index: range.index,
+			length: range.length,
+		};
+	}
+
+	/**
+	 * Summarizes method wrapper arguments for debug logs.
+	 *
+	 * @param {unknown[]} args - Wrapped method arguments.
+	 * @returns {unknown[]}
+	 */
+	getTableDebugArgsSummary(args = []) {
+		return args.map((arg) => {
+			if (arg?.type) {
+				return this.getTableDebugEventSummary(arg);
+			}
+
+			if (arg?.nodeType || arg?.tagName) {
+				return this.describeTableDebugNode(arg);
+			}
+
+			if (Array.isArray(arg)) {
+				return arg.map((item) => this.describeTableDebugNode(item?.domNode || item?.parent?.domNode || item));
+			}
+
+			if (arg && typeof arg === 'object') {
+				return {
+					keys: Object.keys(arg).slice(0, 12),
+				};
+			}
+
+			return arg;
+		});
+	}
+
+	/**
+	 * Summarizes an editor interaction target.
+	 *
+	 * @param {EditorInteractionTarget | null | undefined} target - Interaction target.
+	 * @returns {Record<string, unknown> | null}
+	 */
+	getTableDebugTargetSummary(target) {
+		if (!target) {
+			return null;
+		}
+
+		return {
+			element: this.describeTableDebugNode(target.element),
+			handlerId: target.handlerId || '',
+			role: target.role || '',
+			serviceName: target.serviceName || '',
+		};
+	}
+
+	/**
+	 * Converts event phase constants to readable names.
+	 *
+	 * @param {number} phase - Event phase constant.
+	 * @returns {string}
+	 */
+	getTableDebugEventPhaseName(phase) {
+		if (phase === Event.CAPTURING_PHASE) {
+			return 'capture';
+		}
+
+		if (phase === Event.AT_TARGET) {
+			return 'target';
+		}
+
+		if (phase === Event.BUBBLING_PHASE) {
+			return 'bubble';
+		}
+
+		return 'none';
+	}
+
+	/**
+	 * Describes a DOM node for compact table debug logs.
+	 *
+	 * @param {Node | null | undefined} node - Node to describe.
+	 * @returns {string | null}
+	 */
+	describeTableDebugNode(node) {
+		if (!node) {
+			return null;
+		}
+
+		if (node.nodeType === Node.TEXT_NODE) {
+			return '#text';
+		}
+
+		const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+
+		if (!element) {
+			return String(node.nodeName || node);
+		}
+
+		const id = element.id ? `#${element.id}` : '';
+		const classes = Array.from(element.classList || [])
+			.slice(0, 6)
+			.map((className) => `.${className}`)
+			.join('');
+		const tableId = element.dataset?.tableId ? `[data-table-id="${element.dataset.tableId}"]` : '';
+		const rowId = element.dataset?.rowId ? `[data-row-id="${element.dataset.rowId}"]` : '';
+		const colId = element.dataset?.colId ? `[data-col-id="${element.dataset.colId}"]` : '';
+
+		return `${element.tagName?.toLowerCase?.() || element.nodeName}${id}${classes}${tableId}${rowId}${colId}`;
 	}
 
 	/**
@@ -2031,7 +2966,11 @@ export default class EditorPage extends React.Component {
 					iconRegistry={iconRegistry}
 					label="Editor toolbar"
 				/>
-				<div ref={this.editorSurfaceRef} className="editor-page-surface">
+				<div
+					ref={this.editorSurfaceRef}
+					className="editor-page-surface"
+					onPointerDownCapture={this.handleEditorSurfacePointerDownCapture}
+				>
 					<div className="mn-editor-split-workspace">
 						<div className="mn-document-workspace">
 							<div
@@ -2050,9 +2989,11 @@ export default class EditorPage extends React.Component {
 										className="editor-quill"
 										onContextMenu={this.handleEditorContextMenu}
 										onKeyDown={this.handleEditorKeyDown}
-										onPointerDown={this.handleTableColumnPointerDown}
-										onPointerLeave={this.handleTableColumnPointerLeave}
-										onPointerMove={this.handleTableColumnPointerMove}
+										onPointerCancel={this.handleEditorPointerCancel}
+										onPointerDown={this.handleEditorPointerDown}
+										onPointerLeave={this.handleEditorPointerLeave}
+										onPointerMove={this.handleEditorPointerMove}
+										onPointerUp={this.handleEditorPointerUp}
 									/>
 									<div
 										ref={this.whiteSpaceOverlayRef}
@@ -2090,14 +3031,6 @@ function clampNumber(value, min, max) {
 	}
 
 	return Math.min(Math.max(number, min), max);
-}
-
-function cssEscape(value) {
-	if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
-		return CSS.escape(value);
-	}
-
-	return String(value).replace(/["\\]/g, '\\$&');
 }
 
 function getTextRangeRect(node, start, end) {
@@ -2468,4 +3401,15 @@ function isNativeSelectionIncludingNode(node) {
 	}
 
 	return false;
+}
+
+function getNodeType(name) {
+	if (typeof Node !== 'undefined') {
+		return Node[name];
+	}
+
+	return {
+		ELEMENT_NODE: 1,
+		TEXT_NODE: 3,
+	}[name];
 }

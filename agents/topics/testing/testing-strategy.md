@@ -227,17 +227,38 @@ Current full verification command:
 npm run test:ui
 ```
 
+Current continuous UI loop:
+
+```text
+npm run test:ui:watch
+```
+
+That command does an initial `polylith test mn`, starts
+`polylith test mn -w` to rebuild the browser test bundle on source changes,
+and runs Karma with `karma.watch.conf.cjs` so browser results rerun when the
+built `tests/` output changes. When started by Codex for monitorable output,
+the current convention is to run the two long-lived processes with logs at
+`.codex-logs/ui-test-build-watch.log` and
+`.codex-logs/ui-test-karma-watch.log`.
+
 Recent known-good result:
 
 ```text
-307 SUCCESS
+ViewModeService: 328 SUCCESS
+TableController: 330 SUCCESS
+Continuous watcher after selected-column right-click regression: 334 SUCCESS
 ```
 
-This result followed the current editor view registry, table context menu
-operations, table overflow reachability, and music-object table-cell sizing
-work. Known non-failing noise remains MUI Dialog `act(...)` warnings,
-React lifecycle/flushSync warnings around Quill/table/editor mount paths,
-module directive warnings, and occasional OSMD layout warnings.
+The `ViewModeService` result followed the read-only paged-preview table CSS fix.
+The `TableController` result followed the current split-table context-menu
+attempt, but the split-table behavior is not manually working yet and should
+not be treated as complete. The continuous watcher result followed the table
+context-menu ordering, fit-to-width/distribute-columns commands, document-tab
+click fix, and selected-column right-click preservation regression. Known
+non-failing noise remains MUI Dialog
+`act(...)` warnings, React lifecycle/flushSync warnings around
+Quill/table/editor mount paths, module directive warnings, and occasional OSMD
+layout warnings.
 
 ## How Specs Enter The UI Test Build
 
@@ -352,6 +373,9 @@ Recommended pattern:
   - run `polylith test <app> -w`
 - `karma`
   - run Karma only against the built output
+- `test:ui:watch`
+  - run the initial test build
+  - keep `polylith test <app> -w` and Karma watch running together
 
 For sustained UI work, the intended live loop is:
 

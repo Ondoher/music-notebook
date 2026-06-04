@@ -16,6 +16,15 @@ The first account/session slice and Mongo-backed document persistence slice also
 The document model is still the client implementation seam for tabs, active editor content, document settings, and generic document objects; the server document record wraps that snapshot with ownership and metadata.
 The first table implementation slice is now active through `quill-table-up` and a dedicated `table` feature.
 That slice includes table insertion, row/column selection, keyboard cell navigation, column resizing, a feature-owned context menu view, and row/column/table operations.
+An edit-view split-table command has been attempted in the context menu, but it is not yet usable: manual testing still loses the second half of the table or otherwise fails to leave two durable TableUp tables.
+The current split-view/paged-preview path uses a detached clone of the live
+Quill editor root with preview-only CSS. The large TableUp table rendering
+failure in the read-only right pane was fixed by stronger preview-only table
+wrapper/table rules, but broader table pagination/export behavior still needs
+hardening.
+Internal keyboard music-object copy/paste now uses semantic embed HTML and a
+feature-registered Quill clipboard matcher so copied app-created music objects
+paste back as a single structured embed rather than rendered UI text.
 
 Near-term planning should cover:
 
@@ -24,7 +33,7 @@ Near-term planning should cover:
 - hardening notebook document serialization around the current `document-model` snapshot
 - Quill Delta consolidation with structured inline chord objects and larger music-object payloads
 - document-level settings such as page layout and chord display style
-- hardening table paste, table serialization/reload confidence, read-view pagination, and export behavior
+- hardening table paste, table serialization/reload confidence, edit-view split-table behavior, read-view pagination, and export behavior
 - persistence and auth service seams as they move from first pass to durable behavior
 - PDF export boundary and viable export strategy
 - inline chord object insertion/editing behavior
@@ -44,7 +53,9 @@ For context bootstrap, assume:
 - playback is behind the `player` feature service
 - `accounts` owns account status, dialogs, `account-ui`, and logout intent flow
 - `document` owns document command dialogs and save/open/rename orchestration
-- `table` owns table selection, interaction handling, context-menu view registration, and table operation commands
+- `table` owns table selection, interaction handling, context-menu view registration, and table operation commands; split-table remains an open command because the current implementation does not yet preserve the second half as a durable TableUp table
+- `view-mode` owns the split/paged preview surface, currently using Paged.js
+  over a live Quill-root clone while table pagination is investigated
 - notebook tabs are persisted document metadata, not Quill objects
 - chord parsing decisions are tracked in [Chord Name Parsing](chord-name-parsing.md)
 
@@ -486,10 +497,19 @@ The goal is useful notebook tables, not a full table editor.
 Current table interaction work supports row/column selection, drag selection
 for multiple columns, `Tab`/`Shift+Tab` cell navigation, adding a row from the
 last cell, column resizing, a selection-aware context menu, and basic
-insert/delete row/column/table operations.
+insert/delete row/column/table operations. The context menu also includes table
+arrangement commands for fitting the table to available page width and
+distributing columns evenly while preserving table width.
 Tables may visually extend beyond the page content width while editing; the
 page margin/content guide should remain tied to the effective page width so the
-user can size the table back to fit.
+user can size the table back to fit. The current cleanup direction treats this
+as a generic wide-content problem because any feature may eventually exceed page
+width; tables should become the first contributor to that editor layout seam.
+Plain clicks in table cells are editing gestures, not table-selection gestures:
+native caret placement is used for text hits, a Quill range fallback enters
+blank cell space, and music embeds in cells place the cursor after the embed.
+Split-table commands are present in the context menu but are not considered
+reliable until tested against a real Quill/TableUp integration harness.
 
 ## Paragraph Formatting Scope
 

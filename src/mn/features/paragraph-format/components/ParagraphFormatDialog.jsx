@@ -16,7 +16,7 @@ import BaseSelect from '../../../components/BaseSelect.jsx';
 import FontSizePicker from '../../../components/FontSizePicker.jsx';
 import LocaleString from '../../../components/LocaleString.jsx';
 import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
-import { getLocalizedText } from '../../../components/localized-text.js';
+import { getLocalizedText } from '../../../common/localized-text.js';
 
 /**
  * Renders the paragraph-format dialog.

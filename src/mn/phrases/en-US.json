@@ -99,6 +99,7 @@
 	"music.display.staff": "Staff",
 	"music.embed_dialog.title": "Embed Music",
 	"music.embed_dialog.description": "From here you can decide the kind of music object to add to your document and specify the details of the embedded content.",
+	"music.object.error_loading": "Error loading object",
 	"music.format.alignment": "Alignment",
 	"music.format.alignment.center": "Center",
 	"music.format.alignment.left": "Left",

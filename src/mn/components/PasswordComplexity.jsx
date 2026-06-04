@@ -6,7 +6,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 /** Renders password-complexity rule status. */
 export default class PasswordComplexity extends Component {

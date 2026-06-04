@@ -10,7 +10,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
 import TextInput from './TextInput.jsx';
 import PasswordComplexity from './PasswordComplexity.jsx';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 /** Renders a localized password input with visibility and rule feedback. */
 export default class PasswordInput extends Component {

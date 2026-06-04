@@ -1,33 +1,85 @@
+/// <reference path="./types.d.ts" />
+
+/**
+ * Translates phrase keys for one locale.
+ *
+ * A translator owns one flattened phrase map, optional fallback phrases from
+ * the default locale, plural selection, and `%{name}` token replacement.
+ */
 export default class Translator {
+	/**
+	 * Creates a translator for one locale.
+	 *
+	 * @param {TranslatorOptions} [options]
+	 */
 	constructor(options = {}) {
 		const phrases = options.phrases || {};
 
+		/** @type {LocalizationFlatPhraseMap} */
 		this.phrases = JSON.parse(JSON.stringify(phrases));
+		/** @type {LocalizationLocale} */
 		this.locale = options.locale || 'en-US-u-ms-ussystem';
+		/** @type {string} */
 		this.language = this.locale.split('-u-')[0];
+		/** @type {LocalizationFlatPhraseMap} */
 		this.defaultPhrases = {};
 	}
 
+	/**
+	 * Gets the flattened phrase map owned by this translator.
+	 *
+	 * @returns {LocalizationFlatPhraseMap}
+	 */
 	getAll() {
 		return this.phrases;
 	}
 
+	/**
+	 * Gets the translator locale identifier.
+	 *
+	 * @returns {LocalizationLocale}
+	 */
 	getLocale() {
 		return this.locale;
 	}
 
+	/**
+	 * Gets the language portion of the locale identifier.
+	 *
+	 * @returns {string}
+	 */
 	getLanguage() {
 		return this.language;
 	}
 
+	/**
+	 * Gets one raw phrase value without fallback or replacement.
+	 *
+	 * @param {string} key
+	 * @returns {LocalizationPhraseValue | undefined}
+	 */
 	getPhrase(key) {
 		return this.phrases[key];
 	}
 
+	/**
+	 * Gets the locale plural rule for a numeric cardinal value.
+	 *
+	 * @param {number} number
+	 * @returns {LocalizationPluralRule}
+	 */
 	getPluralForm(number) {
 		return new Intl.PluralRules(this.locale).select(number);
 	}
 
+	/**
+	 * Translates a phrase key and applies replacements.
+	 *
+	 * @param {string | undefined} key
+	 * @param {LocalizationReplacementMap} [replacements]
+	 * @param {number} [cardinal]
+	 * @returns {string | number}
+	 */
 	translate(key, replacements = {}, cardinal = 0) {
 		if (key === undefined) {
 			console.error('Attempted to translate an undefined phrase key.');
@@ -55,6 +107,16 @@ export default class Translator {
 		return this.replace(text, replacements);
 	}
 
+	/**
+	 * Replaces `%{name}` tokens in translated text.
+	 *
+	 * Unknown replacement names are treated as nested phrase keys before
+	 * falling back to an empty string.
+	 *
+	 * @param {string} text
+	 * @param {LocalizationReplacementMap} [replacements]
+	 * @returns {string}
+	 */
 	replace(text, replacements = {}) {
 		const re = /%{(.*?)}/gs;
 		const matches = [...text.matchAll(re)];
@@ -80,9 +142,23 @@ export default class Translator {
 		return text;
 	}
 
+	/**
+	 * Flattens nested phrase objects into dot-separated phrase keys.
+	 *
+	 * Objects that look like plural-rule maps are preserved as phrase values.
+	 *
+	 * @param {LocalizationPhraseMap} phrases
+	 * @returns {LocalizationFlatPhraseMap}
+	 */
 	flattenPhrases(phrases) {
+		/** @type {LocalizationFlatPhraseMap} */
 		const flat = {};
 
+		/**
+		 * Checks whether an object should be treated as a plural phrase value.
+		 *
+		 * @type {TranslatorCardinalRuleCheck}
+		 */
 		function isCardinalRule(object) {
 			const cardinalRuleKeys = ['zero', 'one', 'two', 'few', 'many', 'other'];
 			const keys = Object.keys(object);
@@ -123,6 +199,13 @@ export default class Translator {
 			return false;
 		}
 
+		/**
+		 * Recursively copies nested phrase values into the flattened map.
+		 *
+		 * @param {LocalizationPhraseMap} nextPhrases
+		 * @param {string} upperKey
+		 * @returns {void}
+		 */
 		function flattenOne(nextPhrases, upperKey) {
 			Object.keys(nextPhrases).forEach((key) => {
 				const value = nextPhrases[key];
@@ -141,16 +224,34 @@ export default class Translator {
 		return flat;
 	}
 
+	/**
+	 * Replaces phrases in the current flattened phrase map.
+	 *
+	 * @param {LocalizationFlatPhraseMap} phrases
+	 * @returns {void}
+	 */
 	replacePhrases(phrases) {
 		Object.keys(phrases).forEach((key) => {
 			this.phrases[key] = phrases[key];
 		});
 	}
 
+	/**
+	 * Adds nested or flattened phrases to the translator.
+	 *
+	 * @param {LocalizationPhraseMap} phrases
+	 * @returns {void}
+	 */
 	extend(phrases) {
 		this.replacePhrases(this.flattenPhrases(phrases));
 	}
 
+	/**
+	 * Uses another translator's phrase map as fallback phrases.
+	 *
+	 * @param {Translator | undefined | null} translator
+	 * @returns {void}
+	 */
 	setDefault(translator) {
 		this.defaultPhrases = translator?.phrases || {};
 	}

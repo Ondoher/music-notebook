@@ -7,5 +7,9 @@ interface AppDataService {
 	/** Updates a watched value and notifies subscribers. */
 	update(name: string, value: unknown): void;
 	/** Returns a shallow snapshot of all watched values. */
-	getSnapshot(): Record<string, unknown>;
+	getSnapshot?(): Record<string, unknown>;
+	/** Subscribes to watched-data events. */
+	listen?: (eventName: string, listener: (...args: any[]) => void) => unknown;
+	/** Removes a watched-data event subscription. */
+	unlisten?: (eventName: string, listener: unknown) => void;
 }

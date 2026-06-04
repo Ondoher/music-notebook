@@ -345,3 +345,33 @@ Width parity follow-up:
 - the spike now keeps the continuous editor sheet at the configured page width
   and lets the editor pane scroll, so edit and paged preview compare the same
   page geometry
+
+### 2026-06-03 Large Table Preview CSS Fix
+
+Observed issue:
+
+- Large TableUp tables were not rendering in the read-only paged preview pane on
+  the right.
+- The underlying cause was CSS specificity: the edit-view rule for
+  `.mn-document-content .ql-editor .ql-table-wrapper` kept winning in the
+  preview, leaving TableUp wrappers as `inline-block` / `max-content`.
+- That made wide/large tables effectively unplaceable for the Paged.js preview.
+
+Fix:
+
+- Added stronger preview-only rules in `PagedViewPreview.jsx` for
+  `.mn-paged-preview-document.mn-document-content .ql-editor .ql-table-wrapper`.
+- The preview now treats the wrapper as a normal block, constrains it to the
+  page width, allows overflow to remain visible, and forces the table to
+  `width: 100%`, `max-width: 100%`, and `table-layout: fixed`.
+- Cell and inner-cell wrappers are allowed to shrink inside the page-width table.
+
+Verification:
+
+- Manual browser check confirmed this fixed the large-table rendering problem.
+- `npm run test:ui -- --grep ViewModeService` passed with `328 SUCCESS`.
+
+Remaining read-view table work:
+
+- This is a preview CSS fix, not a full table pagination/export solution.
+- Keep future table pagination work separate from edit-view split-table commands.

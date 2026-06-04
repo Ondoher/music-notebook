@@ -8,7 +8,7 @@ import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 let baseSelectId = 0;
 

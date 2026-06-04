@@ -42,6 +42,8 @@ type MusicEmbedViewState = {
 	playbackState: MusicEmbedPlaybackState;
 	/** Whether Quill currently selects this embed. */
 	selected: boolean;
+	/** Whether controller-owned behavior could not be attached. */
+	sessionUnavailable: boolean;
 	/** Controller-provided toolbar actions to render. */
 	actions: MusicEmbedAction[];
 	/** Whether this embed should fit the width of its containing table cell. */

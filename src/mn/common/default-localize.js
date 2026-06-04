@@ -1,4 +1,4 @@
-import Localization from './localization.js';
+import Localization from './Localization.js';
 import phrases from '../phrases/en-US.json';
 
 export function createDefaultLocalize() {

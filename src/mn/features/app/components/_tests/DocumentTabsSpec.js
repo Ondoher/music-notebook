@@ -95,6 +95,28 @@ describe('DocumentTabs', function() {
 		]);
 	});
 
+	it('selects a tab when it is clicked', function() {
+		const localize = makeLocalizeMock();
+		const documentModel = createModel();
+
+		harness = createTestHarness()
+			.withService('localize', localize)
+			.withContext({ localize });
+
+		const result = harness.render(DocumentTabs, { documentModel });
+		const bridgeTab = Array.from(result.container.querySelectorAll('.mn-document-tabs__tab'))
+			.find((tab) => tab.textContent === 'Bridge');
+		const bridgeId = documentModel.getTabs()
+			.find((tab) => tab.title === 'Bridge')
+			.id;
+
+		act(() => {
+			bridgeTab.click();
+		});
+
+		expect(documentModel.getActiveTabId()).toBe(bridgeId);
+	});
+
 	it('renames a tab with an inline editor', function() {
 		const localize = makeLocalizeMock();
 		const documentModel = createModel();

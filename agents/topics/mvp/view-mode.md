@@ -38,6 +38,18 @@ workspace, plus a clone/filter adapter for preparing detached Quill content for
 Paged.js. Future read-mode routes or app-shell regions should mount the
 view-mode component rather than keeping preview code inside the editor feature.
 
+Current implementation note:
+
+- the active split-preview implementation still uses a disposable clone of the
+  live Quill root and sends that DOM plus CSS to `Paged.js`
+- the broader `view-mode.preparePagedContent(...)` clone/filter path exists but
+  is not currently used by `PagedViewPreview`, because its earlier music-embed
+  normalization path hid or damaged rendered music objects in the preview
+- paged preview CSS is intentionally preview-only and should not change the edit
+  view's Quill/TableUp behavior
+- table preview work should first rely on semantic table pagination in Paged.js
+  rather than manually chunking or restructuring tables
+
 ## Current Model Hook
 
 The document model already stores:
@@ -283,12 +295,34 @@ The current edit-view table implementation uses `quill-table-up` through the
 local `table` feature; see [Quill Table Up Spike](quill-table-up-spike.md) for
 the current implementation status and remaining table risks.
 
+Current split-preview status:
+
+- Paged.js has native table support, so the first approach is to let it paginate
+  semantic `table` / `thead` / `tbody` / `tr` / `td` DOM
+- the preview CSS now uses stronger preview-only selectors so TableUp's
+  edit-view `.ql-table-wrapper` `inline-block` / `max-content` sizing does not
+  leak into the read-only pane
+- large TableUp tables now render in the right-hand paged preview after the
+  wrapper/table rules force the cloned table into a block, page-width,
+  `table-layout: fixed` shape
+- keep this fix preview-only; edit view still allows wide tables so resize
+  handles remain reachable
+- broader table pagination and export fidelity remain open; do not add
+  preview-only table chunking or DOM restructuring until a new concrete
+  pagination failure is instrumented
+
 Implementation path:
 
-1. Convert `quill-table-up` table content into table render units for read view.
-2. Start with simple whole-table placement if splitting is not yet reliable.
-3. Add row-level splitting only if the table model supports it cleanly.
-4. Add repeated table headers after row-level pagination is stable.
+1. Keep the current Paged.js path using semantic TableUp DOM plus preview-only
+   wrapper/table CSS overrides.
+2. Instrument any remaining paged table failures to compare
+   wrapper/table/section/row/cell size and computed break styles against a
+   working table.
+3. Convert `quill-table-up` table content into explicit table render units only
+   if relying on the live cloned DOM remains too brittle.
+4. Start with simple whole-table placement if splitting is not yet reliable.
+5. Add row-level splitting only if the table model supports it cleanly.
+6. Add repeated table headers after row-level pagination is stable.
 
 ### Multi-Column Layout
 

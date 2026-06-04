@@ -7,8 +7,8 @@ import IconRegistryService from '../../../../services/icon-registry.js';
 import ObjectTypeRegistryService from '../../../../services/object-type-registry.js';
 import DocumentModelService from '../../../../models/document-model.js';
 import EditorPage from '../../../editor/components/EditorPage.jsx';
-import EditorSurfaceService from '../../../editor/editor-surface.js';
-import EditorToolbarService, { EDITOR_TOOLBAR_SECTIONS } from '../../../editor/editor-toolbar.js';
+import EditorSurfaceService from '../../../editor/services/editor-surface.js';
+import EditorToolbarService, { EDITOR_TOOLBAR_SECTIONS } from '../../../editor/services/editor-toolbar.js';
 import { registerParagraphFormats } from '../../../paragraph-format/quill/paragraph-formats.js';
 import { getKeyboardEmbedHeight } from '../../../../shared/music-object-layout.js';
 import {

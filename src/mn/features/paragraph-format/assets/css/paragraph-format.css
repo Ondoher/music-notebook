@@ -49,7 +49,7 @@
 
 .paragraph-format-dialog__toggle.MuiIconButton-root[aria-pressed="true"] {
 	border-color: rgba(var(--mui-palette-primary-mainChannel) / 0.5);
-	background: rgba(var(--mui-palette-primary-mainChannel) / 0.12);
+	background: var(--mn-selection-color-subtle);
 	color: var(--mui-palette-primary-main);
 }
 

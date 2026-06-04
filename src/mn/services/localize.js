@@ -1,5 +1,5 @@
 import { Service } from '@polylith/core';
-import Localization from '../common/localization.js';
+import Localization from '../common/Localization.js';
 import phrases from '../phrases/en-US.json';
 
 export default class LocalizeService extends Service {

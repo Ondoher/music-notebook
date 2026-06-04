@@ -10,6 +10,8 @@
 	--surface: #ffffff;
 	--surface-muted: #eef0f4;
 	--border-color: #cdd0db;
+	--mn-selection-color: rgb(186 220 244 / 80%);
+	--mn-selection-color-subtle: rgb(186 220 244 / 38%);
 	--branded-color: var(--mn-orange);
 	--accent-color: var(--mn-mimosa);
 	--text-dark: #2f3138;
@@ -60,6 +62,11 @@ body {
 
 a {
 	color: var(--link-color);
+}
+
+::selection {
+	background: var(--mn-selection-color);
+	color: inherit;
 }
 
 .mn-screen-reader-only {

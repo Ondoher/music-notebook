@@ -59,7 +59,7 @@ Final cleanup status:
    - `BaseSelect`
    - `BaseCheckbox`
    - `BaseRadioButtons`
-3. Keep `localized-text.js` as a plain utility module. Done.
+3. Keep `src/mn/common/localized-text.js` as a plain utility module. Done.
 4. Convert small shared components next. Done:
    - `HelperText`
    - `KeyPicker`

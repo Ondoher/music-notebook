@@ -53,10 +53,14 @@ function SortableDocumentTab(props) {
 			{...listeners}
 			className="mn-document-tabs__tab"
 			data-tab-id={props.tab.id}
+			fullWidth={props.fullWidth}
 			label={props.label}
+			onChange={props.onChange}
 			onDoubleClick={(event) => props.onEdit(props.tab, event.currentTarget)}
+			selected={props.selected}
+			textColor={props.textColor}
 			style={style}
-			value={props.tab.id}
+			value={props.value}
 		/>
 	);
 }

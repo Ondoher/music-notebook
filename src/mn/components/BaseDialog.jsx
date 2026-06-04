@@ -11,7 +11,7 @@ import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
 
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 let nextDialogId = 1;
 

@@ -43,4 +43,5 @@ type MusicObjectEmbedSession = {
 /** Controller service for the music-object feature. */
 type MusicObjectController = {
 	attachEmbed: (options?: MusicObjectEmbedSessionOptions) => MusicObjectEmbedSession;
+	getPlayerService: () => PlayerService | null;
 };

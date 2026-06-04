@@ -7,13 +7,15 @@ import {
 	IconClefStaff,
 	IconPiano,
 } from '@tabler/icons-react';
-import { EDITOR_TOOLBAR_SECTIONS } from '../editor/editor-toolbar.js';
+import { EDITOR_TOOLBAR_SECTIONS } from '../editor/services/editor-toolbar.js';
 import {
 	DEFAULT_KEYBOARD_PAYLOAD,
 	KEYBOARD_EMBED_BLOT,
 	configureKeyboardEmbedContext,
+	getKeyboardEmbedClipboardMatchers,
 	registerKeyboardEmbed,
 } from './quill/keyboard-embed.js';
+import MusicObjectEmbedSession from './embed-session.js';
 
 /**
  * Registers music object document type, toolbar commands, icons, and Quill embed rendering.
@@ -21,7 +23,7 @@ import {
 export default class MusicObjectController extends Service {
 	constructor(registry) {
 		super('music-object-controller', registry);
-		this.implement(['ready']);
+		this.implement(['ready', 'attachEmbed', 'getPlayerService']);
 	}
 
 	ready() {
@@ -30,6 +32,7 @@ export default class MusicObjectController extends Service {
 		this.editorSurface = this.registry.subscribe('editor-surface');
 		this.iconRegistry = this.registry.subscribe('icon-registry');
 		this.objectTypes = this.registry.subscribe('object-type-registry');
+		this.player = null;
 
 		registerKeyboardEmbed();
 		this.registerObjectType();
@@ -41,10 +44,23 @@ export default class MusicObjectController extends Service {
 		);
 	}
 
+	attachEmbed(options = {}) {
+		return new MusicObjectEmbedSession(this, options);
+	}
+
+	getPlayerService() {
+		if (!this.player) {
+			this.player = this.registry.subscribe('player');
+		}
+
+		return this.player;
+	}
+
 	registerObjectType() {
 		this.objectTypes.registerType('music-object', {
 			blotName: KEYBOARD_EMBED_BLOT,
 			changeEventName: 'music-keyboard-change',
+			clipboardMatchers: getKeyboardEmbedClipboardMatchers(),
 			removeEventName: 'music-keyboard-remove',
 			configureContext: configureKeyboardEmbedContext,
 			createDefaultObject: (options = {}) => {

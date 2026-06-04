@@ -4,8 +4,8 @@ import AppPagesService from '../../../services/app-pages.js';
 import IconRegistryService from '../../../services/icon-registry.js';
 import ViewsService from '../../../services/views.js';
 import EditorController from '../controller.js';
-import EditorSurfaceService from '../editor-surface.js';
-import EditorToolbarService from '../editor-toolbar.js';
+import EditorSurfaceService from '../services/editor-surface.js';
+import EditorToolbarService from '../services/editor-toolbar.js';
 
 class LocalizeMock extends Service {
 	constructor(registry) {

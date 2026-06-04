@@ -1,8 +1,9 @@
 import React, { Component, createRef } from 'react';
+import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined';
 import IconButton from '@mui/material/IconButton';
-import Tooltip from '@mui/material/Tooltip';
 import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
 import LocaleString from '../../../components/LocaleString.jsx';
+import LocalizedTooltip from '../../../components/LocalizedTooltip.jsx';
 import MusicPreview from '../../../components/MusicPreview.jsx';
 import MusicDisplayOptions from './MusicDisplayOptions.jsx';
 import MusicEmbedDialog from './MusicEmbedDialog.jsx';
@@ -54,6 +55,7 @@ export default class MusicEmbedView extends Component {
 			formatDialogOpen: false,
 			playbackState: 'idle',
 			selected: false,
+			sessionUnavailable: false,
 			actions: getDefaultEmbedActions('idle', props.payload),
 			fitPreviewWidth: false,
 		};
@@ -62,13 +64,9 @@ export default class MusicEmbedView extends Component {
 		this.dialogSnapshot = props.initialDialogOpen === true ? cloneDialogSnapshot(initialState) : null;
 		this.formatDialogSnapshot = null;
 		this.removeOnCancel = props.initialDialogOpen === true;
-		this.playback = {
-			timer: null,
-			token: 0,
-		};
-		this.playerService = null;
 		this.embedSession = null;
 		this.embedSessionListener = null;
+		this.sessionUnavailableReported = false;
 		this.contentRef = createRef();
 		this.lastAppliedPayload = props.payload;
 		this.resizeDraftActive = false;
@@ -101,15 +99,9 @@ export default class MusicEmbedView extends Component {
 	 * @returns {void}
 	 */
 	componentWillUnmount() {
-		const hadEmbedSession = Boolean(this.embedSession);
-
 		this.clearTableCellFitClass();
 		this.detachEmbedSession();
 		this.detachEmbedSelectionListener();
-
-		if (!hadEmbedSession) {
-			this.stopPlayback();
-		}
 	}
 
 	/**
@@ -118,9 +110,18 @@ export default class MusicEmbedView extends Component {
 	 * @returns {void}
 	 */
 	attachEmbedSession() {
-		const controller = this.context?.registry?.subscribe?.('music-object-controller');
+		const registry = this.context?.registry || null;
+		const controller = registry?.subscribe?.('music-object-controller');
 
 		if (!controller?.attachEmbed) {
+			if (registry) {
+				this.reportSessionUnavailable();
+				this.setState({
+					actions: [],
+					sessionUnavailable: true,
+				});
+			}
+
 			return;
 		}
 
@@ -151,6 +152,15 @@ export default class MusicEmbedView extends Component {
 				selected: sessionState.selected === true,
 			});
 		}
+	}
+
+	reportSessionUnavailable() {
+		if (this.sessionUnavailableReported) {
+			return;
+		}
+
+		this.sessionUnavailableReported = true;
+		console.error('MusicEmbedView could not attach music-object-controller session. Rendering preview without interactive controls.');
 	}
 
 	/**
@@ -446,102 +456,19 @@ export default class MusicEmbedView extends Component {
 	 * Handles playback button activation.
 	 *
 	 * @param {React.MouseEvent<HTMLElement>} event - Triggering click event.
-	 * @returns {Promise<void>}
+	 * @returns {void}
 	 */
-	handlePlaybackButtonClick = async (event) => {
+	handlePlaybackButtonClick = (event) => {
 		event.stopPropagation();
 
-		if (this.embedSession?.performAction?.('playback')) {
-			return;
-		}
-
-		if (this.state.playbackState === 'playing') {
-			this.stopPlayback();
-			this.setPlaybackState('idle');
-			return;
-		}
-
-		if (this.state.playbackState === 'loading') {
-			return;
-		}
-
-		this.setPlaybackState('loading');
-		this.stopPlayback();
-
-		const playerService = this.getPlayerService();
-
-		if (!playerService) {
-			console.warn('[MusicEmbedView] Player service is unavailable.');
-			this.setPlaybackState('idle');
-			return;
-		}
-
-		const token = this.playback.token + 1;
-		this.playback.token = token;
-
-		try {
-			const playback = await playerService.play(this.state.currentPayload);
-
-			if (this.playback.token !== token) {
-				return;
-			}
-
-			this.setPlaybackState('playing');
-
-			this.playback.timer = window.setTimeout(() => {
-				if (this.playback.token === token) {
-					this.stopPlayback();
-					this.setPlaybackState('idle');
-				}
-			}, Math.max(playback.duration || 0, 250) + 250);
-		} catch (error) {
-			console.warn('[MusicEmbedView] MusicXML playback failed.', error);
-			this.stopPlayback();
-			this.setPlaybackState('idle');
+		if (!this.embedSession?.performAction?.('playback')) {
+			this.reportSessionUnavailable();
+			this.setState({
+				actions: [],
+				sessionUnavailable: true,
+			});
 		}
 	};
-
-	/**
-	 * Updates fallback playback state and derived action data.
-	 *
-	 * @param {MusicEmbedPlaybackState} playbackState
-	 * @returns {void}
-	 */
-	setPlaybackState(playbackState) {
-		this.setState({
-			actions: getDefaultEmbedActions(playbackState, this.state.currentPayload),
-			playbackState,
-		});
-	}
-
-	/**
-	 * Stops active playback and removes playback resources.
-	 *
-	 * @returns {void}
-	 */
-	stopPlayback() {
-		this.playback.token += 1;
-
-		if (this.playback.timer) {
-			window.clearTimeout(this.playback.timer);
-			this.playback.timer = null;
-		}
-
-		this.getPlayerService()?.stop?.();
-	}
-
-	/**
-	 * Gets the shared player service from the registry.
-	 *
-	 * @returns {PlayerService | null}
-	 */
-	getPlayerService() {
-		if (!this.playerService) {
-			this.playerService = this.context?.registry?.subscribe?.('player') || null;
-		}
-
-		return this.playerService;
-	}
 
 	/**
 	 * Handles controller-provided embed toolbar actions.
@@ -1061,7 +988,12 @@ export default class MusicEmbedView extends Component {
 	 * @returns {React.ReactElement}
 	 */
 	renderToolbar() {
-		const { actions, currentPayload } = this.state;
+		const { actions, currentPayload, sessionUnavailable } = this.state;
+
+		if (sessionUnavailable) {
+			return null;
+		}
+
 		const toolbarActions = getVisibleEmbedActions(
 			actions || getDefaultEmbedActions(this.state.playbackState, currentPayload),
 			currentPayload,
@@ -1075,17 +1007,39 @@ export default class MusicEmbedView extends Component {
 	}
 
 	/**
+	 * Renders a non-interactive warning when behavior services are unavailable.
+	 *
+	 * @returns {React.ReactElement | null}
+	 */
+	renderSessionErrorIndicator() {
+		if (this.state.sessionUnavailable !== true) {
+			return null;
+		}
+
+		return (
+			<LocalizedTooltip phrase="music.object.error_loading" labelChild>
+				<span
+					className="music-embed-session-error"
+					role="img"
+					tabIndex={0}
+				>
+					<ErrorOutlinedIcon aria-hidden="true" fontSize="small" />
+				</span>
+			</LocalizedTooltip>
+		);
+	}
+
+	/**
 	 * Renders one controller-provided toolbar action.
 	 *
 	 * @param {MusicEmbedAction} action
 	 * @returns {React.ReactElement}
 	 */
 	renderToolbarAction(action) {
-		const label = <LocaleString phrase={action.labelKey} />;
 		const labelText = this.context?.localize?.translate?.(action.labelKey) || action.fallback || action.id;
 
 		return (
-			<Tooltip key={action.id} title={label} describeChild>
+			<LocalizedTooltip key={action.id} phrase={action.labelKey}>
 				<IconButton
 					aria-label={labelText}
 					aria-disabled={action.disabled ? 'true' : undefined}
@@ -1101,7 +1055,7 @@ export default class MusicEmbedView extends Component {
 						<LocaleString phrase={action.labelKey} />
 					</span>
 				</IconButton>
-			</Tooltip>
+			</LocalizedTooltip>
 		);
 	}
 
@@ -1128,6 +1082,10 @@ export default class MusicEmbedView extends Component {
 	 * @returns {React.ReactElement}
 	 */
 	renderResizeHandle() {
+		if (this.state.sessionUnavailable) {
+			return null;
+		}
+
 		if (this.state.fitPreviewWidth) {
 			return null;
 		}
@@ -1153,6 +1111,10 @@ export default class MusicEmbedView extends Component {
 	 * @returns {React.ReactElement}
 	 */
 	renderDialog() {
+		if (this.state.sessionUnavailable) {
+			return null;
+		}
+
 		const {
 			currentPayload,
 			dialogOpen,
@@ -1201,6 +1163,10 @@ export default class MusicEmbedView extends Component {
 	 * @returns {React.ReactElement}
 	 */
 	renderFormatDialog() {
+		if (this.state.sessionUnavailable) {
+			return null;
+		}
+
 		return (
 			<MusicEmbedFormatDialog
 				format={this.state.currentPayload.format}
@@ -1235,6 +1201,7 @@ export default class MusicEmbedView extends Component {
 				ref={this.contentRef}
 			>
 				{this.renderToolbar()}
+				{this.renderSessionErrorIndicator()}
 				<MusicPreview fitWidth={fitPreviewWidth} payload={currentPayload} />
 				{captionText ? (
 					<div className="music-embed-caption" style={getCaptionStyle(embedFormat.caption)}>

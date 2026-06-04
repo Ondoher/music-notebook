@@ -3,7 +3,7 @@ import { act } from 'react';
 import { Registry } from '@polylith/core';
 import { createTestHarness } from '../../../../testing/TestHarness.js';
 import IconRegistryService from '../../../../services/icon-registry.js';
-import EditorToolbarService from '../../editor-toolbar.js';
+import EditorToolbarService from '../../services/editor-toolbar.js';
 import EditorToolbar from '../EditorToolbar.jsx';
 
 function TestIcon() {

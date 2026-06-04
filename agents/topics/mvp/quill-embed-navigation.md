@@ -205,9 +205,9 @@ Current rendering rules:
 - [x] Added table-cell music-object behavior: staff and keyboard objects fit the
   cell width, keyboard previews preserve aspect ratio, and music-object resize
   controls are disabled inside table cells.
-- [x] Verified the current UI test lane after editor view registry, table
-  context-menu operations, table overflow reachability, and music-object
-  table-cell sizing work: `307 SUCCESS`.
+- [x] Verified the table-cell music-object sizing lane during the earlier table
+  interaction work: `307 SUCCESS`; later focused verification is tracked in
+  the table/view-mode status notes.
 - [ ] Audit saved-document migration needs for legacy `textWrap` and
   `floatSide` payloads.
 - [ ] Revisit music-object insertion spacing so sequential inserts produce the

@@ -7,8 +7,18 @@ export const TABLE_CONTEXT_MENU_SECTIONS = [
 	[
 		{ id: 'insert-row-above', label: 'Insert row above', target: 'row' },
 		{ id: 'insert-row-below', label: 'Insert row below', target: 'row' },
+	],
+	[
 		{ id: 'insert-column-left', label: 'Insert column left', target: 'column' },
 		{ id: 'insert-column-right', label: 'Insert column right', target: 'column' },
+	],
+	[
+		{ id: 'split-table-above', label: 'Split table above', target: 'row' },
+		{ id: 'split-table-below', label: 'Split table below', target: 'row' },
+	],
+	[
+		{ id: 'fit-table-to-width', label: 'Fit to width', target: 'table' },
+		{ id: 'distribute-table-columns', label: 'Distribute columns', target: 'table' },
 	],
 	[
 		{ id: 'delete-row', label: 'Delete row', target: 'row' },

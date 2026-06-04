@@ -441,7 +441,8 @@ The editor/model active-tab bridge is covered in `src/mn/features/music-object/q
 
 Recent full UI verification:
 
-- `npm run test:ui -- --grep "TableController|TableContextMenu|EditorViewsService|dispatches editor context"` passed with `307 SUCCESS`
+- `npm run test:ui -- --grep ViewModeService` passed with `328 SUCCESS` after the current read-only paged-preview table CSS fix
+- `npm run test:ui -- --grep TableController` passed with `330 SUCCESS` after the current table context-menu split-table attempt; the split-table manual behavior is still not working and should not be treated as complete
 
 Known non-failing noise includes MUI Dialog `act(...)` warnings,
 React lifecycle/flushSync warnings around Quill/table/editor mount paths,

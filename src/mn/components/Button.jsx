@@ -4,7 +4,7 @@ import React, { Component } from 'react';
 import MuiButton from '@mui/material/Button';
 
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 /**
  * Renders a localized Music Notebook button using the shared button palette.

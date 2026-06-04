@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Registry } from '@polylith/core';
-import EditorViewsService from '../editor-views.js';
+import EditorViewsService from '../services/editor-views.js';
 
 describe('EditorViewsService', function() {
 	function createService() {

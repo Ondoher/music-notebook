@@ -20,7 +20,7 @@ Document lifecycle, account, export, view mode, and global document settings bel
 
 ## Toolbar Actions
 
-The current implementation uses the `editor-toolbar` registry service in `src/mn/features/editor/editor-toolbar.js`.
+The current implementation uses the `editor-toolbar` registry service in `src/mn/features/editor/services/editor-toolbar.js`.
 
 The toolbar service is editor-specific.
 It stores toolbar item definitions, returns visible items grouped by section, and emits selection events.

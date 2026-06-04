@@ -8,7 +8,7 @@ import InfoIcon from '@mui/icons-material/Info';
 import InfoDialog from './InfoDialog.jsx';
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
 import TextInput from './TextInput.jsx';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 /**
  * Renders a localized text input with an optional contextual information dialog.

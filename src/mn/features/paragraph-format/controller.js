@@ -4,7 +4,7 @@ import FormatAlignCenterIcon from '@mui/icons-material/FormatAlignCenter';
 import FormatAlignJustifyIcon from '@mui/icons-material/FormatAlignJustify';
 import FormatAlignLeftIcon from '@mui/icons-material/FormatAlignLeft';
 import FormatAlignRightIcon from '@mui/icons-material/FormatAlignRight';
-import { EDITOR_TOOLBAR_SECTIONS } from '../editor/editor-toolbar.js';
+import { EDITOR_TOOLBAR_SECTIONS } from '../editor/services/editor-toolbar.js';
 import ParagraphFormatDialog from './components/ParagraphFormatDialog.jsx';
 import { registerParagraphFormats } from './quill/paragraph-formats.js';
 

@@ -9,7 +9,7 @@ import Tooltip from '@mui/material/Tooltip';
 import MusicNotebookContext from '../common/MusicNotebookContext.js';
 import TextInput from './TextInput.jsx';
 import LocaleString from './LocaleString.jsx';
-import { getLocalizedText } from './localized-text.js';
+import { getLocalizedText } from '../common/localized-text.js';
 
 const DEFAULT_MIN = 6;
 const DEFAULT_MAX = 144;

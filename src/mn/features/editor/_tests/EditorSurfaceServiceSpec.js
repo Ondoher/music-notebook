@@ -1,5 +1,5 @@
 import { Registry } from '@polylith/core';
-import EditorSurfaceService from '../editor-surface.js';
+import EditorSurfaceService from '../services/editor-surface.js';
 
 describe('EditorSurfaceService', function() {
 	function createService() {

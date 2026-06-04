@@ -47,7 +47,15 @@ Additional MVP slices now implemented:
 - Save/Open/New/Rename flows exist, including unsaved-work prompts and account-gated save messaging
 - server document routes can list, create, update, save-as, rename, duplicate, get, and delete Mongo-backed documents
 - localized markdown support exists through the server markdown feature, markdown model, and shared markdown/info components
-- table insertion, table row/column selection, keyboard cell navigation, column resizing, and selection-aware context-menu commands are implemented through the `table` feature
+- table insertion, table row/column selection, keyboard cell navigation, column resizing, and selection-aware row/column/table context-menu commands are implemented through the `table` feature
+- split-table context menu commands have been attempted, but are not yet working reliably in manual browser testing; the current issue is preserving the second half as a separate durable TableUp table
+- current split-view paged preview relies on a live Quill-root clone and
+  preview-only CSS; large TableUp tables now render in the right-hand
+  read-only pane after the preview CSS overrides the edit-view TableUp wrapper
+  sizing, while broader table pagination/export fidelity remains open
+- internal keyboard music-object copy/paste now uses semantic embed HTML and a
+  feature-registered Quill clipboard matcher rather than copying rendered
+  control text
 - `editor-interactions` and `editor-views` provide editor-owned service seams for feature event opt-in and feature-requested React view mounting
 
 The MVP now distinguishes editing from paginated reading:
@@ -160,11 +168,14 @@ polish now that save/open are real.
 2. Harden document serialization tests around styles, paragraph formats, music-object captions, object formats, and saved server snapshots.
 3. Preserve the current anonymous document through successful account creation if feasible.
 4. Complete inline-leaf music-object caret/selection and natural-sizing polish without changing document layout.
-5. Harden table save/reload, paste policy, accessibility, read-view behavior, and export behavior.
+5. Harden table save/reload, paste policy, accessibility, split-table behavior, read-view behavior, and export behavior.
 6. Add delete and join tab UI with confirmation.
 7. Add explicit page-break objects in the Quill stream.
-8. Add read view only after continuous edit view, tab behavior, and document serialization are stable.
-9. Add split view after the first read-view renderer exists.
+8. Instrument Paged.js/table preview layout before adding any structural table
+   pagination fallback, and keep edit-view split-table work separate from
+   read-view pagination.
+9. Add read view only after continuous edit view, tab behavior, and document serialization are stable.
+10. Add split view after the first read-view renderer exists.
 
 ## Implementation Constraints
 

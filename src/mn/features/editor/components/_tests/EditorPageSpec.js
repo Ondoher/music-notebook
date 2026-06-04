@@ -524,6 +524,63 @@ describe('EditorPage', function() {
 		});
 	});
 
+	it('uses rendered visual rows before paragraph fallback for gutter selection', function() {
+		const page = new EditorPage({});
+		const line = {
+			length() {
+				return 80;
+			},
+		};
+
+		page.quill = {
+			getIndex(value) {
+				return value === line ? 8 : 0;
+			},
+			getLine() {
+				return [line, 0];
+			},
+			root: {
+				getBoundingClientRect() {
+					return {
+						bottom: 220,
+						height: 200,
+						left: 100,
+						right: 500,
+						top: 20,
+						width: 400,
+					};
+				},
+			},
+		};
+		page.getRenderedLineSelectionRangeFromPoint = () => ({
+			index: 22,
+			length: 14,
+		});
+		page.getQuillRangeFromPoint = () => ({ index: 9, length: 0 });
+
+		expect(page.getLineSelectionRangeFromPoint(60)).toEqual({
+			index: 22,
+			length: 14,
+		});
+	});
+
+	it('chooses the rendered text row nearest the gutter click', function() {
+		const page = new EditorPage({});
+
+		expect(page.getClosestRenderedTextLine([
+			{ bottom: 30, center: 20, end: 6, index: 2, top: 10 },
+			{ bottom: 31, center: 21, end: 12, index: 6, top: 11 },
+			{ bottom: 58, center: 48, end: 24, index: 16, top: 38 },
+			{ bottom: 59, center: 49, end: 32, index: 24, top: 39 },
+		], 45)).toEqual({
+			bottom: 59,
+			center: 48.5,
+			end: 32,
+			index: 16,
+			top: 38,
+		});
+	});
+
 	it('extends left-gutter line selection by full line ranges while dragging', function() {
 		const calls = [];
 		const listeners = {};
@@ -589,297 +646,37 @@ describe('EditorPage', function() {
 		]);
 	});
 
-	it('prefers table row ranges for left-gutter selection', function() {
-		const calls = [];
-		const listeners = {};
-		const page = new EditorPage({});
-		const ownerDocument = {
-			addEventListener(eventName, listener) {
-				listeners[eventName] = listener;
-			},
-			removeEventListener(eventName) {
-				delete listeners[eventName];
-			},
-		};
-
-		page.quill = {
-			setSelection(index, length, source) {
-				calls.push({ index, length, method: 'setSelection', source });
-			},
-		};
-		page.getTableRowSelectionRangeFromPoint = () => ({ index: 18, length: 7 });
-		page.getLineSelectionRangeFromPoint = () => {
-			throw new Error('line selection should not resolve when a table row is hit');
-		};
-		page.updateToolbarState = () => calls.push({ method: 'updateToolbarState' });
-		page.updateEmbedSelectionState = () => calls.push({ method: 'updateEmbedSelectionState' });
-
-		page.handleLineSelectionPointerDown({
-			clientY: 40,
-			currentTarget: { ownerDocument },
-			preventDefault() {
-				calls.push({ method: 'preventDefault' });
-			},
-			stopPropagation() {
-				calls.push({ method: 'stopPropagation' });
-			},
-		});
-
-		expect(calls).toEqual([
-			{ method: 'preventDefault' },
-			{ method: 'stopPropagation' },
-			{ index: 18, length: 7, method: 'setSelection', source: 'user' },
-			{ method: 'updateToolbarState' },
-			{ method: 'updateEmbedSelectionState' },
-		]);
-		expect(listeners.pointermove).toBeTruthy();
-	});
-
-	it('resolves table row selection from rendered row bounds', function() {
-		const page = new EditorPage({});
-		const editor = document.createElement('div');
-		const table = document.createElement('table');
-		const firstRow = document.createElement('tr');
-		const secondRow = document.createElement('tr');
-
-		table.className = 'ql-table';
-		table.appendChild(firstRow);
-		table.appendChild(secondRow);
-		editor.appendChild(table);
-		firstRow.getBoundingClientRect = () => ({
-			bottom: 24,
-			height: 24,
-			top: 0,
-		});
-		secondRow.getBoundingClientRect = () => ({
-			bottom: 48,
-			height: 24,
-			top: 24,
-		});
-		page.quill = { root: editor };
-		page.getTableRowSelectionRange = (row) => (
-			row === secondRow
-				? { index: 30, length: 12 }
-				: { index: 10, length: 8 }
-		);
-
-		expect(page.getTableRowSelectionRangeFromPoint(36)).toEqual({
-			index: 30,
-			length: 12,
-		});
-	});
-
-	it('uses TableUp selected cells for left-gutter table row selection', function() {
+	it('starts gutter selection from the editor surface left margin', function() {
 		const calls = [];
 		const page = new EditorPage({});
-		const table = document.createElement('table');
-		const firstCell = { id: 'first-cell' };
-		const secondCell = { id: 'second-cell' };
-		const tableSelection = {
-			show() {
-				calls.push({ method: 'show' });
-			},
-			setSelectedTds(cells) {
-				calls.push({ cells, method: 'setSelectedTds' });
-			},
-			setSelectionTable(selectedTable) {
-				calls.push({ method: 'setSelectionTable', selectedTable });
-			},
+
+		page.documentContentRef.current = {
+			getBoundingClientRect: () => ({
+				bottom: 240,
+				left: 100,
+				top: 20,
+			}),
+		};
+		page.handleLineSelectionPointerDown = (event) => {
+			calls.push({ clientX: event.clientX, clientY: event.clientY });
 		};
 
-		page.quill = {
-			setSelection(index, source) {
-				calls.push({ index, method: 'setSelection', source });
-			},
-		};
-		page.getTableSelectionModule = () => tableSelection;
-		page.getTableCellsBetweenRanges = () => [firstCell, secondCell];
-		page.getTableSelectionBoundary = () => ({
-			height: 24,
-			width: 120,
-			x: 5,
-			y: 10,
+		page.handleEditorSurfacePointerDownCapture({
+			clientX: 72,
+			clientY: 80,
 		});
-		page.updateToolbarState = () => calls.push({ method: 'updateToolbarState' });
-		page.updateEmbedSelectionState = () => calls.push({ method: 'updateEmbedSelectionState' });
-
-		page.selectLineSelectionRanges(
-			{ index: 10, length: 4, table },
-			{ index: 20, length: 4, table },
-		);
-
-		expect(calls).toEqual([
-			{ method: 'setSelectionTable', selectedTable: table },
-			{ cells: [firstCell, secondCell], method: 'setSelectedTds' },
-			{ method: 'show' },
-			{ index: null, method: 'setSelection', source: 'api' },
-			{ method: 'updateToolbarState' },
-			{ method: 'updateEmbedSelectionState' },
-		]);
-		expect(tableSelection.boundary).toEqual({
-			height: 24,
-			width: 120,
-			x: 5,
-			y: 10,
-		});
-	});
-
-	it('resolves table column selection from the top table band', function() {
-		const page = new EditorPage({});
-		const editor = document.createElement('div');
-		const table = document.createElement('table');
-		const row = document.createElement('tr');
-		const firstCell = document.createElement('div');
-		const secondCell = document.createElement('div');
-
-		table.className = 'ql-table';
-		firstCell.className = 'ql-table-cell-inner';
-		secondCell.className = 'ql-table-cell-inner';
-		row.appendChild(firstCell);
-		row.appendChild(secondCell);
-		table.appendChild(row);
-		editor.appendChild(table);
-		table.getBoundingClientRect = () => ({
-			bottom: 120,
-			height: 100,
-			left: 20,
-			right: 220,
-			top: 20,
-			width: 200,
-		});
-		firstCell.getBoundingClientRect = () => ({
-			height: 40,
-			left: 20,
-			right: 120,
-			top: 20,
-			width: 100,
-		});
-		secondCell.getBoundingClientRect = () => ({
-			height: 40,
-			left: 120,
-			right: 220,
-			top: 20,
-			width: 100,
-		});
-		page.quill = { root: editor };
-		page.getTableColumnSelectionRange = (cell) => (
-			cell === secondCell
-				? { cells: ['second-column'], index: 10, length: 4, table }
-				: null
-		);
-
-		expect(page.getTableColumnSelectionRangeFromPoint(160, 24)).toEqual({
-			cells: ['second-column'],
-			index: 10,
-			length: 4,
-			table,
-		});
-		expect(page.getTableColumnSelectionRangeFromPoint(160, 44)).toBeNull();
-	});
-
-	it('uses exact column cells for table column selection', function() {
-		const firstColumnCell = { id: 'first-column-cell' };
-		const secondColumnCell = { id: 'second-column-cell' };
-		const rowRangeCell = { id: 'row-range-cell' };
-		const page = new EditorPage({});
-		const table = document.createElement('table');
-
-		page.getTableCellsBetweenRanges = () => [rowRangeCell];
-
-		expect(page.getTableSelectionCells(
-			table,
-			{ cells: [firstColumnCell], index: 1, length: 8 },
-			{ cells: [secondColumnCell], index: 20, length: 8 },
-		)).toEqual([firstColumnCell, secondColumnCell]);
-	});
-
-	it('uses cells between visual column indexes for dragged column selection', function() {
-		const page = new EditorPage({});
-		const table = document.createElement('table');
-		const firstRow = document.createElement('tr');
-		const secondRow = document.createElement('tr');
-		const cells = Array.from({ length: 6 }, (_, index) => {
-			const cell = document.createElement('div');
-
-			cell.className = 'ql-table-cell-inner';
-			cell.dataset.testId = `cell-${index}`;
-			return cell;
-		});
-
-		firstRow.appendChild(cells[0]);
-		firstRow.appendChild(cells[1]);
-		firstRow.appendChild(cells[2]);
-		secondRow.appendChild(cells[3]);
-		secondRow.appendChild(cells[4]);
-		secondRow.appendChild(cells[5]);
-		table.appendChild(firstRow);
-		table.appendChild(secondRow);
-		page.getTableCellSelectionRange = (cell) => ({
-			blot: cell.dataset.testId,
-			index: 1,
-			length: 1,
-		});
-
-		expect(page.getTableSelectionCells(
-			table,
-			{ columnIndex: 0, index: 1, length: 1 },
-			{ columnIndex: 1, index: 4, length: 1 },
-		)).toEqual(['cell-0', 'cell-1', 'cell-3', 'cell-4']);
-	});
-
-	it('extends table column selection while dragging', function() {
-		const calls = [];
-		const listeners = {};
-		const page = new EditorPage({});
-		const table = document.createElement('table');
-		const ownerDocument = {
-			addEventListener(eventName, listener) {
-				listeners[eventName] = listener;
-			},
-			removeEventListener(eventName) {
-				delete listeners[eventName];
-			},
-		};
-		const anchorRange = { columnIndex: 0, index: 1, length: 1, table };
-		const focusRange = { columnIndex: 2, index: 8, length: 1, table };
-
-		page.quill = {};
-		page.getTableColumnSelectionRangeFromPoint = (clientX) => (
-			clientX < 100 ? anchorRange : focusRange
-		);
-		page.selectTableSelectionRanges = (anchor, focus) => {
-			calls.push({ anchor, focus, method: 'selectTableSelectionRanges' });
-			return true;
-		};
-
-		page.handleTableColumnPointerDown({
+		page.handleEditorSurfacePointerDownCapture({
 			clientX: 40,
-			clientY: 20,
-			currentTarget: { ownerDocument },
-			preventDefault() {
-				calls.push({ method: 'preventDefault' });
-			},
-			stopPropagation() {
-				calls.push({ method: 'stopPropagation' });
-			},
+			clientY: 80,
 		});
-		listeners.pointermove({
-			clientX: 140,
-			clientY: 20,
-			preventDefault() {
-				calls.push({ method: 'movePreventDefault' });
-			},
+		page.handleEditorSurfacePointerDownCapture({
+			clientX: 108,
+			clientY: 80,
 		});
-		listeners.pointerup();
 
 		expect(calls).toEqual([
-			{ method: 'preventDefault' },
-			{ method: 'stopPropagation' },
-			{ anchor: anchorRange, focus: anchorRange, method: 'selectTableSelectionRanges' },
-			{ method: 'movePreventDefault' },
-			{ anchor: anchorRange, focus: focusRange, method: 'selectTableSelectionRanges' },
+			{ clientX: 72, clientY: 80 },
 		]);
-		expect(listeners.pointermove).toBeUndefined();
 	});
 
 	it('dispatches editor context menu events through editor interactions', function() {
@@ -895,19 +692,24 @@ describe('EditorPage', function() {
 				calls.push({
 					eventName,
 					dispatchedEvent,
+					hasFindBlot: typeof context.findBlot === 'function',
 					hasEditorRoot: Boolean(context.editorRoot),
-					hasSelectTableCell: typeof context.selectTableCell === 'function',
+					hasGetSelection: typeof context.getSelection === 'function',
 				});
 				return { handled: true };
 			},
 		};
 
-		expect(page.dispatchEditorInteraction('contextmenu', event)).toEqual({ handled: true });
+		expect(page.dispatchEditorInteraction('contextmenu', event)).toEqual({
+			handled: true,
+			target: null,
+		});
 		expect(calls).toEqual([{
 			eventName: 'contextmenu',
 			dispatchedEvent: event,
+			hasFindBlot: true,
 			hasEditorRoot: true,
-			hasSelectTableCell: true,
+			hasGetSelection: true,
 		}]);
 	});
 
@@ -925,6 +727,421 @@ describe('EditorPage', function() {
 
 		page.handleEditorKeyDown(event);
 		expect(calls).toEqual([{ eventName: 'keydown', dispatchedEvent: event }]);
+	});
+
+	it('dispatches native editor mouse down capture events through editor interactions', function() {
+		const calls = [];
+		const page = new EditorPage({});
+		const event = {
+			button: 0,
+			stopImmediatePropagation() {
+				calls.push({ method: 'stopImmediatePropagation' });
+			},
+			stopPropagation() {
+				calls.push({ method: 'stopPropagation' });
+			},
+		};
+
+		page.editorInteractions = {
+			dispatch(eventName, dispatchedEvent) {
+				calls.push({ eventName, dispatchedEvent });
+				return { result: { handled: true, stopPropagation: true } };
+			},
+		};
+
+		page.handleNativeEditorMouseDownCapture(event);
+		expect(calls).toEqual([
+			{ eventName: 'mousedown-capture', dispatchedEvent: event },
+			{ method: 'stopPropagation' },
+			{ method: 'stopImmediatePropagation' },
+		]);
+	});
+
+	it('marks plain table clicks for TableUp suppression without stopping native mousedown', function() {
+		const calls = [];
+		const page = new EditorPage({});
+		const event = { button: 0 };
+
+		page.scheduleBlankTableCellFocus = (dispatchedEvent) => {
+			calls.push({ dispatchedEvent, method: 'scheduleBlankTableCellFocus' });
+		};
+		page.editorInteractions = {
+			dispatch(eventName, dispatchedEvent) {
+				calls.push({ eventName, dispatchedEvent });
+				return {
+					handled: true,
+					result: {
+						suppressTableSelection: true,
+					},
+				};
+			},
+		};
+
+		page.handleNativeEditorMouseDownCapture(event);
+
+		expect(event.mnSuppressTableUpSelection).toBeTrue();
+		expect(calls).toEqual([
+			{ eventName: 'mousedown-capture', dispatchedEvent: event },
+			{ method: 'scheduleBlankTableCellFocus', dispatchedEvent: event },
+		]);
+	});
+
+	it('resolves editor interaction targets from text-node event targets', function() {
+		const page = new EditorPage({});
+		const table = document.createElement('table');
+		const cell = document.createElement('td');
+		const paragraph = document.createElement('p');
+		const text = document.createTextNode('A');
+		const calls = [];
+
+		paragraph.appendChild(text);
+		cell.appendChild(paragraph);
+		table.appendChild(cell);
+		page.quill = {
+			root: table,
+		};
+		page.editorInteractions = {
+			dispatch(eventName, dispatchedEvent, context) {
+				calls.push({
+					element: context.target.element,
+					eventName,
+					serviceName: context.targetServiceName,
+				});
+				return { handled: true };
+			},
+			getHandlers(eventName = '') {
+				return eventName && eventName !== 'mousedown-capture'
+					? []
+					: [{
+						events: ['mousedown-capture'],
+						id: 'table.editor-region',
+						selector: 'table',
+						serviceName: 'table-controller',
+					}];
+			},
+		};
+
+		expect(page.dispatchEditorInteraction('mousedown-capture', {
+			target: text,
+			type: 'mousedown',
+		})).toEqual({
+			handled: true,
+			target: jasmine.objectContaining({
+				element: table,
+				serviceName: 'table-controller',
+			}),
+		});
+		expect(calls).toEqual([{
+			element: table,
+			eventName: 'mousedown-capture',
+			serviceName: 'table-controller',
+		}]);
+	});
+
+	it('resolves point-selectable interaction targets from editor coordinates', function() {
+		const page = new EditorPage({});
+		const editorRoot = document.createElement('div');
+		const table = document.createElement('table');
+		const calls = [];
+
+		editorRoot.appendChild(table);
+		table.getBoundingClientRect = () => ({
+			bottom: 110,
+			height: 100,
+			left: 20,
+			right: 220,
+			top: 10,
+			width: 200,
+		});
+		page.quill = {
+			root: editorRoot,
+		};
+		page.editorInteractions = {
+			dispatch(eventName, dispatchedEvent, context) {
+				calls.push({
+					element: context.target.element,
+					eventName,
+					point: context.point,
+					serviceName: context.targetServiceName,
+				});
+				return { handled: true };
+			},
+			getHandlers(eventName = '') {
+				return eventName && eventName !== 'pointermove'
+					? []
+					: [{
+						events: ['pointermove'],
+						id: 'table.editor-region',
+						pointHitMargin: { top: 10 },
+						pointSelectable: true,
+						selector: 'table',
+						serviceName: 'table-controller',
+					}];
+			},
+		};
+
+		expect(page.dispatchEditorInteraction('pointermove', {
+			clientX: 160,
+			clientY: 5,
+			target: editorRoot,
+			type: 'pointermove',
+		})).toEqual({
+			handled: true,
+			target: jasmine.objectContaining({
+				element: table,
+				serviceName: 'table-controller',
+			}),
+		});
+		expect(calls).toEqual([{
+			element: table,
+			eventName: 'pointermove',
+			point: { clientX: 160, clientY: 5 },
+			serviceName: 'table-controller',
+		}]);
+	});
+
+	it('applies interaction cursor classes to the Quill container', function() {
+		const page = new EditorPage({});
+		const editorContainer = document.createElement('div');
+		const editorRoot = document.createElement('div');
+
+		editorContainer.appendChild(editorRoot);
+		page.editorRef.current = editorContainer;
+		page.quill = {
+			root: editorRoot,
+		};
+		page.editorInteractions = {
+			dispatch() {
+				return {
+					handled: true,
+					result: {
+						cursorClass: 'mn-table-column-selection-cursor',
+					},
+				};
+			},
+		};
+
+		page.dispatchEditorInteraction('pointermove', {
+			clientX: 1,
+			clientY: 1,
+			target: editorRoot,
+		});
+
+		expect(editorContainer.classList.contains('mn-table-column-selection-cursor')).toBeTrue();
+		expect(editorRoot.classList.contains('mn-table-column-selection-cursor')).toBeFalse();
+	});
+
+	it('places the caret in a table cell when a plain click lands on blank cell space', function(done) {
+		const page = new EditorPage({});
+		const cell = document.createElement('div');
+		const calls = [];
+
+		cell.className = 'ql-table-cell-inner';
+		document.body.appendChild(cell);
+		page.getCurrentTableCellInner = () => null;
+		page.selectTableCell = (targetCell) => {
+			calls.push({ method: 'selectTableCell', targetCell });
+		};
+
+		page.scheduleBlankTableCellFocus({ target: cell });
+
+		window.setTimeout(() => {
+			document.body.removeChild(cell);
+			expect(calls).toEqual([
+				{ method: 'selectTableCell', targetCell: cell },
+			]);
+			done();
+		}, 40);
+	});
+
+	it('places the caret after a music embed when a table cell embed is clicked', function(done) {
+		const page = new EditorPage({});
+		const wrapper = document.createElement('td');
+		const cell = document.createElement('div');
+		const embed = document.createElement('span');
+		const caption = document.createElement('div');
+		const calls = [];
+
+		cell.className = 'ql-table-cell-inner';
+		embed.className = 'music-keyboard-embed';
+		caption.className = 'music-embed-caption';
+		embed.appendChild(caption);
+		wrapper.appendChild(cell);
+		cell.appendChild(embed);
+		document.body.appendChild(wrapper);
+		page.selectAfterMusicEmbed = (targetEmbed) => {
+			calls.push({ method: 'selectAfterMusicEmbed', targetEmbed });
+			return true;
+		};
+		page.selectTableCell = () => {
+			calls.push({ method: 'selectTableCell' });
+		};
+
+		page.scheduleBlankTableCellFocus({ target: caption });
+
+		window.setTimeout(() => {
+			document.body.removeChild(wrapper);
+			expect(calls).toEqual([
+				{ method: 'selectAfterMusicEmbed', targetEmbed: embed },
+			]);
+			done();
+		}, 40);
+	});
+
+	it('places the caret after a music embed when clicking text rendered inside the embed', function(done) {
+		const page = new EditorPage({});
+		const wrapper = document.createElement('td');
+		const cell = document.createElement('div');
+		const embed = document.createElement('span');
+		const caption = document.createElement('div');
+		const text = document.createTextNode('Caption');
+		const calls = [];
+
+		cell.className = 'ql-table-cell-inner';
+		embed.className = 'music-keyboard-embed';
+		caption.className = 'music-embed-caption';
+		caption.appendChild(text);
+		embed.appendChild(caption);
+		wrapper.appendChild(cell);
+		cell.appendChild(embed);
+		document.body.appendChild(wrapper);
+		page.selectAfterMusicEmbed = (targetEmbed) => {
+			calls.push({ method: 'selectAfterMusicEmbed', targetEmbed });
+			return true;
+		};
+		page.selectTableCell = () => {
+			calls.push({ method: 'selectTableCell' });
+		};
+
+		page.scheduleBlankTableCellFocus({ target: text });
+
+		window.setTimeout(() => {
+			document.body.removeChild(wrapper);
+			expect(calls).toEqual([
+				{ method: 'selectAfterMusicEmbed', targetEmbed: embed },
+			]);
+			done();
+		}, 40);
+	});
+
+	it('resolves a table cell inner from a table cell wrapper target', function() {
+		const page = new EditorPage({});
+		const wrapper = document.createElement('td');
+		const cell = document.createElement('div');
+		const embed = document.createElement('span');
+
+		cell.className = 'ql-table-cell-inner';
+		embed.className = 'music-keyboard-embed';
+		wrapper.appendChild(cell);
+		cell.appendChild(embed);
+
+		expect(page.getTableCellInnerFromNode(wrapper)).toBe(cell);
+		expect(page.getTableCellInnerFromNode(embed)).toBe(cell);
+	});
+
+	it('preserves scroll positions while forcing a table-cell Quill selection', function(done) {
+		const page = new EditorPage({});
+		const scrollContainer = {
+			clientHeight: 100,
+			clientWidth: 100,
+			closest: () => null,
+			ownerDocument: document,
+			parentElement: null,
+			scrollHeight: 500,
+			scrollLeft: 11,
+			scrollTop: 22,
+			scrollWidth: 500,
+		};
+		const calls = [];
+
+		page.quill = {
+			focus(options) {
+				calls.push({ method: 'focus', options });
+				scrollContainer.scrollLeft = 111;
+				scrollContainer.scrollTop = 222;
+			},
+			root: scrollContainer,
+			setSelection(index, length, source) {
+				calls.push({ index, length, method: 'setSelection', source });
+				scrollContainer.scrollLeft = 333;
+				scrollContainer.scrollTop = 444;
+			},
+		};
+
+		page.setQuillSelectionWithoutScroll(5, 0, 'user', scrollContainer);
+
+		expect(scrollContainer.scrollLeft).toBe(11);
+		expect(scrollContainer.scrollTop).toBe(22);
+		expect(calls).toEqual([
+			{ method: 'focus', options: { preventScroll: true } },
+			{ index: 5, length: 0, method: 'setSelection', source: 'user' },
+		]);
+
+		scrollContainer.scrollLeft = 333;
+		scrollContainer.scrollTop = 444;
+
+		window.setTimeout(() => {
+			expect(scrollContainer.scrollLeft).toBe(11);
+			expect(scrollContainer.scrollTop).toBe(22);
+			done();
+		}, 5);
+	});
+
+	it('does not force table-cell focus for text cursor targets', function(done) {
+		const page = new EditorPage({});
+		const cell = document.createElement('div');
+		const paragraph = document.createElement('p');
+		const text = document.createTextNode('A');
+		const calls = [];
+
+		cell.className = 'ql-table-cell-inner';
+		paragraph.appendChild(text);
+		cell.appendChild(paragraph);
+		document.body.appendChild(cell);
+		page.selectTableCell = () => {
+			calls.push({ method: 'selectTableCell' });
+		};
+
+		page.scheduleBlankTableCellFocus({ target: text });
+
+		window.setTimeout(() => {
+			document.body.removeChild(cell);
+			expect(calls).toEqual([]);
+			done();
+		}, 40);
+	});
+
+	it('attaches native editor mouse down interactions in capture mode', function() {
+		const calls = [];
+		const page = new EditorPage({});
+		const root = {
+			addEventListener(eventName, listener, capture) {
+				calls.push({ capture, eventName, listener, method: 'addEventListener' });
+			},
+			removeEventListener(eventName, listener, capture) {
+				calls.push({ capture, eventName, listener, method: 'removeEventListener' });
+			},
+		};
+
+		page.quill = { root };
+		page.attachNativeEditorInteractionListeners();
+		page.attachNativeEditorInteractionListeners();
+		page.detachNativeEditorInteractionListeners();
+
+		expect(calls).toEqual([
+			{
+				capture: true,
+				eventName: 'mousedown',
+				listener: page.handleNativeEditorMouseDownCapture,
+				method: 'addEventListener',
+			},
+			{
+				capture: true,
+				eventName: 'mousedown',
+				listener: page.handleNativeEditorMouseDownCapture,
+				method: 'removeEventListener',
+			},
+		]);
 	});
 
 	it('widens the editor content host when a table overflows the page width', function() {
@@ -981,60 +1198,6 @@ describe('EditorPage', function() {
 		page.updateDocumentOverflowWidth();
 
 		expect(content.style.getPropertyValue('--mn-editor-overflow-width')).toBe('');
-	});
-
-	it('builds a table selection boundary from selected cell rectangles', function() {
-		const page = new EditorPage({});
-		const firstCell = {
-			parent: {
-				domNode: {
-					getBoundingClientRect() {
-						return {
-							bottom: 40,
-							height: 20,
-							left: 50,
-							right: 90,
-							top: 20,
-							width: 40,
-						};
-					},
-				},
-			},
-		};
-		const secondCell = {
-			parent: {
-				domNode: {
-					getBoundingClientRect() {
-						return {
-							bottom: 80,
-							height: 20,
-							left: 50,
-							right: 90,
-							top: 60,
-							width: 40,
-						};
-					},
-				},
-			},
-		};
-
-		page.quill = {
-			root: {
-				getBoundingClientRect() {
-					return {
-						left: 10,
-						top: 5,
-					};
-				},
-			},
-		};
-
-		expect(page.getTableSelectionBoundary([firstCell, secondCell])).toEqual({
-			height: 60,
-			width: 40,
-			x: 40,
-			y: 15,
-		});
 	});
 
 	it('moves table cell navigation from left to right and top to bottom', function() {

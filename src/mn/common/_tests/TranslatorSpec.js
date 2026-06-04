@@ -1,4 +1,4 @@
-import Translator from '../translator.js';
+import Translator from '../Translator.js';
 
 describe('Translator', function() {
 	it('translates phrase keys', function() {

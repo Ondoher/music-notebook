@@ -88,6 +88,18 @@ There is also an important lifecycle rule for registry-backed services:
 
 This matters because Polylith startup can initialize services in parallel. A service may exist in the registry during startup without yet being safe to call as a dependency.
 
+There is also an important call-boundary rule for services:
+
+- do not pass service method references as callbacks across service boundaries
+- callers should invoke services through the `Service` interface, using methods
+  the service explicitly implements
+- when a service needs to register for routed behavior, prefer a standardized
+  implemented router method, such as `handleEditorEvent`, or register the name
+  of the implemented method to call
+- this keeps calls visible through the service contract and preserves the
+  service layer's ability to coordinate, fan out, or change implementation
+  details behind that contract
+
 ## Model And Service Boundary
 
 Another useful architectural boundary is the distinction between models and services on the client side.

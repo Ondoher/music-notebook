@@ -14,6 +14,7 @@ const Embed = Quill.import('blots/embed');
 const Delta = Quill.import('delta');
 const KEYBOARD_EMBED_BLOT = 'music-keyboard';
 const KEYBOARD_EMBED_CLASS = 'music-keyboard-embed';
+const KEYBOARD_EMBED_SELECTOR = `.${KEYBOARD_EMBED_CLASS}`;
 const REGISTER_FLAG = '__MUSIC_NOTEBOOK_KEYBOARD_EMBED_REGISTERED__';
 const DEFAULT_DISPLAY_MODE = 'keyboard';
 const DEFAULT_STAFF_OCTAVE = 4;
@@ -70,6 +71,16 @@ export class MusicKeyboardEmbed extends Embed {
 		renderKeyboardComponent(this.domNode, payload);
 	}
 
+	html() {
+		const node = this.domNode.ownerDocument.createElement(MusicKeyboardEmbed.tagName);
+
+		node.className = KEYBOARD_EMBED_CLASS;
+		node.setAttribute('contenteditable', 'false');
+		node.setAttribute('role', 'group');
+		setKeyboardNodePayload(node, MusicKeyboardEmbed.value(this.domNode));
+		return node.outerHTML;
+	}
+
 	detach() {
 		delete this.domNode.__musicNotebookKeyboardRoot;
 		super.detach();
@@ -87,6 +98,18 @@ export function registerKeyboardEmbed() {
 
 export function configureKeyboardEmbedContext(contextValue) {
 	musicNotebookContextValue = contextValue || null;
+}
+
+export function matchKeyboardEmbedClipboard(node) {
+	return new Delta().insert({
+		[KEYBOARD_EMBED_BLOT]: MusicKeyboardEmbed.value(node),
+	});
+}
+
+export function getKeyboardEmbedClipboardMatchers() {
+	return [
+		[KEYBOARD_EMBED_SELECTOR, matchKeyboardEmbedClipboard],
+	];
 }
 
 function shouldOpenInitialDialog(value, payload) {

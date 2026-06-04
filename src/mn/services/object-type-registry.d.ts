@@ -8,6 +8,8 @@ type ObjectTypeDefinition = {
 	changeEventName?: string;
 	/** Optional DOM event emitted by rendered embeds when they remove themselves. */
 	removeEventName?: string;
+	/** Optional Quill clipboard matchers owned by this object type. */
+	clipboardMatchers?: Array<[string, (...args: any[]) => unknown]>;
 	/** Allows a renderer to receive the current app context for out-of-tree React roots. */
 	configureContext?: (contextValue: MusicNotebookContextValue) => void;
 	/** Creates a default object or partial object for this type. */

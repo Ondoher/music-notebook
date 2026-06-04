@@ -1,33 +1,3 @@
-/** Translatable phrase request used by localized UI components. */
-type LocalePhrase = {
-	/** Translation key to resolve. */
-	phrase: string;
-	/** Text to show when the phrase is unavailable. */
-	fallback?: string;
-	/** Named replacement values passed to the translator. */
-	replacements?: Record<string, LocalizedReplacementValue>;
-	/** Cardinal value used for plural selection. */
-	cardinal?: number;
-	/** Locale override for this single phrase. */
-	locale?: string;
-	/** Whether the translated output may contain trusted HTML. */
-	html?: boolean;
-	/** Whether an empty translation should suppress rendering. */
-	hideEmpty?: boolean;
-	/** CSS class name applied to the rendered localized element. */
-	className?: string;
-	/** DOM id applied to the rendered localized element. */
-	id?: string;
-	/** Whether the phrase should render inside a div instead of inline text. */
-	div?: boolean;
-};
-
-/** Primitive value accepted by translation replacement maps. */
-type LocalizedReplacementValue = string | number;
-
-/** Text that may be provided literally or as a translation request. */
-type LocalizedText = string | LocalePhrase;
-
 /** Primitive option value accepted by localized select-like controls. */
 type SelectOptionValue = string | number;
 

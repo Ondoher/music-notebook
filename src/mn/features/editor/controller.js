@@ -6,7 +6,7 @@ import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import FormatListNumberedIcon from '@mui/icons-material/FormatListNumbered';
 import FormatClearIcon from '@mui/icons-material/FormatClear';
 import SpaceBarIcon from '@mui/icons-material/SpaceBar';
-import { EDITOR_TOOLBAR_SECTIONS } from './editor-toolbar.js';
+import { EDITOR_TOOLBAR_SECTIONS } from './services/editor-toolbar.js';
 
 export default class EditorController extends Service {
 	constructor(registry) {

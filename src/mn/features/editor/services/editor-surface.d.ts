@@ -1,3 +1,42 @@
+/** Paragraph formatting settings applied through the active editor surface. */
+type ParagraphFormatOverrideMap = {
+	alignment: boolean;
+	bold: boolean;
+	fontSize: boolean;
+	italic: boolean;
+	keepWithNext: boolean;
+	paddingAfter: boolean;
+	paddingBefore: boolean;
+	start: boolean;
+	underline: boolean;
+};
+
+/** Paragraph formatting settings applied through the active editor surface. */
+type ParagraphFormatSettings = {
+	/** Paragraph alignment, with left represented as the default unset Quill alignment. */
+	alignment: 'left' | 'center' | 'right' | 'justify';
+	/** Whether paragraph text is bold. */
+	bold: boolean;
+	/** Paragraph font size in pixels. */
+	fontSize: number;
+	/** Whether paragraph text is italicized. */
+	italic: boolean;
+	/** Whether the paragraph should stay on the same page as the following paragraph when paginated. */
+	keepWithNext: boolean;
+	/** Paragraph padding after, in CSS pixels. */
+	paddingAfter: number;
+	/** Paragraph padding before, in CSS pixels. */
+	paddingBefore: number;
+	/** How the paragraph starts relative to previous blocks or page boundaries. */
+	start: 'continuous' | 'full-line' | 'next-page';
+	/** Document-global paragraph style applied to the paragraph. */
+	styleId: string;
+	/** Which effective values are direct paragraph overrides rather than inherited values. */
+	overrides: ParagraphFormatOverrideMap;
+	/** Whether paragraph text is underlined. */
+	underline: boolean;
+};
+
 /** Adapter attached by the active editor view. */
 type EditorSurfaceAdapter = {
 	/** Inserts a document object into the editor at the current selection. */

@@ -109,11 +109,17 @@ Current implemented slice:
 - a feature-owned, selection-aware context menu view
 - insert row above/below, insert column left/right, delete row, delete column,
   and delete table operations
+- table arrangement context-menu commands: fit to width and distribute columns
+- attempted split-table above/below context menu commands are present but not
+  yet reliable; manual testing still loses the second half or fails to leave
+  two durable TableUp tables
 - music objects can render inside table cells; keyboard previews fit to the
   table cell width and preserve aspect ratio
 - music-object resize handles are disabled inside table cells
 - tables can render wider than the page content width in edit view while the
   page margin/content guide remains tied to the effective page width
+- selected-column context-menu behavior preserves the selected column when
+  right-clicking in the selected column/top selection area
 
 ## Spike Questions
 
@@ -406,6 +412,7 @@ Edit-view layout decision:
 Recent verification:
 
 - `npm run test:ui -- --grep "TableController|TableContextMenu|EditorViewsService|dispatches editor context"` passed with `307 SUCCESS`
+- later `npm run test:ui -- --grep TableController` passed with `330 SUCCESS`
 - known non-failing noise still includes MUI/React `act(...)` and
   lifecycle/flushSync warnings, module directive warnings, and OSMD layout
   warnings
@@ -413,7 +420,181 @@ Recent verification:
 Remaining risks:
 
 - save/reload coverage should be broadened now that more table behavior is real
+- edit-view split-table behavior is not solved; current attempts to split the
+  TableUp/Parchment structure lose the second half in manual browser testing
 - external table paste remains a policy and compatibility question
 - read-view and `PDF` export behavior are not final
 - header row/column semantics, border presets, and richer table formatting are
   not yet resolved
+- remaining table cleanup details live in
+  [Temporary Architecture Cleanup Tracker](../architecture/temporary-cleanup.md);
+  the current direction is Quill-aware editor-surface helpers, table-owned
+  behavior, and generic wide-content layout contributions
+
+### 2026-06-03 Paged Preview Table Pagination Investigation
+
+The first split-view/paged-preview path is now rendering a detached clone of the
+live Quill editor root through `Paged.js`.
+
+Current read-view table baseline:
+
+- do not structurally rewrite, split, or chunk `quill-table-up` tables before
+  passing them to `Paged.js`
+- rely on Paged's native table handling where possible
+- treat `.ql-table-wrapper` as an ordinary block wrapper in paged preview rather
+  than the edit-view `inline-block` / `max-content` wrapper
+- let `table`, `tbody`, and `thead` break automatically
+- keep `tr` rows together with `break-inside: avoid`
+- keep this behavior preview-only; edit view still permits wide tables so the
+  user can reach resize handles and size the table back to fit
+
+Current paged preview CSS direction:
+
+```css
+.mn-paged-preview-document .ql-table-wrapper {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.mn-paged-preview-document table {
+  width: 100%;
+  max-width: 100%;
+  break-inside: auto;
+  page-break-inside: auto;
+}
+
+.mn-paged-preview-document tbody,
+.mn-paged-preview-document thead {
+  break-inside: auto;
+  page-break-inside: auto;
+}
+
+.mn-paged-preview-document tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+```
+
+Resolved issue:
+
+- large TableUp tables were not rendering in the read-only paged preview pane
+  because edit-view table wrapper CSS had higher specificity than the
+  preview-only table CSS
+- the edit-view `.ql-table-wrapper` stayed `inline-block` / `max-content`,
+  which made large tables unplaceable in the right-hand Paged.js pane
+- stronger preview-only selectors now force TableUp wrappers/tables into a
+  normal block, page-width, `table-layout: fixed` shape
+- manual browser verification confirmed the large-table preview problem was
+  fixed
+
+Explicitly avoided for now:
+
+- no preview-only table chunking
+- no manual DOM restructuring such as lifting tables out of paragraphs
+- no `display: contents` wrapper trick without a new instrumented pagination
+  failure
+
+Next investigation step:
+
+- instrument the cloned preview DOM and/or Paged layout hooks for any remaining
+  table pagination/export failure
+- capture computed `display`, `break-inside`, width, height, and overflow for
+  `.ql-table-wrapper`, `table`, `thead`, `tbody`, `tr`, `td`, and the cell
+  content that contains music embeds
+- confirm whether the first unplaceable unit is the wrapper, table body, a row,
+  a cell, or an oversized music-object render
+
+Verification:
+
+- `npm run test:ui -- --grep ViewModeService` passed after the current
+  preview-only CSS cleanup: `328 SUCCESS`
+
+### 2026-06-03 Split-Table Context Menu Attempt
+
+Goal:
+
+- Add table context-menu commands that split one TableUp table into two tables
+  above or below the selected row/range.
+
+Implemented/attempted:
+
+- Added `Split table above` and `Split table below` items to the feature-owned
+  table context menu.
+- Routed those commands through `table/controller.js`.
+- Tried two structural approaches:
+  - split at the table wrapper and re-key the trailing wrapper/tree
+  - split the inner table blot first, clone column definitions into the new
+    table, then split the wrapper around that new table
+- Added focused controller/menu specs for the attempted split command shape.
+
+Verification:
+
+- `npm run test:ui -- --grep TableController` passed with `330 SUCCESS`.
+- Earlier focused table/menu runs also passed, aside from known unrelated
+  React/MUI warning noise and one unrelated music-object test flake in a broader
+  grep run.
+
+Manual result:
+
+- Not working. The command can appear to split, but the second half is lost or
+  the operation does not leave two durable independent TableUp tables.
+
+Current hypothesis:
+
+- `quill-table-up` and Parchment are optimizing/normalizing the split in a way
+  that either merges adjacent structures, drops an invalid trailing fragment, or
+  fails to preserve a complete valid second table tree.
+- Tests that mock the blot shape are not enough; this needs a real TableUp/Quill
+  integration reproduction against actual DOM, Delta, and optimizer behavior.
+
+Next step:
+
+- Do not keep patching the current command blindly.
+- Build or reuse a real Quill/TableUp integration harness that:
+  - creates a multi-row table with real TableUp blots
+  - invokes the split command
+  - inspects `quill.root.innerHTML`
+  - inspects `quill.getContents()`
+  - verifies that two tables and both row groups survive after `quill.update()`
+- If TableUp does not support this cleanly through Parchment splitting, prefer a
+  Delta-level or controlled HTML/import reconstruction strategy over direct DOM
+  surgery.
+
+### 2026-06-04 Table Context Menu Arrangement And Cleanup Direction
+
+Implemented:
+
+- Added `Fit to width` and `Distribute columns` table context-menu commands.
+- `Fit to width` forces the current table width to the available page/editor
+  content width and spreads the added or removed space equally across columns.
+- `Distribute columns` keeps the current table width but makes every column the
+  same width.
+- Reordered the context menu sections into row, column, split, arrange, and
+  delete groups.
+- Fixed selected-column context menu behavior so right-clicking in the selected
+  column/top selection area preserves the active TableUp selection and opens
+  the menu with column context.
+
+Current cleanup conclusions:
+
+- The table feature does not need to be Quill-agnostic. The editor can expose
+  Quill-aware readonly or controlled helpers through `editor-surface`; the
+  cleanup target is keeping table meaning and TableUp behavior out of
+  `EditorPage`.
+- Plain table-cell clicks are established as text-editing gestures, not table
+  selection gestures. Current behavior is a hybrid: native/browser caret
+  placement for text hits, Quill range placement by TableUp cell blot for blank
+  cell space, and a special case that places the cursor after music embeds in
+  cells.
+- Wide edit-view layout should become a generic wide-content contribution,
+  because any feature can eventually render wider than the available page
+  width. Tables are the first known contributor.
+- Remaining editor/table cleanup is tracked in
+  [Temporary Architecture Cleanup Tracker](../architecture/temporary-cleanup.md).
+
+Verification:
+
+- Continuous Karma watcher passed after the selected-column right-click
+  regression: `334 SUCCESS`.

@@ -1,5 +1,5 @@
 import { Registry } from '@polylith/core';
-import EditorToolbarService from '../editor-toolbar.js';
+import EditorToolbarService from '../services/editor-toolbar.js';
 
 describe('EditorToolbarService', function() {
 	function createService() {

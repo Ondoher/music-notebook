@@ -20,10 +20,22 @@ type DocumentTabsState = {
 
 /** Props for one sortable tab helper. */
 type SortableDocumentTabProps = {
+	/** Whether the MUI Tabs owner spans tabs to the full width. */
+	fullWidth?: boolean;
 	/** Resolved visible tab label. */
 	label: string;
+	/** Handles inline tab rename start. */
+	onEdit: (tab: NotebookTab, tabElement: HTMLElement) => void;
+	/** Handles MUI tab selection. */
+	onChange?: (event: React.SyntheticEvent, value: number) => void;
+	/** Whether this tab is selected. */
+	selected?: boolean;
 	/** Tab represented by this MUI tab. */
 	tab: NotebookTab;
+	/** MUI text color setting inherited from Tabs. */
+	textColor?: 'secondary' | 'primary' | 'inherit';
+	/** MUI-assigned tab value. */
+	value?: number;
 };
 
 /** Props for the hook-based sortable tab region helper. */
@@ -35,7 +47,7 @@ type SortableDocumentTabsRegionProps = {
 	/** Handles dnd-kit drag completion. */
 	onDragEnd: (event: unknown) => void;
 	/** Handles MUI tab selection. */
-	onSelectTab: (event: React.SyntheticEvent, tabId: string) => void;
+	onSelectTab: (event: React.SyntheticEvent, tabIndex: number) => void;
 	/** Sorted document tabs. */
 	tabs: NotebookTab[];
 };
