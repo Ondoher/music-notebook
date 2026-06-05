@@ -292,7 +292,7 @@ Implementation path:
 
 Table splitting belongs in read view and export, not Quill edit view.
 The current edit-view table implementation uses `quill-table-up` through the
-local `table` feature; see [Quill Table Up Spike](quill-table-up-spike.md) for
+local `table` feature; see [Quill TableUp Implementation](quill-table-up.md) for
 the current implementation status and remaining table risks.
 
 Current split-preview status:

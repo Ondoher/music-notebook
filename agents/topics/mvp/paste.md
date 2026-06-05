@@ -172,7 +172,7 @@ Implementation path:
 ### Tables
 
 The current MVP table implementation uses `quill-table-up` plus the local
-`table` feature; see [Quill Table Up Spike](quill-table-up-spike.md).
+`table` feature; see [Quill TableUp Implementation](quill-table-up.md).
 
 MVP direction:
 

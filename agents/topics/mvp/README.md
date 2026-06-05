@@ -16,7 +16,7 @@ The first account/session slice and Mongo-backed document persistence slice also
 The document model is still the client implementation seam for tabs, active editor content, document settings, and generic document objects; the server document record wraps that snapshot with ownership and metadata.
 The first table implementation slice is now active through `quill-table-up` and a dedicated `table` feature.
 That slice includes table insertion, row/column selection, keyboard cell navigation, column resizing, a feature-owned context menu view, and row/column/table operations.
-An edit-view split-table command has been attempted in the context menu, but it is not yet usable: manual testing still loses the second half of the table or otherwise fails to leave two durable TableUp tables.
+Edit-view split-table commands are back in the context menu using Delta-level reconstruction; command-level coverage passes, but browser save/reload and richer table-content hardening are still open.
 The current split-view/paged-preview path uses a detached clone of the live
 Quill editor root with preview-only CSS. The large TableUp table rendering
 failure in the read-only right pane was fixed by stronger preview-only table
@@ -53,7 +53,7 @@ For context bootstrap, assume:
 - playback is behind the `player` feature service
 - `accounts` owns account status, dialogs, `account-ui`, and logout intent flow
 - `document` owns document command dialogs and save/open/rename orchestration
-- `table` owns table selection, interaction handling, context-menu view registration, and table operation commands; split-table remains an open command because the current implementation does not yet preserve the second half as a durable TableUp table
+- `table` owns table selection, interaction handling, context-menu view registration, and table operation commands; split-table now uses table-owned Delta reconstruction and still needs broader manual/browser hardening
 - `view-mode` owns the split/paged preview surface, currently using Paged.js
   over a live Quill-root clone while table pagination is investigated
 - notebook tabs are persisted document metadata, not Quill objects
@@ -473,7 +473,7 @@ Tables are an MVP feature, but table support can be intentionally limited.
 
 The current implementation uses `quill-table-up` plus a dedicated local
 `table` feature.
-See [Quill Table Up Spike](quill-table-up-spike.md).
+See [Quill TableUp Implementation](quill-table-up.md).
 
 MVP table support should include:
 
@@ -509,7 +509,8 @@ Plain clicks in table cells are editing gestures, not table-selection gestures:
 native caret placement is used for text hits, a Quill range fallback enters
 blank cell space, and music embeds in cells place the cursor after the embed.
 Split-table commands are present in the context menu but are not considered
-reliable until tested against a real Quill/TableUp integration harness.
+fully hardened until tested manually against real edit-view tables, save/reload,
+music-object cells, and any merged-cell cases the MVP decides to expose.
 
 ## Paragraph Formatting Scope
 
@@ -712,7 +713,7 @@ Anything in this section remains an open question until it is explicitly answere
 
 ### Tables
 
-- Does `quill-table-up` remain stable enough through save/reload, paste, read view, and `PDF` export to keep as the MVP table implementation? See [Quill Table Up Spike](quill-table-up-spike.md).
+- How much additional hardening does the chosen `quill-table-up` MVP table implementation need for save/reload, paste, read view, and `PDF` export? See [Quill TableUp Implementation](quill-table-up.md).
 - What should the insert table size picker look like?
 - Should MVP support header row, header column, or both?
 - What table border presets are needed?
@@ -903,6 +904,7 @@ The important thing is that its core document loop is real.
 - [alphaTab Investigation](alphatab-investigation.md)
 - [Chord Name Parsing](chord-name-parsing.md)
 - [Document Model](document-model.md)
+- [Formatting](formatting.md)
 - [Editor Toolbar](editor-toolbar.md)
 - [MVP Implementation Plan](implementation-plan.md)
 - [Main Menu](main-menu.md)
@@ -910,7 +912,7 @@ The important thing is that its core document loop is real.
 - [Paste](paste.md)
 - [Pitchy Voice Exercise Investigation](pitchy-voice-exercises.md)
 - [Quill Embed Navigation](quill-embed-navigation.md)
-- [Quill Table Up Spike](quill-table-up-spike.md)
+- [Quill TableUp Implementation](quill-table-up.md)
 - [View Mode](view-mode.md)
 - [Music Notebook App Architecture](../architecture/app-architecture.md)
 - [Quill Integration](../architecture/quill-integration.md)

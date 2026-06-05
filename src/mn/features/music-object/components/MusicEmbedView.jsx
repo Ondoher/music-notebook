@@ -1060,14 +1060,13 @@ export default class MusicEmbedView extends Component {
 	}
 
 	/**
-	 * Renders a controller-provided action icon from the app icon registry.
+	 * Renders a controller-provided action icon from the app action registry.
 	 *
 	 * @param {MusicEmbedAction} action
 	 * @returns {React.ReactElement}
 	 */
 	renderActionIcon(action) {
-		const iconRegistry = this.context?.registry?.subscribe?.('icon-registry') || null;
-		const Icon = iconRegistry?.getIcon?.(action.iconId, action.pressed ? 'pressed' : 'default');
+		const Icon = action.iconComponent;
 
 		if (!Icon) {
 			return <span aria-hidden="true" className="mn-editor-toolbar__fallback-icon" />;
@@ -1169,6 +1168,7 @@ export default class MusicEmbedView extends Component {
 
 		return (
 			<MusicEmbedFormatDialog
+				documentStyles={this.embedSession?.getDocumentStyles?.() || []}
 				format={this.state.currentPayload.format}
 				onCancel={this.handleFormatDialogCancel}
 				onChange={this.updateEmbedFormat}

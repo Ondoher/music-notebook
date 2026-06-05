@@ -8,7 +8,14 @@ import { Service } from '@polylith/core';
 export default class EditorInteractionsService extends Service {
 	constructor(registry) {
 		super('editor-interactions', registry);
-		this.implement(['start', 'registerHandler', 'unregisterHandler', 'getHandlers', 'dispatch']);
+		this.implement([
+			'start',
+			'registerHandler',
+			'unregisterHandler',
+			'getHandlers',
+			'notifyEditorReady',
+			'dispatch',
+		]);
 	}
 
 	/**
@@ -38,6 +45,7 @@ export default class EditorInteractionsService extends Service {
 
 		const normalized = {
 			events: handler.events,
+			editorReady: handler.editorReady === true,
 			gutterSelectable: handler.gutterSelectable === true,
 			id: handler.id,
 			idAttribute: handler.idAttribute || '',
@@ -86,6 +94,22 @@ export default class EditorInteractionsService extends Service {
 		) && (
 			!serviceName || handler.serviceName === serviceName
 		));
+	}
+
+	/**
+	 * Notifies registered feature handlers that an editor is preparing to mount.
+	 *
+	 * This pre-Quill-construction signal lets features push Quill setup through
+	 * editor-owned callbacks after service ready/start has completed, without
+	 * imposing service startup ordering.
+	 *
+	 * @param {EditorReadyContext} context - Editor setup callbacks and metadata.
+	 * @returns {EditorReadyNotificationResult[]} Results returned by feature handlers.
+	 */
+	notifyEditorReady(context = {}) {
+		return this.handlers
+			.filter((handler) => handler.editorReady === true)
+			.map((handler) => this.invokeEditorReadyHandler(handler, context));
 	}
 
 	/**
@@ -142,6 +166,37 @@ export default class EditorInteractionsService extends Service {
 			...context,
 			handler,
 		});
+	}
+
+	/**
+	 * Invokes a registered service's editor-ready hook.
+	 *
+	 * @param {EditorInteractionHandlerRegistration} handler - Handler registration to invoke.
+	 * @param {EditorReadyContext} context - Editor setup callbacks and metadata.
+	 * @returns {EditorReadyNotificationResult}
+	 */
+	invokeEditorReadyHandler(handler, context) {
+		const service = this.registry.subscribe(handler.serviceName);
+		const method = service?.handleEditorReady;
+
+		if (typeof method !== 'function') {
+			console.warn(`Cannot notify ${handler.serviceName}.handleEditorReady because it is not implemented.`);
+			return {
+				handled: false,
+				handlerId: handler.id,
+				serviceName: handler.serviceName,
+			};
+		}
+
+		return {
+			handled: true,
+			handlerId: handler.id,
+			result: method.call(service, {
+				...context,
+				handler,
+			}),
+			serviceName: handler.serviceName,
+		};
 	}
 }
 

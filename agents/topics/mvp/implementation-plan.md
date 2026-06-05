@@ -47,8 +47,8 @@ Additional MVP slices now implemented:
 - Save/Open/New/Rename flows exist, including unsaved-work prompts and account-gated save messaging
 - server document routes can list, create, update, save-as, rename, duplicate, get, and delete Mongo-backed documents
 - localized markdown support exists through the server markdown feature, markdown model, and shared markdown/info components
-- table insertion, table row/column selection, keyboard cell navigation, column resizing, and selection-aware row/column/table context-menu commands are implemented through the `table` feature
-- split-table context menu commands have been attempted, but are not yet working reliably in manual browser testing; the current issue is preserving the second half as a separate durable TableUp table
+- table insertion, table row/column selection, keyboard cell navigation, column resizing, fit/distribute arrangement, and selection-aware row/column/table context-menu commands are implemented through the `table` feature using the chosen TableUp path
+- split-table context menu commands use table-owned Delta reconstruction; command-level coverage and manual edit-view testing work, while broader save/reload and rich-content hardening remain part of table implementation follow-up
 - current split-view paged preview relies on a live Quill-root clone and
   preview-only CSS; large TableUp tables now render in the right-hand
   read-only pane after the preview CSS overrides the edit-view TableUp wrapper
@@ -139,7 +139,7 @@ Initial surface expectations:
 1. Identified the current app shell and editor mounting path.
 2. Created an app shell that owns the main menu, editor region, and document tabs.
 3. Added a main command surface component backed by the `main-menu` service.
-4. Added an editor toolbar component backed by the `editor-toolbar` and `icon-registry` services.
+4. Added an editor toolbar component backed by the `editor-toolbar` and `action-registry` services.
 5. Placed the existing Quill editor surface below the toolbar.
 6. Kept current keyboard/staff insertion behavior working.
 7. Added document tabs at the bottom of edit view.

@@ -77,10 +77,27 @@ class AccountUiMock extends Service {
 class DocumentModelMock extends Service {
 	constructor(registry) {
 		super('document-model', registry);
-		this.implement(['getId', 'getTitle', 'isDirty', 'rename', 'toJSON', 'load']);
+		this.implement([
+			'getId',
+			'getTitle',
+			'isDirty',
+			'rename',
+			'toJSON',
+			'load',
+			'loadDocumentList',
+			'loadServerDocument',
+			'saveNewDocument',
+			'saveExistingDocument',
+			'renameServerDocument',
+		]);
 		this.id = null;
 		this.dirty = false;
+		this.documents = [];
 		this.loaded = null;
+		this.loadDocumentIds = [];
+		this.renameRequests = [];
+		this.saveExistingRequests = [];
+		this.saveNewRequests = [];
 		this.title = 'Untitled notebook';
 	}
 
@@ -118,30 +135,16 @@ class DocumentModelMock extends Service {
 		this.dirty = false;
 		return snapshot;
 	}
-}
 
-class IoMock extends Service {
-	constructor(registry) {
-		super('io', registry);
-		this.implement(['get', 'post', 'send']);
-		this.documents = [];
-		this.posts = [];
-		this.sends = [];
+	loadDocumentList() {
+		return Promise.resolve(this.documents);
 	}
 
-	get(url) {
-		if (url === 'api/documents') {
-			return Promise.resolve({
-				success: true,
-				data: {
-					success: true,
-					documents: this.documents,
-				},
-			});
-		}
+	loadServerDocument(documentId) {
+		this.loadDocumentIds.push(documentId);
 
-		if (url === 'api/documents/doc-last') {
-			return Promise.resolve({
+		if (documentId === 'doc-last') {
+			const result = {
 				success: true,
 				data: {
 					success: true,
@@ -156,11 +159,17 @@ class IoMock extends Service {
 						},
 					},
 				},
+			};
+			this.load({
+				...result.data.document.content,
+				id: result.data.document.id,
+				title: result.data.document.name,
 			});
+			return Promise.resolve(result);
 		}
 
-		if (url === 'api/documents/doc-open') {
-			return Promise.resolve({
+		if (documentId === 'doc-open') {
+			const result = {
 				success: true,
 				data: {
 					success: true,
@@ -175,10 +184,16 @@ class IoMock extends Service {
 						},
 					},
 				},
+			};
+			this.load({
+				...result.data.document.content,
+				id: result.data.document.id,
+				title: result.data.document.name,
 			});
+			return Promise.resolve(result);
 		}
 
-		if (url === 'api/documents/doc-missing') {
+		if (documentId === 'doc-missing') {
 			return Promise.resolve({
 				success: false,
 				status: 404,
@@ -192,49 +207,68 @@ class IoMock extends Service {
 		return Promise.resolve({success: false});
 	}
 
-	post(url, body) {
-		this.posts.push({url, body});
-		return Promise.resolve({
+	saveNewDocument(name, options = {}) {
+		this.saveNewRequests.push({ name, options });
+		const result = {
 			success: true,
 			data: {
 				success: true,
 				document: {
 					id: 'doc-1',
-					name: body.name,
-					content: body.content,
-				},
-			},
-		});
-	}
-
-	send(options) {
-		this.sends.push(options);
-
-		if (options.method === 'PATCH' && options.url.endsWith('/name')) {
-			return Promise.resolve({
-				success: true,
-				data: {
-					success: true,
-					document: {
-						id: options.url.split('/')[2],
-						name: options.body.name,
-						size: 42,
-						createdAt: 1000,
-						modifiedAt: 2000,
-						lockedAt: null,
+					name,
+					content: {
+						...this.toJSON(),
+						title: name,
 					},
 				},
-			});
-		}
+			},
+		};
+		this.load({
+			...result.data.document.content,
+			id: result.data.document.id,
+			title: result.data.document.name,
+		});
+		return Promise.resolve(result);
+	}
 
+	saveExistingDocument(options = {}) {
+		this.saveExistingRequests.push(options);
+		const name = options.name || this.title;
+		const result = {
+			success: true,
+			data: {
+				success: true,
+				document: {
+					id: options.id || this.id,
+					name,
+					content: {
+						...this.toJSON(),
+						title: name,
+					},
+				},
+			},
+		};
+		this.load({
+			...result.data.document.content,
+			id: result.data.document.id,
+			title: result.data.document.name,
+		});
+		return Promise.resolve(result);
+	}
+
+	renameServerDocument(name, options = {}) {
+		this.renameRequests.push({ name, options });
 		return Promise.resolve({
 			success: true,
 			data: {
 				success: true,
 				document: {
-					id: 'doc-1',
-					name: options.body.name,
-					content: options.body.content,
+					id: options.id || this.id,
+					name,
+					size: 42,
+					createdAt: 1000,
+					modifiedAt: 2000,
+					lockedAt: null,
 				},
 			},
 		});
@@ -246,7 +280,6 @@ describe('DocumentController', function() {
 	let accountUi;
 	let documentController;
 	let documentModel;
-	let io;
 	let mainMenu;
 	let registry;
 
@@ -257,7 +290,6 @@ describe('DocumentController', function() {
 		accountModel = new AccountModelMock(registry);
 		accountUi = new AccountUiMock(registry);
 		documentModel = new DocumentModelMock(registry);
-		io = new IoMock(registry);
 		new AppDataMock(registry);
 		new LocalizeMock(registry);
 		documentController = new DocumentController(registry);
@@ -428,12 +460,9 @@ describe('DocumentController', function() {
 		await documentController.onDialogAction('logout-save');
 		await pending;
 
-		expect(io.sends[0]).toEqual(jasmine.objectContaining({
-			method: 'PUT',
-			url: 'api/documents/doc-1',
-			body: jasmine.objectContaining({
-				name: 'Lesson 1',
-			}),
+		expect(documentModel.saveExistingRequests[0]).toEqual(jasmine.objectContaining({
+			id: 'doc-1',
+			name: 'Lesson 1',
 		}));
 		expect(intent.cancelled).toBeFalse();
 		expect(documentController.getDialogState().open).toBeFalse();
@@ -477,7 +506,7 @@ describe('DocumentController', function() {
 
 	it('opens the save dialog when logged-in users save a new document', async function() {
 		accountModel.authenticated = true;
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-existing',
 			name: 'Existing notebook',
 		}];
@@ -489,7 +518,7 @@ describe('DocumentController', function() {
 		});
 
 		expect(documentController.getNameDialogState()).toEqual(jasmine.objectContaining({
-			documents: io.documents,
+			documents: documentModel.documents,
 			mode: 'save-new',
 			name: 'Untitled notebook',
 			open: true,
@@ -498,7 +527,7 @@ describe('DocumentController', function() {
 
 	it('detects name conflicts before saving from the name dialog', async function() {
 		accountModel.authenticated = true;
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-existing',
 			name: 'Existing notebook',
 		}];
@@ -508,17 +537,17 @@ describe('DocumentController', function() {
 		await documentController.submitNameDialog();
 
 		expect(documentController.getNameDialogState()).toEqual(jasmine.objectContaining({
-			conflictDocument: io.documents[0],
+			conflictDocument: documentModel.documents[0],
 			open: true,
 		}));
-		expect(io.posts.length).toBe(0);
+		expect(documentModel.saveNewRequests.length).toBe(0);
 
 		await documentController.submitNameDialog();
 
-		expect(io.posts[0]).toEqual(jasmine.objectContaining({
-			url: 'api/documents',
-			body: jasmine.objectContaining({
-				name: 'Existing notebook',
+		expect(documentModel.saveNewRequests[0]).toEqual(jasmine.objectContaining({
+			name: 'Existing notebook',
+			options: jasmine.objectContaining({
+				allowNameConflict: true,
 			}),
 		}));
 		expect(documentModel.getId()).toBe('doc-1');
@@ -536,12 +565,9 @@ describe('DocumentController', function() {
 			},
 		});
 
-		expect(io.sends[0]).toEqual(jasmine.objectContaining({
-			method: 'PUT',
-			url: 'api/documents/doc-1',
-			body: jasmine.objectContaining({
-				name: 'Lesson 1',
-			}),
+		expect(documentModel.saveExistingRequests[0]).toEqual(jasmine.objectContaining({
+			id: 'doc-1',
+			name: 'Lesson 1',
 		}));
 		expect(documentController.getNameDialogState().open).toBeFalse();
 	});
@@ -550,7 +576,7 @@ describe('DocumentController', function() {
 		accountModel.authenticated = true;
 		documentModel.id = 'doc-1';
 		documentModel.title = 'Lesson 1';
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-1',
 			name: 'Lesson 1',
 		}, {
@@ -565,7 +591,7 @@ describe('DocumentController', function() {
 		});
 
 		expect(documentController.getNameDialogState()).toEqual(jasmine.objectContaining({
-			documents: io.documents,
+			documents: documentModel.documents,
 			mode: 'rename',
 			name: 'Lesson 1',
 			open: true,
@@ -602,12 +628,11 @@ describe('DocumentController', function() {
 		documentController.updateNameDialogName('Renamed lesson');
 		await documentController.submitNameDialog();
 
-		expect(io.sends[0]).toEqual(jasmine.objectContaining({
-			method: 'PATCH',
-			url: 'api/documents/doc-1/name',
-			body: {
+		expect(documentModel.renameRequests[0]).toEqual(jasmine.objectContaining({
+			name: 'Renamed lesson',
+			options: {
 				allowNameConflict: false,
-				name: 'Renamed lesson',
+				id: 'doc-1',
 			},
 		}));
 		expect(documentModel.getTitle()).toBe('Renamed lesson');
@@ -619,7 +644,7 @@ describe('DocumentController', function() {
 		accountModel.authenticated = true;
 		documentModel.id = 'doc-1';
 		documentModel.title = 'Lesson 1';
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-1',
 			name: 'Lesson 1',
 		}, {
@@ -631,20 +656,19 @@ describe('DocumentController', function() {
 		documentController.updateNameDialogName('Lesson 2');
 		await documentController.submitNameDialog();
 
-		expect(io.sends.length).toBe(0);
+		expect(documentModel.renameRequests.length).toBe(0);
 		expect(documentController.getNameDialogState()).toEqual(jasmine.objectContaining({
 			conflictConfirmed: true,
-			conflictDocument: io.documents[1],
+			conflictDocument: documentModel.documents[1],
 			open: true,
 		}));
 
 		await documentController.submitNameDialog();
 
-		expect(io.sends[0]).toEqual(jasmine.objectContaining({
-			method: 'PATCH',
-			body: jasmine.objectContaining({
+		expect(documentModel.renameRequests[0]).toEqual(jasmine.objectContaining({
+			name: 'Lesson 2',
+			options: jasmine.objectContaining({
 				allowNameConflict: true,
-				name: 'Lesson 2',
 			}),
 		}));
 	});
@@ -668,7 +692,7 @@ describe('DocumentController', function() {
 
 	it('opens the saved document dialog when logged-in users choose open', async function() {
 		accountModel.authenticated = true;
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-open',
 			name: 'Open notebook',
 		}];
@@ -680,7 +704,7 @@ describe('DocumentController', function() {
 		});
 
 		expect(documentController.getOpenDialogState()).toEqual(jasmine.objectContaining({
-			documents: io.documents,
+			documents: documentModel.documents,
 			open: true,
 			selectedDocumentId: 'doc-open',
 		}));
@@ -688,7 +712,7 @@ describe('DocumentController', function() {
 
 	it('loads the selected document from the open dialog', async function() {
 		accountModel.authenticated = true;
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-open',
 			name: 'Open notebook',
 		}];
@@ -749,7 +773,7 @@ describe('DocumentController', function() {
 		documentModel.id = 'doc-1';
 		documentModel.title = 'Lesson 1';
 		documentModel.dirty = true;
-		io.documents = [{
+		documentModel.documents = [{
 			id: 'doc-open',
 			name: 'Open notebook',
 		}];

@@ -7,6 +7,7 @@ export default class DocumentModelService extends Service {
 	constructor(registry) {
 		super('document-model', registry);
 		this.implement([
+			'ready',
 			'start',
 			'getId',
 			'getTitle',
@@ -34,9 +35,19 @@ export default class DocumentModelService extends Service {
 			'upsertObject',
 			'updateObject',
 			'removeObject',
+			'loadDocumentList',
+			'loadServerDocument',
+			'saveNewDocument',
+			'saveExistingDocument',
+			'renameServerDocument',
 			'toJSON',
 			'load',
 		]);
+	}
+
+	ready() {
+		/** @type {IoService} */
+		this.io = this.registry.subscribe('io');
 	}
 
 	start() {
@@ -672,6 +683,93 @@ export default class DocumentModelService extends Service {
 
 		this.markChanged('object-removed', objectId);
 		return true;
+	}
+
+	getCurrentContentForSave(name = this.getTitle()) {
+		return {
+			...this.toJSON(),
+			title: name,
+		};
+	}
+
+	applyServerDocument(document) {
+		this.load({
+			...document.content,
+			id: document.id,
+			title: document.name,
+		});
+	}
+
+	async loadDocumentList() {
+		const result = await this.io.get('api/documents');
+
+		if (result.success && result.data?.success && Array.isArray(result.data.documents)) {
+			return result.data.documents;
+		}
+
+		return [];
+	}
+
+	async loadServerDocument(documentId) {
+		const id = String(documentId || '').trim();
+
+		if (!id) {
+			return {success: false};
+		}
+
+		const result = await this.io.get(`api/documents/${encodeURIComponent(id)}`);
+
+		if (result.success && result.data?.success && result.data.document) {
+			this.applyServerDocument(result.data.document);
+		}
+
+		return result;
+	}
+
+	async saveNewDocument(name, options = {}) {
+		const result = await this.io.post('api/documents', {
+			allowNameConflict: options.allowNameConflict === true,
+			name,
+			content: this.getCurrentContentForSave(name),
+		});
+
+		if (result.success && result.data?.success && result.data.document) {
+			this.applyServerDocument(result.data.document);
+		}
+
+		return result;
+	}
+
+	async saveExistingDocument(options = {}) {
+		const id = options.id || this.getId();
+		const name = options.name || this.getTitle();
+		const result = await this.io.send({
+			method: 'PUT',
+			url: `api/documents/${encodeURIComponent(id)}`,
+			body: {
+				name,
+				content: this.getCurrentContentForSave(name),
+			},
+		});
+
+		if (result.success && result.data?.success && result.data.document) {
+			this.applyServerDocument(result.data.document);
+		}
+
+		return result;
+	}
+
+	async renameServerDocument(name, options = {}) {
+		const id = options.id || this.getId();
+
+		return this.io.send({
+			method: 'PATCH',
+			url: `api/documents/${encodeURIComponent(id)}/name`,
+			body: {
+				allowNameConflict: options.allowNameConflict === true,
+				name,
+			},
+		});
 	}
 
 	toJSON() {

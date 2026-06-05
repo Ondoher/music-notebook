@@ -41,6 +41,7 @@
 }
 
 .mn-document-sheet {
+	position: relative;
 	display: grid;
 	grid-template-rows: minmax(0, 1fr);
 	flex: 0 0 auto;
@@ -54,13 +55,15 @@
 		var(--mn-margin-left);
 	background: #ffffff;
 	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.22);
+	overflow: hidden;
 }
 
 .mn-document-sheet--continuous {
+	--mn-editor-gutter-width: 28px;
 	--mn-content-width: calc(var(--mn-page-width) - var(--mn-margin-left) - var(--mn-margin-right));
-	width: var(--mn-content-width, 100%);
-	min-width: var(--mn-content-width);
-	max-width: var(--mn-content-width);
+	width: max-content;
+	min-width: calc(var(--mn-editor-gutter-width, 28px) + var(--mn-content-width));
+	max-width: none;
 	min-height: 100%;
 	padding: 0;
 	box-shadow: none;
@@ -68,7 +71,8 @@
 
 .mn-document-content {
 	position: relative;
-	width: var(--mn-editor-overflow-width, 100%);
+	z-index: 1;
+	width: var(--mn-editor-overflow-width, var(--mn-content-width, 100%));
 	min-width: 0;
 	max-width: none;
 	min-height: calc(var(--mn-page-height) - var(--mn-margin-top) - var(--mn-margin-bottom));
@@ -77,6 +81,7 @@
 }
 
 .mn-document-sheet--continuous .mn-document-content {
+	margin-left: var(--mn-editor-gutter-width, 44px);
 	min-height: 100%;
 }
 
@@ -94,27 +99,20 @@
 	pointer-events: none;
 }
 
+.mn-line-selection-gutter,
+.mn-line-selection-gutter-cursor {
+	cursor: ne-resize;
+	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath fill='white' stroke='black' stroke-linejoin='round' stroke-width='1.5' d='M25 3 7 16l7 1.5-4 8 3.6 1.8 4-8L23 25z'/%3E%3C/svg%3E") 7 16, ne-resize;
+}
+
 .mn-line-selection-gutter {
 	position: absolute;
 	top: 0;
 	bottom: 0;
-	left: -40px;
+	left: calc(-1 * var(--mn-editor-gutter-width, 44px));
 	z-index: 3;
-	width: 44px;
-	cursor: ne-resize;
-	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath fill='white' stroke='black' stroke-linejoin='round' stroke-width='1.5' d='M25 3 7 16l7 1.5-4 8 3.6 1.8 4-8L23 25z'/%3E%3C/svg%3E") 7 16, ne-resize;
+	width: var(--mn-editor-gutter-width, 44px);
 	user-select: none;
-}
-
-.mn-table-column-selection-cursor,
-.mn-table-column-selection-cursor .ql-editor,
-.mn-table-column-selection-cursor .ql-editor *,
-.mn-table-column-selection-cursor .ql-table-wrapper,
-.mn-table-column-selection-cursor .ql-table-wrapper *,
-.mn-table-column-selection-cursor .table-up,
-.mn-table-column-selection-cursor .table-up * {
-	cursor: s-resize !important;
-	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath fill='black' d='M16 28 5 12h7V3h8v9h7z'/%3E%3C/svg%3E") 16 18, s-resize !important;
 }
 
 .mn-editor-toolbar {
@@ -175,9 +173,9 @@
 }
 
 .mn-document-content .ql-container.ql-snow {
-	width: var(--mn-content-width, 100%);
+	width: var(--mn-editor-overflow-width, var(--mn-content-width, 100%));
 	min-width: 0;
-	max-width: var(--mn-content-width, 100%);
+	max-width: none;
 	height: auto;
 	min-height: 0;
 	border: 0;
@@ -186,9 +184,9 @@
 }
 
 .mn-document-content .ql-editor {
-	width: var(--mn-content-width, 100%);
+	width: var(--mn-editor-overflow-width, var(--mn-content-width, 100%));
 	min-width: 0;
-	max-width: var(--mn-content-width, 100%);
+	max-width: none;
 	height: 100%;
 	min-height: 100%;
 	padding: 0;
@@ -200,22 +198,13 @@
 	overflow-wrap: break-word;
 }
 
+.mn-document-content .ql-editor > :where(p, h1, h2, h3, h4, h5, h6, blockquote, ol, ul) {
+	max-width: var(--mn-content-width, 100%);
+}
+
 .mn-document-content .ql-editor figure,
 .mn-document-content .ql-editor .music-keyboard-embed {
 	max-width: 100%;
-}
-
-.mn-document-content .ql-editor .ql-table-wrapper {
-	display: inline-block;
-	width: max-content;
-	min-width: 100%;
-	max-width: none;
-	overflow: visible;
-}
-
-.mn-document-content .table-up-toolbox {
-	width: var(--mn-editor-overflow-width, 100%) !important;
-	overflow: visible;
 }
 
 .mn-document-content .ql-editor::after {
@@ -305,7 +294,7 @@
 	}
 
 	.mn-document-sheet--continuous {
-		width: calc(var(--mn-page-width) - var(--mn-margin-left) - var(--mn-margin-right));
+		width: max-content;
 		padding: 0;
 	}
 

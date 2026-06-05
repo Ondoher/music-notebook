@@ -20,58 +20,46 @@ export default class Markdown extends Component {
 			content: '',
 			loadedName: '',
 		};
+		this.localize = null;
+		this.locale = '';
+	}
+
+	componentWillMount() {
+		this.localize = this.context?.localize || null;
+		this.locale = this.getContextLocale();
 	}
 
 	componentDidMount() {
-		this.subscribeToLocale();
 		this.loadMarkdown();
 	}
 
 	componentDidUpdate(prevProps) {
+		const nextLocalize = this.context?.localize || null;
+		const nextLocale = this.getContextLocale(nextLocalize);
+		const localizeChanged = nextLocalize !== this.localize;
+		const localeChanged = nextLocale !== this.locale;
+
+		if (localizeChanged) {
+			this.localize = nextLocalize;
+		}
+
 		if (
 			prevProps.name !== this.props.name
 			|| prevProps.replacements !== this.props.replacements
+			|| localizeChanged
+			|| localeChanged
 		) {
+			this.locale = nextLocale;
 			this.loadMarkdown();
 		}
 	}
 
-	componentWillUnmount() {
-		this.unsubscribeFromLocale();
-	}
-
-	getLocalize() {
-		return this.context?.localize || this.context?.registry?.subscribe?.('localize') || null;
-	}
-
-	subscribeToLocale() {
-		const localize = this.getLocalize();
-
-		if (!localize?.listen) {
-			return;
-		}
-
-		this.localeListener = localize.listen('changeLocale', this.loadMarkdown.bind(this));
-		this.updatedListener = localize.listen('updated', this.loadMarkdown.bind(this));
-	}
-
-	unsubscribeFromLocale() {
-		const localize = this.getLocalize();
-
-		if (localize?.unlisten && this.localeListener) {
-			localize.unlisten('changeLocale', this.localeListener);
-		}
-
-		if (localize?.unlisten && this.updatedListener) {
-			localize.unlisten('updated', this.updatedListener);
-		}
-
-		this.localeListener = null;
-		this.updatedListener = null;
+	getContextLocale(localize = this.localize) {
+		return this.context?.locale || localize?.getLocale?.() || '';
 	}
 
 	async loadMarkdown() {
-		const localize = this.getLocalize();
+		const localize = this.localize;
 
 		if (!this.props.name || !localize?.translateMarkdown) {
 			this.setState({

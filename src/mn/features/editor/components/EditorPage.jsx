@@ -1,17 +1,9 @@
 import React from 'react';
 import Quill from 'quill';
-import TableUp, {
-	TableResizeLine,
-	TableSelection,
-} from 'quill-table-up';
 import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
 import EditorInteractionDispatcher from './EditorInteractionDispatcher.js';
 import EditorToolbar from './EditorToolbar.jsx';
 import ViewModePane from '../../view-mode/components/ViewModePane.jsx';
-import 'quill/dist/quill.snow.css';
-import 'quill-table-up/index.css';
-
-Quill.register({ [`modules/${TableUp.moduleName}`]: TableUp }, true);
 
 /**
  * Renders the Quill-backed document editor page and generic object embed hooks.
@@ -40,11 +32,12 @@ export default class EditorPage extends React.Component {
 		this.quill = null;
 		this.editorToolbar = null;
 		this.editorSurface = null;
-		this.iconRegistry = null;
+		this.actionRegistry = null;
 		this.documentModel = null;
 		this.documentFormat = null;
 		this.viewMode = null;
-		this.editorInteractions = null;
+		this.editorInteractions = this.props.editorInteractions || this.context?.registry?.subscribe?.('editor-interactions') || null;
+		this.editorLayout = null;
 		this.editorViews = null;
 		this.documentModelListeners = [];
 		this.objectTypes = null;
@@ -64,19 +57,16 @@ export default class EditorPage extends React.Component {
 		this.lineSelectionAnchorRange = null;
 		this.lineSelectionOwnerDocument = null;
 		this.gutterSelectionInteraction = null;
-		this.tableSelectionMouseDownGate = null;
-		this.tableDebugEnabled = false;
-		this.tableDebugEventSequence = 0;
-		this.tableDebugNativeListeners = [];
-		this.tableDebugPatchedListeners = [];
-		this.tableDebugPatchedMethods = [];
-		this.tableDebugPatchedSelection = null;
 		this.objectTypeClipboardMatcherKeys = new Set();
 		this.editorInteractionDispatcher = new EditorInteractionDispatcher({
 			getEditorInteractions: () => this.editorInteractions,
 			getCursorRoot: () => this.editorRef.current || this.quill?.root || null,
 			getEditorRoot: () => this.quill?.root || this.editorRef.current || null,
 			getQuill: () => this.quill,
+			getContentWidth: () => this.getContentWidth(),
+			setSelectionWithoutScroll: (index, length, source, anchor) => (
+				this.setQuillSelectionWithoutScroll(index, length, source, anchor)
+			),
 		});
 	}
 
@@ -135,8 +125,6 @@ export default class EditorPage extends React.Component {
 		this.detachNativeEditorInteractionListeners();
 		this.detachEditorPointerCaptureListeners();
 		this.detachLineSelectionDragListeners();
-		this.detachTableDebugInstrumentation();
-		this.detachTableSelectionMouseDownGate();
 		window.clearTimeout(this.documentOverflowWidthTimer);
 		window.clearTimeout(this.pagedPreviewHtmlTimer);
 		window.clearTimeout(this.whiteSpaceMarkerTimer);
@@ -153,11 +141,12 @@ export default class EditorPage extends React.Component {
 	configureToolbarServices() {
 		this.editorToolbar = this.props.editorToolbar || this.context?.registry?.subscribe?.('editor-toolbar') || null;
 		this.editorSurface = this.props.editorSurface || this.context?.registry?.subscribe?.('editor-surface') || null;
-		this.iconRegistry = this.props.iconRegistry || this.context?.registry?.subscribe?.('icon-registry') || null;
+		this.actionRegistry = this.props.actionRegistry || this.context?.registry?.subscribe?.('action-registry') || null;
 		this.documentModel = this.props.documentModel || this.context?.registry?.subscribe?.('document-model') || null;
 		this.documentFormat = this.props.documentFormat || this.context?.registry?.subscribe?.('document-format') || null;
 		this.viewMode = this.props.viewMode || this.context?.registry?.subscribe?.('view-mode') || null;
 		this.editorInteractions = this.props.editorInteractions || this.context?.registry?.subscribe?.('editor-interactions') || null;
+		this.editorLayout = this.props.editorLayout || this.context?.registry?.subscribe?.('editor-layout') || null;
 		this.editorViews = this.props.editorViews || this.context?.registry?.subscribe?.('editor-views') || null;
 		this.objectTypes = this.props.objectTypes || this.context?.registry?.subscribe?.('object-type-registry') || null;
 	}
@@ -191,10 +180,20 @@ export default class EditorPage extends React.Component {
 
 		this.documentSettingsListener = this.documentModel.listen(
 			'settings-changed',
-			(settings) => this.setState({ documentSettings: settings }),
+			(settings) => this.onDocumentSettingsChanged(settings),
 		);
 		this.setState({
 			documentSettings: this.documentModel.getSettings(),
+		});
+	}
+
+	onDocumentSettingsChanged(settings) {
+		this.setState({ documentSettings: settings }, () => {
+			this.updateToolbarState();
+			this.updateEmbedSelectionState();
+			this.updatePagedPreviewHtml();
+			this.updateDocumentOverflowWidth();
+			this.scheduleWhiteSpaceMarkerUpdate();
 		});
 	}
 
@@ -284,20 +283,11 @@ export default class EditorPage extends React.Component {
 		}
 
 		this.cleanupEditorDom();
+		const contributedModules = this.getEditorReadyQuillModules();
 
 		this.quill = new Quill(this.editorRef.current, {
 			modules: {
-				[TableUp.moduleName]: {
-					modules: [
-						{
-							module: TableSelection,
-							options: {
-								selectColor: 'var(--mn-selection-color)',
-							},
-						},
-						{ module: TableResizeLine },
-					],
-				},
+				...contributedModules,
 				clipboard: {
 					matchers: this.getObjectTypeClipboardMatchers(),
 				},
@@ -317,31 +307,61 @@ export default class EditorPage extends React.Component {
 		this.quill.keyboard?.addBinding?.({ key: 'Z', shortKey: true, shiftKey: true }, () => !this.redo());
 		this.quill.keyboard?.addBinding?.({ key: 'y', shortKey: true }, () => !this.redo());
 		this.quill.keyboard?.addBinding?.({ key: 'Y', shortKey: true }, () => !this.redo());
-		this.addLeadingKeyboardBinding({ key: 'Tab', shiftKey: false }, () => this.navigateTableCell(false));
-		this.addLeadingKeyboardBinding({ key: 'Tab', shiftKey: true }, () => this.navigateTableCell(true));
-
-		this.quill.on('selection-change', () => {
+		this.addLeadingKeyboardBinding({ key: 'Tab', shiftKey: false }, () => this.dispatchEditorKeyboardBinding({ key: 'Tab' }));
+		this.addLeadingKeyboardBinding({ key: 'Tab', shiftKey: true }, () => this.dispatchEditorKeyboardBinding({ key: 'Tab', shiftKey: true }));
+		this.quill.on('selection-change', (range, oldRange, source) => {
 			this.updateToolbarState();
 			this.updateEmbedSelectionState();
+			this.dispatchEditorInteraction('selection-change', null, {
+				oldRange,
+				range,
+				source,
+			});
 		});
 		this.quill.on('text-change', (delta, oldDelta, source) => {
 			this.onEditorTextChange(source);
 		});
-		this.attachNativeEditorInteractionListeners();
 		this.selectionOwnerDocument = this.editorRef.current.ownerDocument;
 		this.selectionOwnerDocument.addEventListener('selectionchange', this.updateEmbedSelectionState);
+		this.attachNativeEditorInteractionListeners();
 		this.attachEditorSurface();
 		this.listenForObjectTypeChanges();
 		this.registerObjectTypeClipboardMatchers();
 		this.connectEditorMutationObserver();
-		this.attachTableSelectionMouseDownGate();
-		this.attachTableDebugInstrumentation();
 
 		this.loadActiveTabContent();
 		this.updatePagedPreviewHtml();
 		this.updateDocumentOverflowWidth();
 		this.scheduleWhiteSpaceMarkerUpdate();
 
+	}
+
+	getEditorReadyQuillModules() {
+		const modules = {};
+
+		this.editorInteractions?.notifyEditorReady?.({
+			Quill,
+			addQuillModuleOptions: (name, options) => {
+				if (!name || !options) {
+					return false;
+				}
+
+				modules[name] = {
+					...(modules[name] || {}),
+					...options,
+				};
+				return true;
+			},
+			registerQuillModule: (path, value, overwrite = true) => {
+				if (!path || !value) {
+					return false;
+				}
+
+				Quill.register({ [path]: value }, overwrite === true);
+				return true;
+			},
+		});
+		return modules;
 	}
 
 	registerObjectTypeClipboardMatchers() {
@@ -395,116 +415,6 @@ export default class EditorPage extends React.Component {
 		});
 	}
 
-	/**
-	 * Moves the cursor between table cells in visual document order.
-	 *
-	 * @param {boolean} backwards
-	 * @returns {boolean}
-	 */
-	navigateTableCell(backwards = false) {
-		const currentCell = this.getCurrentTableCellInner();
-		const table = currentCell?.closest?.('table');
-
-		if (!currentCell || !table) {
-			return true;
-		}
-
-		const cells = Array.from(table.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'));
-		const currentIndex = cells.indexOf(currentCell);
-		const nextIndex = currentIndex + (backwards ? -1 : 1);
-		const targetCell = cells[nextIndex];
-
-		if (!targetCell) {
-			if (!backwards && this.appendTableRowAfterCell(currentCell)) {
-				const updatedCells = Array.from(table.querySelectorAll('.ql-table-cell-inner, .table-up-cell-inner'));
-				const appendedTargetCell = updatedCells[currentIndex + 1];
-
-				if (appendedTargetCell) {
-					return this.selectTableCell(appendedTargetCell);
-				}
-			}
-
-			return false;
-		}
-
-		return this.selectTableCell(targetCell);
-	}
-
-	/**
-	 * Gets the table cell containing the current Quill selection.
-	 *
-	 * @returns {HTMLElement | null}
-	 */
-	getCurrentTableCellInner() {
-		const range = this.quill?.getSelection?.();
-
-		if (!range) {
-			return null;
-		}
-
-		const [line] = this.quill.getLine?.(range.index) || [];
-		const lineNode = line?.domNode;
-		const leafNode = this.quill.getLeaf?.(range.index)?.[0]?.domNode;
-		const node = lineNode || leafNode;
-
-		return node?.closest?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
-	}
-
-	/**
-	 * Places the Quill cursor at the beginning of a table cell.
-	 *
-	 * @param {HTMLElement} cell
-	 * @returns {boolean}
-	 */
-	selectTableCell(cell) {
-		const blot = this.getTableCellBlot(cell);
-
-		if (!blot || !this.quill?.getIndex) {
-			return false;
-		}
-
-		const index = this.quill.getIndex(blot);
-
-		if (!Number.isInteger(index)) {
-			return false;
-		}
-
-		this.getTableSelectionModule()?.hide?.();
-		this.setQuillSelectionWithoutScroll(index, 0, 'user', cell);
-		this.updateToolbarState();
-		this.updateEmbedSelectionState();
-		return false;
-	}
-
-	/**
-	 * Appends a row after the row containing a table cell.
-	 *
-	 * @param {HTMLElement} cell
-	 * @returns {boolean}
-	 */
-	appendTableRowAfterCell(cell) {
-		const blot = this.getTableCellBlot(cell);
-		const tableModule = this.quill?.getModule?.(TableUp.moduleName);
-
-		if (!blot || !tableModule?.appendRow) {
-			return false;
-		}
-
-		tableModule.appendRow([blot], true);
-		this.onEditorTextChange('user');
-		return true;
-	}
-
-	/**
-	 * Gets the TableUp cell-inner blot for a rendered cell.
-	 *
-	 * @param {HTMLElement} cell
-	 * @returns {unknown | null}
-	 */
-	getTableCellBlot(cell) {
-		return Quill.find(cell, true) || null;
-	}
-
 	handleEditorContextMenu = (event) => {
 		this.dispatchEditorInteraction('contextmenu', event);
 	};
@@ -513,14 +423,26 @@ export default class EditorPage extends React.Component {
 		this.dispatchEditorInteraction('keydown', event);
 	};
 
+	dispatchEditorKeyboardBinding(binding) {
+		const result = this.dispatchEditorInteraction('keydown', {
+			key: binding?.key,
+			mnLeadingKeyboardBinding: true,
+			preventDefault() {},
+			shiftKey: binding?.shiftKey === true,
+			stopImmediatePropagation() {},
+			stopPropagation() {},
+		}, {
+			allowUnresolvedTarget: true,
+		});
+
+		return result?.handled === true ? false : true;
+	}
+
 	handleNativeEditorMouseDownCapture = (event) => {
 		const result = this.dispatchEditorInteraction('mousedown-capture', event);
 
-		if (result?.result?.suppressTableSelection === true) {
-			event.mnSuppressTableUpSelection = true;
-			if (result?.result?.suppressBlankTableCellFocus !== true) {
-				this.scheduleBlankTableCellFocus(event);
-			}
+		if (result?.result?.suppressNativeSelection === true) {
+			event.mnSuppressNativeSelection = true;
 		}
 	};
 
@@ -552,6 +474,22 @@ export default class EditorPage extends React.Component {
 
 		this.handleLineSelectionPointerDown(event);
 	};
+
+	handleEditorSurfacePointerMoveCapture = (event) => {
+		this.updateLineSelectionGutterCursor(event);
+	};
+
+	handleEditorSurfacePointerLeave = () => {
+		this.setLineSelectionGutterCursor(false);
+	};
+
+	updateLineSelectionGutterCursor(event) {
+		this.setLineSelectionGutterCursor(this.isLineSelectionGutterPoint(event));
+	}
+
+	setLineSelectionGutterCursor(active) {
+		this.editorSurfaceRef.current?.classList?.toggle?.('mn-line-selection-gutter-cursor', active === true);
+	}
 
 	isLineSelectionGutterPoint(event) {
 		const content = this.documentContentRef.current;
@@ -610,21 +548,7 @@ export default class EditorPage extends React.Component {
 	};
 
 	dispatchEditorInteraction(eventName, event, extraContext = {}) {
-		this.logTableDebug(`app-dispatch:${eventName}:before`, {
-			eventName,
-			event: this.getTableDebugEventSummary(event),
-			extraContext: this.getTableDebugContextSummary(extraContext),
-		});
-		const result = this.editorInteractionDispatcher.dispatch(eventName, event, extraContext);
-		const resultSummary = this.getTableDebugDispatchResultSummary(result);
-
-		this.logTableDebug(`app-dispatch:${eventName}:after:${this.getTableDebugResultLabel(resultSummary)}`, {
-			eventName,
-			event: this.getTableDebugEventSummary(event),
-			result: resultSummary,
-			snapshot: this.getTableDebugSnapshot(event),
-		});
-		return result;
+		return this.editorInteractionDispatcher.dispatch(eventName, event, extraContext);
 	}
 
 	shouldCaptureEditorPointer(result) {
@@ -699,11 +623,17 @@ export default class EditorPage extends React.Component {
 		return {
 			editorRoot: this.quill?.root || null,
 			findBlot: (node, bubble = true) => Quill.find(node, bubble),
-			getCurrentTableCellInner: this.getCurrentTableCellInner.bind(this),
-			getTableModule: () => this.quill?.getModule?.(TableUp.moduleName) || null,
-			getTableSelectionModule: this.getTableSelectionModule.bind(this),
+			getIndex: (blot) => blot && this.quill?.getIndex ? this.quill.getIndex(blot) : null,
+			getLeaf: (index) => this.quill?.getLeaf?.(index) || [],
+			getLine: (index) => this.quill?.getLine?.(index) || [],
+			getModule: (name) => this.quill?.getModule?.(name) || null,
+			getContentWidth: this.getContentWidth.bind(this),
+			getSelection: (focus = false) => this.quill?.getSelection?.(focus) || null,
 			quill: this.quill,
-			selectTableCell: this.selectTableCell.bind(this),
+			setSelection: (...args) => this.quill?.setSelection?.(...args),
+			setSelectionWithoutScroll: (index, length, source, anchor) => (
+				this.setQuillSelectionWithoutScroll(index, length, source, anchor)
+			),
 		};
 	}
 
@@ -740,12 +670,28 @@ export default class EditorPage extends React.Component {
 		this.isApplyingDocumentModelContent = true;
 		this.quill.setContents(content, 'silent');
 		this.quill.setSelection(0, 0, 'silent');
+		this.clearEditorHistoryAfterContentLoad();
 		this.isApplyingDocumentModelContent = false;
 		this.updateToolbarState();
 		this.updateEmbedSelectionState();
 		this.updatePagedPreviewHtml();
 		this.updateDocumentOverflowWidth();
 		this.scheduleWhiteSpaceMarkerUpdate();
+	}
+
+	clearEditorHistoryAfterContentLoad() {
+		if (typeof this.quill?.history?.clear === 'function') {
+			this.quill.history.clear();
+			return;
+		}
+
+		if (Array.isArray(this.quill?.history?.stack?.undo)) {
+			this.quill.history.stack.undo = [];
+		}
+
+		if (Array.isArray(this.quill?.history?.stack?.redo)) {
+			this.quill.history.stack.redo = [];
+		}
 	}
 
 	onEditorTextChange(source) {
@@ -782,12 +728,42 @@ export default class EditorPage extends React.Component {
 
 		this.surfaceAdapter = {
 			insertObject: this.insertObject.bind(this),
-			insertTable: this.insertTable.bind(this),
 			insertPageBreak: this.insertPageBreak.bind(this),
 			updateObject: this.updateObject.bind(this),
 			removeObject: this.removeObject.bind(this),
 			getContentWidth: this.getContentWidth.bind(this),
 			getSelection: () => this.quill?.getSelection() || null,
+			getQuill: () => this.quill || null,
+			getQuillModule: (name) => this.quill?.getModule?.(name) || null,
+			getEditorRoot: () => this.quill?.root || null,
+			findBlot: (node, bubble = true) => Quill.find(node, bubble) || null,
+			getIndex: (blot) => blot && this.quill?.getIndex ? this.quill.getIndex(blot) : null,
+			getLine: (index) => this.quill?.getLine?.(index) || null,
+			getLeaf: (index) => this.quill?.getLeaf?.(index) || null,
+			setSelection: (index, length = 0, source = 'api') => {
+				if (!this.quill?.setSelection) {
+					return false;
+				}
+
+				this.quill.setSelection(index, length, source);
+				return true;
+			},
+			focus: (options = undefined) => {
+				if (!this.quill?.focus) {
+					return false;
+				}
+
+				this.quill.focus(options);
+				return true;
+			},
+			update: (source = 'api') => {
+				if (!this.quill?.update) {
+					return false;
+				}
+
+				this.quill.update(source);
+				return true;
+			},
 			getParagraphFormat: this.getParagraphFormat.bind(this),
 			format: this.format.bind(this),
 			formatParagraph: this.formatParagraph.bind(this),
@@ -1443,6 +1419,7 @@ export default class EditorPage extends React.Component {
 				index: range.index,
 				length: range.length,
 			},
+			sourceElement: range.sourceElement || null,
 		};
 	}
 
@@ -1699,229 +1676,6 @@ export default class EditorPage extends React.Component {
 	}
 
 	/**
-	 * Gets the TableUp selection helper when it is available.
-	 *
-	 * @returns {unknown | null}
-	 */
-	getTableSelectionModule() {
-		const tableModule = this.quill?.getModule?.(TableUp.moduleName);
-
-		return tableModule?.getModule?.(TableSelection.moduleName) || null;
-	}
-
-	/**
-	 * Gates TableUp's default root mousedown cell-selection behavior.
-	 *
-	 * The app uses TableUp's selection module for explicit row/column
-	 * selection, but a plain click inside a cell should remain a Quill/browser
-	 * caret placement gesture.
-	 *
-	 * @returns {void}
-	 */
-	attachTableSelectionMouseDownGate() {
-		const tableSelection = this.getTableSelectionModule();
-		const root = this.quill?.root;
-		const original = tableSelection?.tableSelectMouseDownHandler;
-
-		if (!root || !tableSelection || typeof original !== 'function' || this.tableSelectionMouseDownGate) {
-			return;
-		}
-
-		const gated = (event) => {
-			if (event?.mnSuppressTableUpSelection === true) {
-				this.logTableDebug('table-selection:root-mousedown:suppressed', {
-					event: this.getTableDebugEventSummary(event),
-					snapshot: this.getTableDebugSnapshot(event),
-				});
-				return;
-			}
-
-			return original.call(tableSelection, event);
-		};
-
-		root.removeEventListener('mousedown', original);
-		root.addEventListener('mousedown', gated);
-		tableSelection.tableSelectMouseDownHandler = gated;
-		this.tableSelectionMouseDownGate = {
-			gated,
-			original,
-			root,
-			tableSelection,
-		};
-	}
-
-	/**
-	 * Restores TableUp's original root mousedown handler.
-	 *
-	 * @returns {void}
-	 */
-	detachTableSelectionMouseDownGate() {
-		const gate = this.tableSelectionMouseDownGate;
-
-		if (!gate) {
-			return;
-		}
-
-		gate.root?.removeEventListener?.('mousedown', gate.gated);
-		gate.root?.addEventListener?.('mousedown', gate.original);
-
-		if (gate.tableSelection?.tableSelectMouseDownHandler === gate.gated) {
-			gate.tableSelection.tableSelectMouseDownHandler = gate.original;
-		}
-
-		this.tableSelectionMouseDownGate = null;
-	}
-
-	/**
-	 * Places the caret in a table cell when a plain click lands on blank cell space.
-	 *
-	 * @param {MouseEvent | unknown} event - Source mousedown event.
-	 * @returns {void}
-	 */
-	scheduleBlankTableCellFocus(event) {
-		const target = this.getElementFromNode(event?.target);
-		const cell = this.getTableCellInnerFromNode(target);
-		const musicEmbed = this.getMusicEmbedFromNode(target);
-
-		if (!cell || this.isTableTextCursorTarget(event?.target)) {
-			this.logTableDebug('table-cell-focus:skip', {
-				cell: this.describeTableDebugNode(cell),
-				reason: cell ? 'text-cursor-target' : 'no-cell',
-				target: this.describeTableDebugNode(target),
-			});
-			return;
-		}
-
-		this.logTableDebug('table-cell-focus:scheduled', {
-			cell: this.describeTableDebugNode(cell),
-			musicEmbed: this.describeTableDebugNode(musicEmbed),
-			target: this.describeTableDebugNode(target),
-		});
-		this.schedulePostMouseGestureTask(() => {
-			if (!cell.isConnected) {
-				this.logTableDebug('table-cell-focus:skip', {
-					cell: this.describeTableDebugNode(cell),
-					reason: 'disconnected-cell',
-				});
-				return;
-			}
-
-			if (musicEmbed?.isConnected && this.selectAfterMusicEmbed(musicEmbed)) {
-				this.logTableDebug('table-cell-focus:selected-after-embed', {
-					cell: this.describeTableDebugNode(cell),
-					musicEmbed: this.describeTableDebugNode(musicEmbed),
-					snapshot: this.getTableDebugSnapshot(),
-				});
-				return;
-			}
-
-			if (this.isQuillSelectionInTableCell(cell)) {
-				this.logTableDebug('table-cell-focus:skip', {
-					cell: this.describeTableDebugNode(cell),
-					reason: 'selection-already-in-cell',
-					snapshot: this.getTableDebugSnapshot(),
-				});
-				return;
-			}
-
-			this.logTableDebug('table-cell-focus:selected-cell-start', {
-				cell: this.describeTableDebugNode(cell),
-				snapshot: this.getTableDebugSnapshot(),
-			});
-			this.selectTableCell(cell);
-		});
-	}
-
-	/**
-	 * Runs a task after the current mouse gesture has had a chance to settle.
-	 *
-	 * @param {() => void} task - Task to run.
-	 * @returns {void}
-	 */
-	schedulePostMouseGestureTask(task) {
-		window.setTimeout(() => {
-			if (typeof window.requestAnimationFrame === 'function') {
-				window.requestAnimationFrame(task);
-				return;
-			}
-
-			window.setTimeout(task, 0);
-		}, 0);
-	}
-
-	/**
-	 * Gets a rendered TableUp cell-inner element from any table-cell descendant.
-	 *
-	 * @param {Node | Element | unknown} node - Source node.
-	 * @returns {Element | null}
-	 */
-	getTableCellInnerFromNode(node) {
-		const element = this.getElementFromNode(node);
-		const inner = element?.closest?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
-
-		if (inner) {
-			return inner;
-		}
-
-		const cell = element?.closest?.('td, th, .ql-table-cell, .table-up-cell') || null;
-
-		return cell?.querySelector?.('.ql-table-cell-inner, .table-up-cell-inner') || null;
-	}
-
-	/**
-	 * Gets a music embed from an event target.
-	 *
-	 * @param {Node | Element | unknown} node - Source node.
-	 * @returns {Element | null}
-	 */
-	getMusicEmbedFromNode(node) {
-		const element = this.getElementFromNode(node);
-
-		return element?.closest?.('.music-keyboard-embed') || null;
-	}
-
-	/**
-	 * Places the Quill selection immediately after a clicked music embed.
-	 *
-	 * @param {Element} embed - Rendered music embed root.
-	 * @returns {boolean}
-	 */
-	selectAfterMusicEmbed(embed) {
-		const blot = embed ? (Quill.find(embed) || Quill.find(embed, true)) : null;
-
-		if (!blot || !this.quill?.getIndex) {
-			this.logTableDebug('table-cell-focus:select-after-embed-failed', {
-				musicEmbed: this.describeTableDebugNode(embed),
-				reason: blot ? 'missing-quill-index' : 'missing-blot',
-			});
-			return false;
-		}
-
-		const index = this.quill.getIndex(blot);
-		const length = Number(blot.length?.());
-
-		if (!Number.isInteger(index)) {
-			this.logTableDebug('table-cell-focus:select-after-embed-failed', {
-				index,
-				musicEmbed: this.describeTableDebugNode(embed),
-				reason: 'invalid-index',
-			});
-			return false;
-		}
-
-		this.getTableSelectionModule()?.hide?.();
-		this.setQuillSelectionWithoutScroll(
-			index + (Number.isFinite(length) && length > 0 ? length : 1),
-			0,
-			'user',
-			embed,
-		);
-		this.updateToolbarState();
-		this.updateEmbedSelectionState();
-		return true;
-	}
-
-	/**
 	 * Sets a Quill selection while preserving visible scroll positions.
 	 *
 	 * @param {number} index - Selection index.
@@ -2021,44 +1775,6 @@ export default class EditorPage extends React.Component {
 	}
 
 	/**
-	 * Checks whether a native event target already gives the browser a text cursor target.
-	 *
-	 * @param {Node | Element | unknown} target - Native event target.
-	 * @returns {boolean}
-	 */
-	isTableTextCursorTarget(target) {
-		const element = this.getElementFromNode(target);
-
-		if (element?.closest?.('.music-keyboard-embed, [contenteditable="false"]')) {
-			return false;
-		}
-
-		if (target?.nodeType === getNodeType('TEXT_NODE')) {
-			return true;
-		}
-
-		if (!element) {
-			return false;
-		}
-
-		const textBlock = element.closest?.('p, li, h1, h2, h3, h4, h5, h6, blockquote');
-
-		return Boolean(textBlock && element !== textBlock);
-	}
-
-	/**
-	 * Checks whether the current Quill selection is already inside a table cell.
-	 *
-	 * @param {HTMLElement} cell - Rendered table cell inner.
-	 * @returns {boolean}
-	 */
-	isQuillSelectionInTableCell(cell) {
-		const currentCell = this.getCurrentTableCellInner();
-
-		return currentCell === cell || Boolean(currentCell && cell.contains(currentCell));
-	}
-
-	/**
 	 * Gets an element from a DOM node.
 	 *
 	 * @param {Node | Element | unknown} node - Source node.
@@ -2074,589 +1790,6 @@ export default class EditorPage extends React.Component {
 		}
 
 		return node.parentElement || null;
-	}
-
-	/**
-	 * Attaches optional table debugging instrumentation for event-flow tracing.
-	 *
-	 * Enable with localStorage.setItem('mn.tableDebug', '1') and reload, or by
-	 * adding ?mnTableDebug=1 to the app URL.
-	 *
-	 * @returns {void}
-	 */
-	attachTableDebugInstrumentation() {
-		this.tableDebugEnabled = this.isTableDebugEnabled();
-
-		if (!this.tableDebugEnabled) {
-			return;
-		}
-
-		this.logTableDebug('debug:attached', {
-			snapshot: this.getTableDebugSnapshot(),
-		});
-		this.attachTableDebugNativeListeners();
-		this.patchTableSelectionDebugMethods();
-	}
-
-	/**
-	 * Removes table debugging instrumentation and restores patched methods.
-	 *
-	 * @returns {void}
-	 */
-	detachTableDebugInstrumentation() {
-		this.detachTableDebugNativeListeners();
-		this.restoreTableSelectionDebugMethods();
-		this.tableDebugEnabled = false;
-	}
-
-	/**
-	 * Checks whether table instrumentation should be active.
-	 *
-	 * @returns {boolean}
-	 */
-	isTableDebugEnabled() {
-		const params = new URLSearchParams(window.location?.search || '');
-
-		if (params.get('mnTableDebug') === '1') {
-			return true;
-		}
-
-		try {
-			return window.localStorage?.getItem?.('mn.tableDebug') === '1';
-		} catch {
-			return false;
-		}
-	}
-
-	/**
-	 * Attaches native event listeners around the Quill root and document.
-	 *
-	 * @returns {void}
-	 */
-	attachTableDebugNativeListeners() {
-		const root = this.quill?.root;
-		const ownerDocument = root?.ownerDocument;
-
-		if (!root || !ownerDocument || this.tableDebugNativeListeners.length) {
-			return;
-		}
-
-		[
-			'mousedown',
-			'mouseup',
-			'click',
-			'pointerdown',
-			'pointerup',
-		].forEach((eventName) => {
-			this.addTableDebugNativeListener(root, eventName, true);
-			this.addTableDebugNativeListener(root, eventName, false);
-		});
-		this.addTableDebugNativeListener(ownerDocument, 'selectionchange', false);
-	}
-
-	/**
-	 * Adds one table debug native listener and stores it for cleanup.
-	 *
-	 * @param {EventTarget} target - Native event target.
-	 * @param {string} eventName - Event name to trace.
-	 * @param {boolean} capture - Whether to listen in capture phase.
-	 * @returns {void}
-	 */
-	addTableDebugNativeListener(target, eventName, capture) {
-		const listener = (event) => {
-			this.logTableDebug(`native:${eventName}:${capture ? 'capture' : 'bubble'}`, {
-				event: this.getTableDebugEventSummary(event),
-				snapshot: this.getTableDebugSnapshot(event),
-			});
-		};
-
-		target.addEventListener(eventName, listener, capture);
-		this.tableDebugNativeListeners.push({
-			capture,
-			eventName,
-			listener,
-			target,
-		});
-	}
-
-	/**
-	 * Removes table debug native listeners.
-	 *
-	 * @returns {void}
-	 */
-	detachTableDebugNativeListeners() {
-		this.tableDebugNativeListeners.forEach((record) => {
-			record.target?.removeEventListener?.(record.eventName, record.listener, record.capture);
-		});
-		this.tableDebugNativeListeners = [];
-	}
-
-	/**
-	 * Wraps live TableUp selection methods to trace TableUp's own decisions.
-	 *
-	 * @returns {void}
-	 */
-	patchTableSelectionDebugMethods() {
-		const tableSelection = this.getTableSelectionModule();
-
-		if (!tableSelection || this.tableDebugPatchedSelection === tableSelection) {
-			return;
-		}
-
-		this.restoreTableSelectionDebugMethods();
-		this.tableDebugPatchedSelection = tableSelection;
-		this.patchTableSelectionDebugBoundListeners(tableSelection);
-		[
-			'setSelectionTable',
-			'setSelectedTds',
-			'show',
-			'hide',
-			'computeSelectedTds',
-			'updateWithSelectedTds',
-			'update',
-		].forEach((methodName) => this.patchTableSelectionDebugMethod(tableSelection, methodName));
-	}
-
-	/**
-	 * Wraps one TableUp selection method.
-	 *
-	 * @param {unknown} tableSelection - TableUp selection module instance.
-	 * @param {string} methodName - Method to wrap.
-	 * @returns {void}
-	 */
-	patchTableSelectionDebugMethod(tableSelection, methodName) {
-		const original = tableSelection?.[methodName];
-
-		if (typeof original !== 'function') {
-			return;
-		}
-
-		const page = this;
-		const wrapped = function(...args) {
-			page.logTableDebug(`table-selection:${methodName}:before`, {
-				args: page.getTableDebugArgsSummary(args),
-				snapshot: page.getTableDebugSnapshot(args[0]),
-			});
-
-			try {
-				return original.apply(this, args);
-			} finally {
-				page.logTableDebug(`table-selection:${methodName}:after`, {
-					args: page.getTableDebugArgsSummary(args),
-					snapshot: page.getTableDebugSnapshot(args[0]),
-				});
-			}
-		};
-
-		tableSelection[methodName] = wrapped;
-		this.tableDebugPatchedMethods.push({
-			methodName,
-			original,
-			tableSelection,
-		});
-	}
-
-	/**
-	 * Restores patched TableUp selection methods.
-	 *
-	 * @returns {void}
-	 */
-	restoreTableSelectionDebugMethods() {
-		this.restoreTableSelectionDebugBoundListeners();
-		this.tableDebugPatchedMethods.forEach((record) => {
-			if (record.tableSelection?.[record.methodName]) {
-				record.tableSelection[record.methodName] = record.original;
-			}
-		});
-		this.tableDebugPatchedMethods = [];
-		this.tableDebugPatchedSelection = null;
-	}
-
-	/**
-	 * Rewires TableUp listeners that were bound before method wrapping.
-	 *
-	 * @param {unknown} tableSelection - TableUp selection module instance.
-	 * @returns {void}
-	 */
-	patchTableSelectionDebugBoundListeners(tableSelection) {
-		this.patchTableSelectionDebugDomListener({
-			eventName: 'mousedown',
-			label: 'table-selection:bound-root-mousedown',
-			listenerProperty: 'tableSelectMouseDownHandler',
-			target: this.quill?.root || null,
-			tableSelection,
-		});
-		this.patchTableSelectionDebugDomListener({
-			eventName: 'selectionchange',
-			label: 'table-selection:bound-document-selectionchange',
-			listenerProperty: 'selectionChangeHandler',
-			target: this.quill?.root?.ownerDocument || null,
-			tableSelection,
-		});
-		this.patchTableSelectionDebugQuillListener(tableSelection);
-	}
-
-	/**
-	 * Rewires one TableUp DOM listener.
-	 *
-	 * @param {Record<string, unknown>} options - Listener patch options.
-	 * @returns {void}
-	 */
-	patchTableSelectionDebugDomListener(options) {
-		const {
-			eventName,
-			label,
-			listenerProperty,
-			tableSelection,
-			target,
-		} = options;
-		const original = tableSelection?.[listenerProperty];
-
-		if (!target?.removeEventListener || typeof original !== 'function') {
-			return;
-		}
-
-		const wrapped = (...args) => {
-			this.logTableDebug(`${label}:before`, {
-				args: this.getTableDebugArgsSummary(args),
-				snapshot: this.getTableDebugSnapshot(args[0]),
-			});
-
-			try {
-				return original.apply(tableSelection, args);
-			} finally {
-				this.logTableDebug(`${label}:after`, {
-					args: this.getTableDebugArgsSummary(args),
-					snapshot: this.getTableDebugSnapshot(args[0]),
-				});
-			}
-		};
-
-		target.removeEventListener(eventName, original);
-		target.addEventListener(eventName, wrapped);
-		tableSelection[listenerProperty] = wrapped;
-		this.tableDebugPatchedListeners.push({
-			eventName,
-			original,
-			propertyName: listenerProperty,
-			tableSelection,
-			target,
-			type: 'dom',
-			wrapped,
-		});
-	}
-
-	/**
-	 * Rewires TableUp's Quill selection-change listener.
-	 *
-	 * @param {unknown} tableSelection - TableUp selection module instance.
-	 * @returns {void}
-	 */
-	patchTableSelectionDebugQuillListener(tableSelection) {
-		const original = tableSelection?.quillSelectionChangeHandler;
-
-		if (!this.quill?.off || !this.quill?.on || typeof original !== 'function') {
-			return;
-		}
-
-		const eventName = Quill.events.SELECTION_CHANGE;
-		const wrapped = (...args) => {
-			this.logTableDebug('table-selection:bound-quill-selection-change:before', {
-				args: this.getTableDebugArgsSummary(args),
-				snapshot: this.getTableDebugSnapshot(),
-			});
-
-			try {
-				return original.apply(tableSelection, args);
-			} finally {
-				this.logTableDebug('table-selection:bound-quill-selection-change:after', {
-					args: this.getTableDebugArgsSummary(args),
-					snapshot: this.getTableDebugSnapshot(),
-				});
-			}
-		};
-
-		this.quill.off(eventName, original);
-		this.quill.on(eventName, wrapped);
-		tableSelection.quillSelectionChangeHandler = wrapped;
-		this.tableDebugPatchedListeners.push({
-			eventName,
-			original,
-			propertyName: 'quillSelectionChangeHandler',
-			tableSelection,
-			type: 'quill',
-			wrapped,
-		});
-	}
-
-	/**
-	 * Restores TableUp listeners rewired for debug tracing.
-	 *
-	 * @returns {void}
-	 */
-	restoreTableSelectionDebugBoundListeners() {
-		this.tableDebugPatchedListeners.forEach((record) => {
-			if (record.type === 'dom') {
-				record.target?.removeEventListener?.(record.eventName, record.wrapped);
-				record.target?.addEventListener?.(record.eventName, record.original);
-			}
-
-			if (record.type === 'quill') {
-				this.quill?.off?.(record.eventName, record.wrapped);
-				this.quill?.on?.(record.eventName, record.original);
-			}
-
-			if (record.tableSelection?.[record.propertyName]) {
-				record.tableSelection[record.propertyName] = record.original;
-			}
-		});
-		this.tableDebugPatchedListeners = [];
-	}
-
-	/**
-	 * Logs a normalized table debug event.
-	 *
-	 * @param {string} label - Debug label.
-	 * @param {Record<string, unknown>} detail - Debug detail.
-	 * @returns {void}
-	 */
-	logTableDebug(label, detail = {}) {
-		if (!this.tableDebugEnabled) {
-			return;
-		}
-
-		this.tableDebugEventSequence += 1;
-		const payload = {
-			label,
-			sequence: this.tableDebugEventSequence,
-			time: Number((typeof performance !== 'undefined' && performance.now?.()) || Date.now()).toFixed(2),
-			...detail,
-		};
-
-		console.groupCollapsed?.(`[mn-table-debug #${payload.sequence}] ${label}`);
-		console.log(payload);
-		console.groupEnd?.();
-	}
-
-	/**
-	 * Builds a compact event summary for table debug logs.
-	 *
-	 * @param {Event | unknown} event - Event-like object.
-	 * @returns {Record<string, unknown> | null}
-	 */
-	getTableDebugEventSummary(event) {
-		if (!event?.type) {
-			return null;
-		}
-
-		return {
-			button: event.button,
-			buttons: event.buttons,
-			cancelBubble: event.cancelBubble,
-			clientX: Number.isFinite(Number(event.clientX)) ? Number(event.clientX) : null,
-			clientY: Number.isFinite(Number(event.clientY)) ? Number(event.clientY) : null,
-			defaultPrevented: event.defaultPrevented,
-			eventPhase: this.getTableDebugEventPhaseName(event.eventPhase),
-			target: this.describeTableDebugNode(event.target),
-			type: event.type,
-		};
-	}
-
-	/**
-	 * Builds a compact interaction context summary.
-	 *
-	 * @param {Partial<EditorInteractionContext>} context - Interaction context.
-	 * @returns {Record<string, unknown>}
-	 */
-	getTableDebugContextSummary(context = {}) {
-		return {
-			captured: context.captured === true,
-			handlerId: context.handlerId || context.handler?.id || '',
-			target: this.getTableDebugTargetSummary(context.target),
-			targetServiceName: context.targetServiceName || '',
-		};
-	}
-
-	/**
-	 * Builds a compact dispatch result summary.
-	 *
-	 * @param {EditorInteractionDispatchResult | unknown} result - Dispatch result.
-	 * @returns {Record<string, unknown>}
-	 */
-	getTableDebugDispatchResultSummary(result = {}) {
-		return {
-			handlerId: result.handlerId || '',
-			handled: result.handled === true,
-			preventDefault: result.result?.preventDefault === true,
-			serviceName: result.serviceName || '',
-			stopPropagation: result.result?.stopPropagation === true,
-			target: this.getTableDebugTargetSummary(result.target),
-		};
-	}
-
-	/**
-	 * Formats a dispatch result summary for compact debug labels.
-	 *
-	 * @param {Record<string, unknown>} result - Dispatch result summary.
-	 * @returns {string}
-	 */
-	getTableDebugResultLabel(result = {}) {
-		const flags = [
-			result.handled === true ? 'handled' : 'open',
-			result.preventDefault === true ? 'prevent' : '',
-			result.stopPropagation === true ? 'stop' : '',
-			result.serviceName || '',
-			result.handlerId || '',
-		].filter(Boolean);
-
-		return flags.join(':');
-	}
-
-	/**
-	 * Builds a snapshot of Quill and TableUp state for a table debug log.
-	 *
-	 * @param {Event | unknown} event - Optional event-like source.
-	 * @returns {Record<string, unknown>}
-	 */
-	getTableDebugSnapshot(event = null) {
-		const tableSelection = this.getTableSelectionModule();
-		const selectedTds = Array.isArray(tableSelection?.selectedTds)
-			? tableSelection.selectedTds
-			: [];
-		const targetCell = this.getTableCellInnerFromNode(event?.target);
-		const activeElement = this.quill?.root?.ownerDocument?.activeElement || null;
-
-		return {
-			activeElement: this.describeTableDebugNode(activeElement),
-			quillSelection: this.getTableDebugQuillSelection(),
-			selectedCells: selectedTds.map((cell) => this.describeTableDebugNode(cell?.domNode || cell?.parent?.domNode || null)),
-			selectedTdsCount: selectedTds.length,
-			tableSelectionDisplay: tableSelection?.isDisplaySelection === true,
-			tableSelectionTable: this.describeTableDebugNode(tableSelection?.table || null),
-			targetCell: this.describeTableDebugNode(targetCell),
-		};
-	}
-
-	/**
-	 * Gets the current Quill selection without forcing focus.
-	 *
-	 * @returns {Record<string, number> | null}
-	 */
-	getTableDebugQuillSelection() {
-		const range = this.quill?.getSelection?.();
-
-		if (!range) {
-			return null;
-		}
-
-		return {
-			index: range.index,
-			length: range.length,
-		};
-	}
-
-	/**
-	 * Summarizes method wrapper arguments for debug logs.
-	 *
-	 * @param {unknown[]} args - Wrapped method arguments.
-	 * @returns {unknown[]}
-	 */
-	getTableDebugArgsSummary(args = []) {
-		return args.map((arg) => {
-			if (arg?.type) {
-				return this.getTableDebugEventSummary(arg);
-			}
-
-			if (arg?.nodeType || arg?.tagName) {
-				return this.describeTableDebugNode(arg);
-			}
-
-			if (Array.isArray(arg)) {
-				return arg.map((item) => this.describeTableDebugNode(item?.domNode || item?.parent?.domNode || item));
-			}
-
-			if (arg && typeof arg === 'object') {
-				return {
-					keys: Object.keys(arg).slice(0, 12),
-				};
-			}
-
-			return arg;
-		});
-	}
-
-	/**
-	 * Summarizes an editor interaction target.
-	 *
-	 * @param {EditorInteractionTarget | null | undefined} target - Interaction target.
-	 * @returns {Record<string, unknown> | null}
-	 */
-	getTableDebugTargetSummary(target) {
-		if (!target) {
-			return null;
-		}
-
-		return {
-			element: this.describeTableDebugNode(target.element),
-			handlerId: target.handlerId || '',
-			role: target.role || '',
-			serviceName: target.serviceName || '',
-		};
-	}
-
-	/**
-	 * Converts event phase constants to readable names.
-	 *
-	 * @param {number} phase - Event phase constant.
-	 * @returns {string}
-	 */
-	getTableDebugEventPhaseName(phase) {
-		if (phase === Event.CAPTURING_PHASE) {
-			return 'capture';
-		}
-
-		if (phase === Event.AT_TARGET) {
-			return 'target';
-		}
-
-		if (phase === Event.BUBBLING_PHASE) {
-			return 'bubble';
-		}
-
-		return 'none';
-	}
-
-	/**
-	 * Describes a DOM node for compact table debug logs.
-	 *
-	 * @param {Node | null | undefined} node - Node to describe.
-	 * @returns {string | null}
-	 */
-	describeTableDebugNode(node) {
-		if (!node) {
-			return null;
-		}
-
-		if (node.nodeType === Node.TEXT_NODE) {
-			return '#text';
-		}
-
-		const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-
-		if (!element) {
-			return String(node.nodeName || node);
-		}
-
-		const id = element.id ? `#${element.id}` : '';
-		const classes = Array.from(element.classList || [])
-			.slice(0, 6)
-			.map((className) => `.${className}`)
-			.join('');
-		const tableId = element.dataset?.tableId ? `[data-table-id="${element.dataset.tableId}"]` : '';
-		const rowId = element.dataset?.rowId ? `[data-row-id="${element.dataset.rowId}"]` : '';
-		const colId = element.dataset?.colId ? `[data-col-id="${element.dataset.colId}"]` : '';
-
-		return `${element.tagName?.toLowerCase?.() || element.nodeName}${id}${classes}${tableId}${rowId}${colId}`;
 	}
 
 	/**
@@ -2755,6 +1888,21 @@ export default class EditorPage extends React.Component {
 	}
 
 	getContentWidth() {
+		const content = this.documentContentRef.current;
+		const guideStyle = content ? getComputedStyle(content, '::after') : null;
+		const guideWidth = Number.parseFloat(guideStyle?.width || '');
+
+		if (Number.isFinite(guideWidth) && guideWidth > 0) {
+			return guideWidth;
+		}
+
+		const contentStyle = content ? getComputedStyle(content) : null;
+		const cssContentWidth = Number.parseFloat(contentStyle?.getPropertyValue('--mn-content-width') || '');
+
+		if (Number.isFinite(cssContentWidth) && cssContentWidth > 0) {
+			return cssContentWidth;
+		}
+
 		const editor = this.quill?.root || this.editorRef.current?.querySelector?.('.ql-editor');
 		const bounds = editor?.getBoundingClientRect?.();
 		const width = Number(bounds?.width || editor?.clientWidth);
@@ -2809,23 +1957,17 @@ export default class EditorPage extends React.Component {
 		const editorRect = editor.getBoundingClientRect?.();
 		const contentRect = content.getBoundingClientRect?.();
 		const baseWidth = Number(editorRect?.width || editor.clientWidth);
-		const contentLeft = Number(contentRect?.left || 0);
 
 		if (!Number.isFinite(baseWidth) || baseWidth <= 0) {
 			return;
 		}
 
-		const overflowWidth = Array.from(editor.querySelectorAll('.ql-table-wrapper, .table-up, .ql-table'))
-			.reduce((width, element) => {
-				const rect = element.getBoundingClientRect?.();
-				const right = Number(rect?.right);
-
-				if (!Number.isFinite(right)) {
-					return width;
-				}
-
-				return Math.max(width, Math.ceil(right - contentLeft + 24));
-			}, baseWidth);
+		const overflowWidth = this.editorLayout?.getWideContentWidth?.({
+			baseWidth,
+			content,
+			contentRect,
+			editorRoot: editor,
+		}) ?? baseWidth;
 
 		if (overflowWidth > baseWidth + 1) {
 			content.style.setProperty('--mn-editor-overflow-width', `${overflowWidth}px`);
@@ -2872,26 +2014,6 @@ export default class EditorPage extends React.Component {
 		this.quill.insertText(embedIndex + 1, '\n', 'user');
 		this.quill.setSelection(embedIndex + 2, 0, 'silent');
 		return object;
-	}
-
-	insertTable(rows = 2, columns = 2) {
-		const tableModule = this.quill?.getModule?.(TableUp.moduleName);
-		const rowCount = Number(rows);
-		const columnCount = Number(columns);
-
-		if (
-			!tableModule?.insertTable
-			|| !Number.isInteger(rowCount)
-			|| !Number.isInteger(columnCount)
-			|| rowCount <= 0
-			|| columnCount <= 0
-		) {
-			return false;
-		}
-
-		tableModule.insertTable(rowCount, columnCount, 'user');
-		this.onEditorTextChange('user');
-		return true;
 	}
 
 	insertPageBreak() {
@@ -2953,7 +2075,7 @@ export default class EditorPage extends React.Component {
 	 */
 	render() {
 		const editorToolbar = this.editorToolbar || this.props.editorToolbar || this.context?.registry?.subscribe?.('editor-toolbar') || null;
-		const iconRegistry = this.iconRegistry || this.props.iconRegistry || this.context?.registry?.subscribe?.('icon-registry') || null;
+		const actionRegistry = this.actionRegistry || this.props.actionRegistry || this.context?.registry?.subscribe?.('action-registry') || null;
 		const contentClassName = [
 			'mn-document-content',
 			this.state.seeWhiteSpace === true ? 'mn-document-content--see-white-space' : '',
@@ -2963,13 +2085,15 @@ export default class EditorPage extends React.Component {
 			<section className="editor-page">
 				<EditorToolbar
 					editorToolbar={editorToolbar}
-					iconRegistry={iconRegistry}
+					actionRegistry={actionRegistry}
 					label="Editor toolbar"
 				/>
 				<div
 					ref={this.editorSurfaceRef}
 					className="editor-page-surface"
 					onPointerDownCapture={this.handleEditorSurfacePointerDownCapture}
+					onPointerLeave={this.handleEditorSurfacePointerLeave}
+					onPointerMoveCapture={this.handleEditorSurfacePointerMoveCapture}
 				>
 					<div className="mn-editor-split-workspace">
 						<div className="mn-document-workspace">

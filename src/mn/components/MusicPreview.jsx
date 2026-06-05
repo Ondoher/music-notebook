@@ -13,7 +13,6 @@ import {
 	noteToMidi,
 } from '../shared/music_helper.js';
 import { getKeyboardNoteRange } from '../shared/music-object-layout.js';
-import 'react-piano/dist/styles.css';
 
 const DEFAULT_WIDTH = 420;
 const EMBED_HORIZONTAL_CHROME = 0;

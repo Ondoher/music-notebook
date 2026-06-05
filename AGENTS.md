@@ -80,11 +80,11 @@ Detailed architecture, testing, and POC guidance should live in the topic docs r
 - current music-object layout direction: back out text flow/floating behavior and keep music embeds as large inline leaves, with tables for intentional side-by-side layout
 - current music-object rendering direction: keyboard previews compute their own host height from width/key ratio, staff previews scale their SVG naturally, and zeroed wrapper text metrics suppress Quill guard-text artifacts
 - current read-only paged-preview table status: large TableUp tables now render after stronger preview-only rules override the edit-view `.ql-table-wrapper` `inline-block` / `max-content` behavior; keep table pagination/export fidelity as open hardening work
-- current table direction: table row/column gutter selection, keyboard cell navigation, column resize, fit-to-width/distribute-columns arrangement commands, selected-column right-click context preservation, and selection-aware row/column/table context-menu commands are implemented; table paste, edit-view split-table, table pagination, and export fidelity remain open
+- current table direction: table row/column gutter selection, keyboard cell navigation, column resize, distribute-columns, selected-column right-click context preservation, selection-aware row/column/table context-menu commands, table-owned CSS, and margin-based fit-to-width are implemented; fit-to-width has command/test coverage and was manually confirmed in edit view on 2026-06-04; table paste, table pagination, export fidelity, and richer split-table hardening remain open
 - current table cleanup direction: move remaining `EditorPage` dependencies in priority order through Quill-aware `editor-surface` access, table-owned insertion/navigation/TableSelection gate/focus behavior, generic wide-content layout contributions, table-owned CSS/assets, then a Quill contribution seam; details live in `agents/topics/architecture/temporary-cleanup.md`
-- current table cell-click focus status: click-in-cell means text editing, not table selection; the current behavior is a hybrid of native caret placement for text hits, Quill range fallback by TableUp cell blot for blank cell space, and a music-embed special case
-- current wide-layout direction: assume any feature can exceed page width; replace table-specific overflow scanning with a generic wide-content contribution API, using tables as the first contributor
-- current split-table command status: context menu items for splitting above/below the selected row exist, but manual browser testing shows the second half is lost or the operation otherwise does not produce two durable tables; do not continue patching this blindly without a deeper TableUp/Parchment strategy
+- current table cell-focus status: click-in-cell means text editing, not table selection; focus styling is a table-owned class applied from Quill selection-change rather than CSS `:focus-within`; clicks, Tab/Shift+Tab navigation, ArrowDown into the first cell from the line above, scroll-into-view-if-clipped, and focus clearing when selection leaves the table are covered, but ArrowLeft/back-arrow exit from the first cell is still not working in manual UI testing despite command-level coverage and attempted Delta-index fixes
+- current wide-layout direction: assume any feature can exceed page width; table-specific overflow scanning has moved to a generic wide-content contribution API with tables as the first contributor; edit-view fit-to-width now uses document-format content width from actual page margins rather than DOM inference
+- current split-table command status: context menu items for splitting above/below the selected row exist through Delta-level reconstruction and manual UI spot-check appeared to work, but save/reload, music-object cell content, and richer table-content hardening remain open before treating split-table as complete
 
 ## Read First
 
@@ -102,13 +102,14 @@ For a fresh agent, read these in order:
 - [MVP Topic](agents/topics/mvp/README.md)
 - [Accounts](agents/topics/mvp/accounts.md)
 - [Document Model](agents/topics/mvp/document-model.md)
+- [Formatting](agents/topics/mvp/formatting.md)
 - [Main Menu](agents/topics/mvp/main-menu.md)
 - [Editor Toolbar](agents/topics/mvp/editor-toolbar.md)
 - [View Mode](agents/topics/mvp/view-mode.md)
 - [Paged View Mode Spike](agents/topics/mvp/paged-view-mode-spike.md)
 - [Paste](agents/topics/mvp/paste.md)
 - [Quill Embed Navigation](agents/topics/mvp/quill-embed-navigation.md)
-- [Quill Table Up Spike](agents/topics/mvp/quill-table-up-spike.md)
+- [Quill TableUp Implementation](agents/topics/mvp/quill-table-up.md)
 - [Chord Name Parsing](agents/topics/mvp/chord-name-parsing.md)
 - [React Code](agents/topics/react-code/README.md)
 - [React Cleanup](agents/topics/react-code/react-cleanup.md)
@@ -171,6 +172,8 @@ For a fresh agent, read these in order:
 - [Document Model](agents/topics/mvp/document-model.md)
   - first-pass notebook model service
   - tabs, active tab content, settings, styles, typography, generic objects, and document persistence
+- [Formatting](agents/topics/mvp/formatting.md)
+  - formatting cascade, inheritance, direct overrides, and shared formatting open questions
 - [Main Menu](agents/topics/mvp/main-menu.md)
   - app command surface and document command placement
 - [Editor Toolbar](agents/topics/mvp/editor-toolbar.md)
@@ -187,8 +190,8 @@ For a fresh agent, read these in order:
 - [Quill Embed Navigation](agents/topics/mvp/quill-embed-navigation.md)
   - image-like inline music embed navigation and selection behavior
   - retired side-by-side floated embed model
-- [Quill Table Up Spike](agents/topics/mvp/quill-table-up-spike.md)
-  - current table implementation status and remaining table risks
+- [Quill TableUp Implementation](agents/topics/mvp/quill-table-up.md)
+  - product table implementation status and remaining table risks
 
 ### POC
 

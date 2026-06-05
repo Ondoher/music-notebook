@@ -5,6 +5,12 @@
 			"cwd": "assets/css",
 			"glob": "**/*.css",
 			"keepNest": true
+		},
+		{
+			"dest": "editor/vendor",
+			"cwd": "../../../../node_modules/quill/dist",
+			"glob": "quill.snow.css",
+			"keepNest": false
 		}
 	],
 	"index": "index.js"

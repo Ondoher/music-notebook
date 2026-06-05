@@ -83,6 +83,31 @@ describe('DocumentFormatService', function() {
 		});
 	});
 
+	it('calculates content width from page size and document margins', function() {
+		const { documentFormat } = createServices();
+
+		expect(documentFormat.getContentWidth({
+			size: 'letter',
+			orientation: 'portrait',
+			margins: {
+				top: 72,
+				right: 72,
+				bottom: 72,
+				left: 72,
+			},
+		})).toBe(624);
+		expect(documentFormat.getContentWidth({
+			size: 'legal',
+			orientation: 'landscape',
+			margins: {
+				top: 36,
+				right: 54,
+				bottom: 36,
+				left: 90,
+			},
+		})).toBe(1152);
+	});
+
 	it('undoes and redoes document-format settings changes', function() {
 		const { documentModel, documentFormat } = createServices();
 

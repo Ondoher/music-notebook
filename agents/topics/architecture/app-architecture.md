@@ -122,8 +122,11 @@ the document model directly to MongoDB.
 
 Current direction:
 
-- document-model owns the client document snapshot and dirty state
-- document feature owns client save/open/new/rename flow and dialogs
+- document-model owns the client document snapshot, dirty state, and document
+  persistence transport calls
+- document feature owns client save/open/new/rename flow and dialogs, but its
+  controller should delegate persistence to `document-model` rather than
+  calling `io` or encoding document API routes directly
 - server document feature owns authenticated Express routes and Mongo access
 - account/auth identifies ownership through bearer tokens
 - the client does not send `accountId` for document operations
@@ -297,7 +300,9 @@ With the post-POC cleanup complete and the first account/document persistence
 slices underway, the safest MVP implementation path is:
 
 1. Treat the editor as the center of the app.
-2. Keep persistence behind services and avoid coupling the document model directly to MongoDB.
+2. Keep persistence behind model/service boundaries: client document controllers
+   orchestrate user flow, `document-model` owns document API transport, and
+   only the server document feature talks to MongoDB.
 3. Keep the custom embed path as the leading editor-object implementation.
 4. Harden the first-pass document model before committing to a final durable notebook format.
 5. Build new substantial React presentation components as class components and use the shared component/domain helper layers created during cleanup.

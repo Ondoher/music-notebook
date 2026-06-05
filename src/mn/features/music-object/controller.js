@@ -18,25 +18,25 @@ import {
 import MusicObjectEmbedSession from './embed-session.js';
 
 /**
- * Registers music object document type, toolbar commands, icons, and Quill embed rendering.
+ * Registers music object document type, toolbar commands, action presentation, and Quill embed rendering.
  */
 export default class MusicObjectController extends Service {
 	constructor(registry) {
 		super('music-object-controller', registry);
-		this.implement(['ready', 'attachEmbed', 'getPlayerService']);
+		this.implement(['ready', 'attachEmbed', 'getDocumentStyles', 'getEmbedActionComponent', 'getPlayerService']);
 	}
 
 	ready() {
 		this.documentModel = this.registry.subscribe('document-model');
 		this.editorToolbar = this.registry.subscribe('editor-toolbar');
 		this.editorSurface = this.registry.subscribe('editor-surface');
-		this.iconRegistry = this.registry.subscribe('icon-registry');
+		this.actionRegistry = this.registry.subscribe('action-registry');
 		this.objectTypes = this.registry.subscribe('object-type-registry');
 		this.player = null;
 
 		registerKeyboardEmbed();
 		this.registerObjectType();
-		this.registerToolbarIcons();
+		this.registerToolbarActions();
 		this.registerToolbarItems();
 		this.toolbarSelectedListener = this.editorToolbar.listen(
 			'item-selected',
@@ -54,6 +54,27 @@ export default class MusicObjectController extends Service {
 		}
 
 		return this.player;
+	}
+
+	getDocumentStyles() {
+		const settings = this.documentModel?.getSettings?.() || {};
+		const styles = Array.isArray(settings.styles) && settings.styles.length
+			? settings.styles
+			: [{ id: 'normal', name: 'Normal', parentStyleId: '', format: {} }];
+
+		return styles.map((style) => ({
+			...style,
+			format: {
+				...(style.format || {}),
+			},
+		}));
+	}
+
+	getEmbedActionComponent(action = {}) {
+		return this.actionRegistry?.getActionComponent?.(
+			action.iconId,
+			action.pressed ? 'pressed' : 'default',
+		) || null;
 	}
 
 	registerObjectType() {
@@ -93,13 +114,13 @@ export default class MusicObjectController extends Service {
 		});
 	}
 
-	registerToolbarIcons() {
-		this.iconRegistry.registerIcon('music-object.insert.keyboard', IconPiano, 'default', 'editor.insert_keyboard_object');
-		this.iconRegistry.registerIcon('music-object.insert.staff', IconClefStaff, 'default', 'editor.insert_staff_object');
-		this.iconRegistry.registerIcon('music-object.play', PlayArrowIcon, 'default', 'music.controls.play');
-		this.iconRegistry.registerIcon('music-object.stop', StopIcon, 'default', 'music.controls.stop');
-		this.iconRegistry.registerIcon('music-object.edit', EditIcon, 'default', 'music.controls.edit');
-		this.iconRegistry.registerIcon('music-object.format', TuneIcon, 'default', 'music.controls.format');
+	registerToolbarActions() {
+		this.actionRegistry.registerAction('music-object.insert.keyboard', IconPiano, 'default', 'editor.insert_keyboard_object');
+		this.actionRegistry.registerAction('music-object.insert.staff', IconClefStaff, 'default', 'editor.insert_staff_object');
+		this.actionRegistry.registerAction('music-object.play', PlayArrowIcon, 'default', 'music.controls.play');
+		this.actionRegistry.registerAction('music-object.stop', StopIcon, 'default', 'music.controls.stop');
+		this.actionRegistry.registerAction('music-object.edit', EditIcon, 'default', 'music.controls.edit');
+		this.actionRegistry.registerAction('music-object.format', TuneIcon, 'default', 'music.controls.format');
 	}
 
 	registerToolbarItems() {

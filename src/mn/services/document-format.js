@@ -11,6 +11,14 @@ const DEFAULT_FORMAT = Object.freeze({
 		left: 72,
 	}),
 });
+const CSS_PIXELS_PER_INCH = 96;
+const POINTS_PER_INCH = 72;
+const PAGE_SIZES = Object.freeze({
+	a4: Object.freeze({ height: 11.69, width: 8.27 }),
+	a5: Object.freeze({ height: 8.27, width: 5.83 }),
+	legal: Object.freeze({ height: 14, width: 8.5 }),
+	letter: Object.freeze({ height: 11, width: 8.5 }),
+});
 const SUPPORTED_PAGE_SIZES = Object.freeze(['letter', 'legal', 'a4', 'a5']);
 
 export default class DocumentFormatService extends Service {
@@ -22,6 +30,8 @@ export default class DocumentFormatService extends Service {
 			'normalizeMargin',
 			'normalizeFormat',
 			'getFormat',
+			'getPageDimensions',
+			'getContentWidth',
 			'applyFormat',
 			'canRedo',
 			'canUndo',
@@ -106,6 +116,30 @@ export default class DocumentFormatService extends Service {
 			...(settings.page || DEFAULT_FORMAT),
 			fontSize: settings.typography?.fontSize,
 		});
+	}
+
+	getPageDimensions(format = this.getFormat()) {
+		const normalized = this.normalizeFormat(format);
+		const dimensions = PAGE_SIZES[normalized.size] || PAGE_SIZES.letter;
+
+		if (normalized.orientation === 'landscape') {
+			return {
+				height: dimensions.width,
+				width: dimensions.height,
+			};
+		}
+
+		return { ...dimensions };
+	}
+
+	getContentWidth(format = this.getFormat()) {
+		const normalized = this.normalizeFormat(format);
+		const dimensions = this.getPageDimensions(normalized);
+		const marginWidth = normalized.margins.left + normalized.margins.right;
+		const width = (dimensions.width * CSS_PIXELS_PER_INCH)
+			- (marginWidth * CSS_PIXELS_PER_INCH / POINTS_PER_INCH);
+
+		return Number.isFinite(width) && width > 0 ? width : null;
 	}
 
 	applyFormat(format = {}) {

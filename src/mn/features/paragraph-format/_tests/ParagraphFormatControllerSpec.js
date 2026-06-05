@@ -63,13 +63,13 @@ class EditorToolbarMock extends Service {
 	}
 }
 
-class IconRegistryMock extends Service {
+class ActionRegistryMock extends Service {
 	constructor(registry) {
-		super('icon-registry', registry);
-		this.implement(['registerIcon']);
+		super('action-registry', registry);
+		this.implement(['registerAction']);
 	}
 
-	registerIcon() {
+	registerAction() {
 		return {};
 	}
 }
@@ -87,7 +87,7 @@ describe('ParagraphFormatController', function() {
 		editorSurface = new EditorSurfaceMock(registry);
 		new DocumentModelMock(registry);
 		new EditorToolbarMock(registry);
-		new IconRegistryMock(registry);
+		new ActionRegistryMock(registry);
 		paragraphFormat = new ParagraphFormatController(registry);
 
 		mainMenu.addMainItem(100, 'format', 'app.menu.format');

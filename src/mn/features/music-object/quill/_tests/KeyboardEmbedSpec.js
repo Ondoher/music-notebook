@@ -485,7 +485,7 @@ describe('KeyboardEmbed', function() {
 		expect(formatButton).toBeTruthy();
 	});
 
-	it('renders hover toolbar icons from the icon registry', function() {
+	it('renders hover toolbar icons from the controller session actions', function() {
 		function TestIcon() {
 			return <svg viewBox="0 0 18 18"><path d="M1 1h16v16H1z" /></svg>;
 		}
@@ -499,15 +499,34 @@ describe('KeyboardEmbed', function() {
 			registry: {
 				subscribe(serviceName) {
 					if (serviceName === 'music-object-controller') {
-						return makeMusicObjectControllerMock();
-					}
-
-					if (serviceName === 'icon-registry') {
-						return {
-							getIcon() {
-								return TestIcon;
-							},
-						};
+						return makeMusicObjectControllerMock({
+							actions: [
+								{
+									id: 'playback',
+									className: 'music-keyboard-play-button',
+									fallback: 'Play',
+									iconComponent: TestIcon,
+									iconId: 'music-object.play',
+									labelKey: 'music.controls.play',
+								},
+								{
+									id: 'edit',
+									className: 'music-keyboard-edit-button',
+									fallback: 'Edit',
+									iconComponent: TestIcon,
+									iconId: 'music-object.edit',
+									labelKey: 'music.controls.edit',
+								},
+								{
+									id: 'format',
+									className: 'music-keyboard-format-button',
+									fallback: 'Format',
+									iconComponent: TestIcon,
+									iconId: 'music-object.format',
+									labelKey: 'music.controls.format',
+								},
+							],
+						});
 					}
 
 					return null;
@@ -1851,14 +1870,17 @@ function dispatchPointerEvent(target, type, options = {}) {
 	target.dispatchEvent(event);
 }
 
-function makeMusicObjectControllerMock() {
+function makeMusicObjectControllerMock(sessionState = {}) {
 	return {
 		attachEmbed() {
 			return {
 				closeDialog() {},
 				detach() {},
+				getDocumentStyles() {
+					return [];
+				},
 				getState() {
-					return {};
+					return sessionState;
 				},
 				listen() {},
 				performAction() {

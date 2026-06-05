@@ -88,10 +88,8 @@ export default class MusicEmbedFormatDialog extends React.Component {
 	};
 
 	getDocumentStyles() {
-		const documentModel = this.context?.registry?.subscribe?.('document-model');
-		const settings = documentModel?.getSettings?.() || {};
-		const styles = Array.isArray(settings.styles) && settings.styles.length
-			? settings.styles
+		const styles = Array.isArray(this.props.documentStyles) && this.props.documentStyles.length
+			? this.props.documentStyles
 			: [{ id: 'normal', name: 'Normal', parentStyleId: '', format: {} }];
 
 		return styles;

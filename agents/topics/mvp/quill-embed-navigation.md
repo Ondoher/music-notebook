@@ -14,7 +14,7 @@ Use this together with:
 - [Quill Integration](../architecture/quill-integration.md)
 - [Document Model](document-model.md)
 - [View Mode](view-mode.md)
-- [Quill Table Up Spike](quill-table-up-spike.md)
+- [Quill TableUp Implementation](quill-table-up.md)
 
 ## Current Decision
 
@@ -168,7 +168,7 @@ Do not insert hidden spacer content to create side-by-side flow positions.
 
 ### 5. Use Tables For Side-By-Side Testing
 
-The table spike is the current path for intentional side-by-side music objects.
+Tables are the current product path for intentional side-by-side music objects.
 Caret, selection, and scaling issues inside tables should be treated as
 table/object layout problems, not floated text-flow problems.
 

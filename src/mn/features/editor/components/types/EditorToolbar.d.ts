@@ -2,8 +2,8 @@
 type EditorToolbarProps = {
 	/** Editor toolbar service that supplies command items. */
 	editorToolbar?: EditorToolbarService | null;
-	/** Icon registry used to resolve toolbar item icon ids. */
-	iconRegistry?: IconRegistryService | null;
+	/** Action registry used to resolve toolbar item presentation components. */
+	actionRegistry?: ActionRegistryService | null;
 	/** Accessible label for the toolbar. */
 	label?: string;
 };
@@ -12,8 +12,8 @@ type EditorToolbarProps = {
 type EditorToolbarState = {
 	/** Current sorted toolbar snapshot. */
 	toolbar: EditorToolbarSnapshot;
-	/** Incremented to rerender when icon registrations change. */
-	iconVersion: number;
+	/** Incremented to rerender when action presentation registrations change. */
+	actionVersion: number;
 };
 
 declare class EditorToolbar extends React.Component<EditorToolbarProps, EditorToolbarState> {}

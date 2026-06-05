@@ -21,12 +21,21 @@ export default class EditorSurfaceService extends Service {
 			'attachSurface',
 			'detachSurface',
 			'insertObject',
-			'insertTable',
 			'insertPageBreak',
 			'updateObject',
 			'removeObject',
 			'getContentWidth',
 			'getSelection',
+			'getQuill',
+			'getQuillModule',
+			'getEditorRoot',
+			'findBlot',
+			'getIndex',
+			'getLine',
+			'getLeaf',
+			'setSelection',
+			'focus',
+			'update',
 			'getParagraphFormat',
 			'format',
 			'formatParagraph',
@@ -86,17 +95,6 @@ export default class EditorSurfaceService extends Service {
 	}
 
 	/**
-	 * Inserts a table into the active editor.
-	 *
-	 * @param {number} [rows=2] - Number of table rows.
-	 * @param {number} [columns=2] - Number of table columns.
-	 * @returns {boolean} True when the active editor inserted a table.
-	 */
-	insertTable(rows = 2, columns = 2) {
-		return this.surface?.insertTable?.(rows, columns) || false;
-	}
-
-	/**
 	 * Inserts a manual page break at the active editor selection.
 	 *
 	 * @returns {boolean} True when the active editor inserted a page break.
@@ -142,6 +140,107 @@ export default class EditorSurfaceService extends Service {
 	 */
 	getSelection() {
 		return this.surface?.getSelection?.() || null;
+	}
+
+	/**
+	 * Gets the active Quill instance when the current editor uses Quill.
+	 *
+	 * @returns {unknown | null} Active Quill instance, or null when unavailable.
+	 */
+	getQuill() {
+		return this.surface?.getQuill?.() || null;
+	}
+
+	/**
+	 * Gets a live module from the active editor by module name.
+	 *
+	 * @param {string} name - Quill module name.
+	 * @returns {unknown | null} Live module instance, or null when unavailable.
+	 */
+	getQuillModule(name) {
+		return this.surface?.getQuillModule?.(name) || null;
+	}
+
+	/**
+	 * Gets the active editor root element.
+	 *
+	 * @returns {HTMLElement | null} Editor root, or null when unavailable.
+	 */
+	getEditorRoot() {
+		return this.surface?.getEditorRoot?.() || null;
+	}
+
+	/**
+	 * Resolves an editor blot from a DOM node.
+	 *
+	 * @param {Node} node - DOM node to resolve.
+	 * @param {boolean} [bubble=true] - Whether to search ancestor nodes.
+	 * @returns {unknown | null} Matching blot, or null when unavailable.
+	 */
+	findBlot(node, bubble = true) {
+		return this.surface?.findBlot?.(node, bubble) || null;
+	}
+
+	/**
+	 * Gets the document index for an editor blot.
+	 *
+	 * @param {unknown} blot - Editor blot.
+	 * @returns {number | null} Document index, or null when unavailable.
+	 */
+	getIndex(blot) {
+		return this.surface?.getIndex?.(blot) ?? null;
+	}
+
+	/**
+	 * Gets the editor line at a document index.
+	 *
+	 * @param {number} index - Document index.
+	 * @returns {unknown | null} Line result, or null when unavailable.
+	 */
+	getLine(index) {
+		return this.surface?.getLine?.(index) || null;
+	}
+
+	/**
+	 * Gets the editor leaf at a document index.
+	 *
+	 * @param {number} index - Document index.
+	 * @returns {unknown | null} Leaf result, or null when unavailable.
+	 */
+	getLeaf(index) {
+		return this.surface?.getLeaf?.(index) || null;
+	}
+
+	/**
+	 * Sets the active editor selection.
+	 *
+	 * @param {number} index - Selection index.
+	 * @param {number} [length=0] - Selection length.
+	 * @param {string} [source='api'] - Editor change source.
+	 * @returns {boolean} True when a surface handled the selection change.
+	 */
+	setSelection(index, length = 0, source = 'api') {
+		return this.surface?.setSelection?.(index, length, source) === true;
+	}
+
+	/**
+	 * Focuses the active editor.
+	 *
+	 * @param {Record<string, unknown>} [options=undefined] - Optional editor focus options.
+	 * @returns {boolean} True when a surface handled focus.
+	 */
+	focus(options = undefined) {
+		return this.surface?.focus?.(options) === true;
+	}
+
+	/**
+	 * Requests an active editor update.
+	 *
+	 * @param {string} [source='api'] - Editor update source.
+	 * @returns {boolean} True when a surface handled the update.
+	 */
+	update(source = 'api') {
+		return this.surface?.update?.(source) === true;
 	}
 
 	/**

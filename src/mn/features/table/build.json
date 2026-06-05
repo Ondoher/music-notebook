@@ -1,0 +1,17 @@
+{
+	"css": [
+		{
+			"dest": "table/css",
+			"cwd": "assets/css",
+			"glob": "**/*.css",
+			"keepNest": true
+		},
+		{
+			"dest": "table/vendor",
+			"cwd": "../../../../node_modules/quill-table-up/dist",
+			"glob": "index.css",
+			"keepNest": false
+		}
+	],
+	"index": "index.js"
+}

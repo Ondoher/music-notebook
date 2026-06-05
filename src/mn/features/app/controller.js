@@ -7,6 +7,12 @@ export default class AppController extends Service {
 			'ready',
 			'getPages',
 			'getShellState',
+			'getDocumentTabsState',
+			'selectDocumentTab',
+			'renameDocumentTab',
+			'addDocumentTabAfter',
+			'moveDocumentTab',
+			'getPageTitle',
 			'ensureActivePage',
 			'requestPage',
 			'getComponent',
@@ -17,6 +23,7 @@ export default class AppController extends Service {
 		this.view = this.registry.subscribe('app-view');
 		this.pages = this.registry.subscribe('app-pages');
 		this.mainMenu = this.registry.subscribe('main-menu');
+		this.documentModel = this.registry.subscribe('document-model');
 		this.url = this.registry.subscribe('url');
 		this.activePageId = null;
 		this.activePageComponent = null;
@@ -26,8 +33,33 @@ export default class AppController extends Service {
 		this.pages.listen('page-updated', this.onPageAvailable.bind(this));
 		this.url.listen('changed', this.onUrlChanged.bind(this));
 		this.registry.listen('ready', this.onRegistryReady.bind(this));
+		this.subscribeToDocumentModel();
 		this.configureMainMenu();
 		this.reconcilePages();
+		this.updatePageTitle();
+	}
+
+	subscribeToDocumentModel() {
+		if (!this.documentModel?.listen) {
+			return;
+		}
+
+		this.documentModel.listen('tabs-changed', this.onDocumentTabsChanged.bind(this));
+		this.documentModel.listen('tabs-joined', this.onDocumentTabsChanged.bind(this));
+		this.documentModel.listen('active-tab-changed', this.onDocumentTabsChanged.bind(this));
+		this.documentModel.listen('document-loaded', this.onDocumentLoaded.bind(this));
+		this.documentModel.listen('document-changed', this.updatePageTitle.bind(this));
+		this.documentModel.listen('document-saved', this.updatePageTitle.bind(this));
+		this.documentModel.listen('title-changed', this.updatePageTitle.bind(this));
+	}
+
+	onDocumentLoaded() {
+		this.onDocumentTabsChanged();
+		this.updatePageTitle();
+	}
+
+	onDocumentTabsChanged() {
+		this.fire('document-tabs-updated', this.getDocumentTabsState());
 	}
 
 	configureMainMenu() {
@@ -140,9 +172,48 @@ export default class AppController extends Service {
 
 		return {
 			activePageId: this.activePageId,
+			documentTabs: this.getDocumentTabsState(),
 			pageComponent: this.activePageComponent,
 			pages: this.getPages(),
 		};
+	}
+
+	getDocumentTabsState() {
+		return {
+			activeTabId: this.documentModel?.getActiveTabId?.() || '',
+			tabs: this.documentModel?.getTabs?.() || [],
+		};
+	}
+
+	selectDocumentTab(tabId) {
+		return this.documentModel?.setActiveTab?.(tabId) || null;
+	}
+
+	renameDocumentTab(tabId, title) {
+		return this.documentModel?.updateTab?.(tabId, { title }) || null;
+	}
+
+	addDocumentTabAfter(tabId) {
+		return this.documentModel?.addTab?.({ afterTabId: tabId }) || null;
+	}
+
+	moveDocumentTab(tabId, targetIndex) {
+		return this.documentModel?.moveTab?.(tabId, targetIndex) || null;
+	}
+
+	getPageTitle() {
+		const title = String(this.documentModel?.getTitle?.() || '').trim();
+		const hasSavedDocument = Boolean(this.documentModel?.getId?.());
+		const normalizedTitle = title && (hasSavedDocument || title !== 'Untitled notebook')
+			? title
+			: 'untitled';
+		const dirtyPrefix = this.documentModel?.isDirty?.() === true ? '*' : '';
+
+		return `${dirtyPrefix}${normalizedTitle}`;
+	}
+
+	updatePageTitle() {
+		this.fire('page-title-updated', this.getPageTitle());
 	}
 
 	requestPage(pageId, options = {}) {

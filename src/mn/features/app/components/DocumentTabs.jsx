@@ -114,7 +114,7 @@ function SortableDocumentTabsRegion(props) {
 }
 
 /**
- * Renders persisted notebook tabs and document-model tab actions.
+ * Renders persisted notebook tabs and emits tab interaction callbacks.
  *
  * @extends {React.Component<DocumentTabsProps, DocumentTabsState>}
  */
@@ -124,33 +124,16 @@ export default class DocumentTabs extends React.Component {
 	constructor(props) {
 		super(props);
 
-		const documentModel = this.getDocumentModel(props);
-
 		this.state = {
-			activeTabId: documentModel?.getActiveTabId?.() || '',
 			editingTabId: '',
 			editingTitle: '',
 			editorStyle: null,
-			tabs: documentModel?.getTabs?.() || [],
 		};
 		this.rootRef = React.createRef();
 		this.inputRef = React.createRef();
 	}
 
-	componentDidMount() {
-		this.subscribeToDocumentModel();
-		this.syncFromDocumentModel();
-	}
-
 	componentDidUpdate(prevProps, prevState) {
-		if (prevProps.documentModel === this.props.documentModel) {
-			this.focusEditor(prevState);
-			return;
-		}
-
-		this.unsubscribeFromDocumentModel(prevProps.documentModel);
-		this.subscribeToDocumentModel();
-		this.syncFromDocumentModel();
 		this.focusEditor(prevState);
 	}
 
@@ -160,72 +143,6 @@ export default class DocumentTabs extends React.Component {
 			this.focusEditorTimeout = null;
 		}
 
-		this.unsubscribeFromDocumentModel();
-	}
-
-	getDocumentModel(props = this.props) {
-		return props.documentModel || this.context?.registry?.subscribe?.('document-model') || null;
-	}
-
-	subscribeToDocumentModel() {
-		const documentModel = this.getDocumentModel();
-
-		if (!documentModel?.listen) {
-			return;
-		}
-
-		this.tabsChangedListener = documentModel.listen(
-			'tabs-changed',
-			this.syncFromDocumentModel.bind(this),
-		);
-		this.tabsJoinedListener = documentModel.listen(
-			'tabs-joined',
-			this.syncFromDocumentModel.bind(this),
-		);
-		this.activeTabChangedListener = documentModel.listen(
-			'active-tab-changed',
-			this.syncFromDocumentModel.bind(this),
-		);
-		this.documentLoadedListener = documentModel.listen(
-			'document-loaded',
-			this.syncFromDocumentModel.bind(this),
-		);
-	}
-
-	unsubscribeFromDocumentModel(documentModel = this.getDocumentModel()) {
-		if (!documentModel?.unlisten) {
-			return;
-		}
-
-		if (this.tabsChangedListener) {
-			documentModel.unlisten('tabs-changed', this.tabsChangedListener);
-		}
-
-		if (this.tabsJoinedListener) {
-			documentModel.unlisten('tabs-joined', this.tabsJoinedListener);
-		}
-
-		if (this.activeTabChangedListener) {
-			documentModel.unlisten('active-tab-changed', this.activeTabChangedListener);
-		}
-
-		if (this.documentLoadedListener) {
-			documentModel.unlisten('document-loaded', this.documentLoadedListener);
-		}
-
-		this.tabsChangedListener = null;
-		this.tabsJoinedListener = null;
-		this.activeTabChangedListener = null;
-		this.documentLoadedListener = null;
-	}
-
-	syncFromDocumentModel() {
-		const documentModel = this.getDocumentModel();
-
-		this.setState({
-			activeTabId: documentModel?.getActiveTabId?.() || '',
-			tabs: documentModel?.getTabs?.() || [],
-		});
 	}
 
 	focusEditor(prevState = {}) {
@@ -250,7 +167,7 @@ export default class DocumentTabs extends React.Component {
 	}
 
 	getLocalize() {
-		return this.context?.localize || this.context?.registry?.subscribe?.('localize') || null;
+		return this.context?.localize || null;
 	}
 
 	translate(phrase, replacements = {}, fallback = '') {
@@ -264,11 +181,19 @@ export default class DocumentTabs extends React.Component {
 	}
 
 	getActiveTabIndex() {
-		return this.state.tabs.findIndex((tab) => tab.id === this.state.activeTabId);
+		return this.getTabs().findIndex((tab) => tab.id === this.getActiveTabId());
+	}
+
+	getTabs() {
+		return Array.isArray(this.props.tabs) ? this.props.tabs : [];
+	}
+
+	getActiveTabId() {
+		return this.props.activeTabId || '';
 	}
 
 	selectTab(tabId) {
-		this.getDocumentModel()?.setActiveTab?.(tabId);
+		this.props.onSelectTab?.(tabId);
 	}
 
 	beginEditTab(tab, tabElement) {
@@ -296,7 +221,7 @@ export default class DocumentTabs extends React.Component {
 	handleTabStripDoubleClick(event) {
 		const tabElement = event.target?.closest?.('[data-tab-id]');
 		const tabId = tabElement?.getAttribute?.('data-tab-id');
-		const tab = this.state.tabs.find((candidate) => candidate.id === tabId);
+		const tab = this.getTabs().find((candidate) => candidate.id === tabId);
 
 		if (!tab) {
 			return;
@@ -322,9 +247,7 @@ export default class DocumentTabs extends React.Component {
 			? this.inputRef.current.value
 			: this.state.editingTitle;
 
-		this.getDocumentModel()?.updateTab?.(this.state.editingTabId, {
-			title,
-		});
+		this.props.onRenameTab?.(this.state.editingTabId, title);
 		this.setState({
 			editingTabId: '',
 			editingTitle: '',
@@ -353,22 +276,18 @@ export default class DocumentTabs extends React.Component {
 	}
 
 	addTab() {
-		const documentModel = this.getDocumentModel();
-
-		documentModel?.addTab?.({
-			afterTabId: this.state.activeTabId,
-		});
+		this.props.onAddTab?.(this.getActiveTabId());
 	}
 
 	moveActiveTab(offset) {
 		const activeIndex = this.getActiveTabIndex();
 		const nextIndex = activeIndex + offset;
 
-		if (activeIndex === -1 || nextIndex < 0 || nextIndex >= this.state.tabs.length) {
+		if (activeIndex === -1 || nextIndex < 0 || nextIndex >= this.getTabs().length) {
 			return;
 		}
 
-		this.getDocumentModel()?.moveTab?.(this.state.activeTabId, nextIndex);
+		this.props.onMoveTab?.(this.getActiveTabId(), nextIndex);
 	}
 
 	handleDragEnd(event) {
@@ -379,21 +298,23 @@ export default class DocumentTabs extends React.Component {
 			return;
 		}
 
-		const nextIndex = this.state.tabs.findIndex((tab) => tab.id === overId);
+		const nextIndex = this.getTabs().findIndex((tab) => tab.id === overId);
 
 		if (nextIndex === -1) {
 			return;
 		}
 
-		this.getDocumentModel()?.moveTab?.(activeId, nextIndex);
+		this.props.onMoveTab?.(activeId, nextIndex);
 	}
 
 	render() {
+		const tabs = this.getTabs();
+		const activeTabId = this.getActiveTabId();
 		const activeIndex = this.getActiveTabIndex();
 		const canMoveLeft = activeIndex > 0;
-		const canMoveRight = activeIndex !== -1 && activeIndex < this.state.tabs.length - 1;
+		const canMoveRight = activeIndex !== -1 && activeIndex < tabs.length - 1;
 
-		if (!this.getDocumentModel()) {
+		if (!tabs.length) {
 			return null;
 		}
 
@@ -406,18 +327,18 @@ export default class DocumentTabs extends React.Component {
 			>
 				<div className="mn-document-tabs__track">
 					<SortableDocumentTabsRegion
-						activeTabId={this.state.activeTabId}
+						activeTabId={activeTabId}
 						getTabLabel={this.getTabLabel.bind(this)}
 						onDragEnd={this.handleDragEnd.bind(this)}
 						onEdit={(tab, tabElement) => this.beginEditTab(tab, tabElement)}
 						onSelectTab={(event, tabIndex) => {
-							const tab = this.state.tabs[tabIndex];
+							const tab = tabs[tabIndex];
 
 							if (tab) {
 								this.selectTab(tab.id);
 							}
 						}}
-						tabs={this.state.tabs}
+						tabs={tabs}
 					/>
 				</div>
 				<div className="mn-document-tabs__actions">

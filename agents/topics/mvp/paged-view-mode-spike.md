@@ -15,7 +15,7 @@ Use this together with:
 
 - [View Mode](view-mode.md)
 - [Quill Integration](../architecture/quill-integration.md)
-- [Quill Table Up Spike](quill-table-up-spike.md)
+- [Quill TableUp Implementation](quill-table-up.md)
 - [Quill Embed Navigation](quill-embed-navigation.md)
 - [Document Model](document-model.md)
 

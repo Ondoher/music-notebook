@@ -57,6 +57,7 @@
     "test:server": "jasmine --config=spec/support/jasmine-server.json",
     "test:ui": "polylith test mn && karma start --browsers ChromeHeadless karma.conf.cjs",
     "test:ui:watch": "polylith test mn && start polylith test mn -w&npm run karma:watch",
+    "test:ui:agent": "node scripts/test-ui-agent.cjs",
     "dev": "start polylith watch --all -v false&start npm run dev:serve",
     "karma": "karma start --browsers ChromeHeadless karma.conf.cjs",
     "karma:watch": "karma start --browsers ChromeHeadless karma.watch.conf.cjs",

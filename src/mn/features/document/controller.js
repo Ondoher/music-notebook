@@ -86,8 +86,6 @@ export default class DocumentController extends Service {
 		this.accountsController = this.registry.subscribe('accounts-controller');
 		/** @type {DocumentModelService} */
 		this.documentModel = this.registry.subscribe('document-model');
-		/** @type {IoService} */
-		this.io = this.registry.subscribe('io');
 		this.menuSelectedListener = this.mainMenu.listen(
 			'item-selected',
 			this.onMenuItemSelected.bind(this),
@@ -354,13 +352,7 @@ export default class DocumentController extends Service {
 	}
 
 	async loadDocumentList() {
-		const result = await this.io.get('api/documents');
-
-		if (result.success && result.data?.success && Array.isArray(result.data.documents)) {
-			return result.data.documents;
-		}
-
-		return [];
+		return this.documentModel.loadDocumentList();
 	}
 
 	async openNameDialog(mode) {
@@ -503,33 +495,10 @@ export default class DocumentController extends Service {
 		);
 	}
 
-	getCurrentContentForSave(name = this.documentModel.getTitle()) {
-		return {
-			...this.documentModel.toJSON(),
-			title: name,
-		};
-	}
-
-	applyServerDocument(document) {
-		this.documentModel.load({
-			...document.content,
-			id: document.id,
-			title: document.name,
-		});
-	}
-
 	async loadDocument(documentId, options = {}) {
-		const id = String(documentId || '').trim();
-
-		if (!id) {
-			return {success: false};
-		}
-
-		const result = await this.io.get(`api/documents/${encodeURIComponent(id)}`);
+		const result = await this.documentModel.loadServerDocument(documentId);
 
 		if (result.success && result.data?.success && result.data.document) {
-			this.applyServerDocument(result.data.document);
-
 			if (options.updateLastOpen !== false) {
 				await this.accountModel.setLastOpenDocument?.(result.data.document.id);
 			}
@@ -657,15 +626,12 @@ export default class DocumentController extends Service {
 	}
 
 	async saveNewDocument(name) {
-		const result = await this.io.post('api/documents', {
+		const result = await this.documentModel.saveNewDocument(name, {
 			allowNameConflict: this.nameDialog.conflictConfirmed === true,
-			name,
-			content: this.getCurrentContentForSave(name),
 		});
 
 		if (result.success && result.data?.success && result.data.document) {
 			const document = result.data.document;
-			this.applyServerDocument(document);
 			await this.accountModel.setLastOpenDocument?.(document.id);
 			return result;
 		}
@@ -674,20 +640,13 @@ export default class DocumentController extends Service {
 	}
 
 	async saveExistingDocument() {
-		const id = this.documentModel.getId();
-		const name = this.documentModel.getTitle();
-		const result = await this.io.send({
-			method: 'PUT',
-			url: `api/documents/${encodeURIComponent(id)}`,
-			body: {
-				name,
-				content: this.getCurrentContentForSave(name),
-			},
+		const result = await this.documentModel.saveExistingDocument({
+			id: this.documentModel.getId(),
+			name: this.documentModel.getTitle(),
 		});
 
 		if (result.success && result.data?.success && result.data.document) {
 			const document = result.data.document;
-			this.applyServerDocument(document);
 			await this.accountModel.setLastOpenDocument?.(document.id);
 		}
 
@@ -713,13 +672,9 @@ export default class DocumentController extends Service {
 			return {success: false, reason: 'document.rename.save_required'};
 		}
 
-		const result = await this.io.send({
-			method: 'PATCH',
-			url: `api/documents/${encodeURIComponent(id)}/name`,
-			body: {
-				allowNameConflict: this.nameDialog.conflictConfirmed === true,
-				name,
-			},
+		const result = await this.documentModel.renameServerDocument(name, {
+			allowNameConflict: this.nameDialog.conflictConfirmed === true,
+			id,
 		});
 
 		if (result.success && result.data?.success && result.data.document) {

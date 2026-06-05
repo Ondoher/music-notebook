@@ -4,6 +4,7 @@ type MusicObjectEmbedAction = {
 	className?: string;
 	disabled?: boolean;
 	fallback: string;
+	iconComponent?: React.ComponentType<any> | null;
 	iconId: string;
 	labelKey: string;
 	pressed?: boolean;
@@ -30,6 +31,7 @@ type MusicObjectEmbedSessionOptions = {
 
 /** Controller-owned behavior session for one rendered music embed. */
 type MusicObjectEmbedSession = {
+	getDocumentStyles: () => NotebookParagraphStyle[];
 	getState: () => MusicObjectEmbedSessionState;
 	listen: (eventName: 'changed', listener: (state: MusicObjectEmbedSessionState) => void) => unknown;
 	unlisten: (eventName: 'changed', listenerId: unknown) => void;
@@ -43,5 +45,7 @@ type MusicObjectEmbedSession = {
 /** Controller service for the music-object feature. */
 type MusicObjectController = {
 	attachEmbed: (options?: MusicObjectEmbedSessionOptions) => MusicObjectEmbedSession;
+	getDocumentStyles: () => NotebookParagraphStyle[];
+	getEmbedActionComponent: (action: MusicObjectEmbedAction) => React.ComponentType<any> | null;
 	getPlayerService: () => PlayerService | null;
 };

@@ -14,6 +14,8 @@ export default class EditorInteractionDispatcher {
 		this.getEditorRoot = options.getEditorRoot || (() => null);
 		this.getCursorRoot = options.getCursorRoot || this.getEditorRoot;
 		this.getQuill = options.getQuill || (() => null);
+		this.getContentWidth = options.getContentWidth || (() => null);
+		this.setSelectionWithoutScroll = options.setSelectionWithoutScroll || null;
 		this.cursorClass = null;
 	}
 
@@ -32,7 +34,7 @@ export default class EditorInteractionDispatcher {
 			|| this.resolveSelectionTarget(eventName);
 		const targetServiceName = extraContext.targetServiceName || target?.serviceName || '';
 
-		if (!targetServiceName && this.requiresResolvedTarget(eventName)) {
+		if (!targetServiceName && this.requiresResolvedTarget(eventName) && extraContext.allowUnresolvedTarget !== true) {
 			this.applyCursorClass(null);
 			return {
 				handled: false,
@@ -76,9 +78,11 @@ export default class EditorInteractionDispatcher {
 			getLength: () => quill?.getLength?.() || 0,
 			getLine: (index) => quill?.getLine?.(index) || [],
 			getModule: (name) => quill?.getModule?.(name) || null,
+			getContentWidth: () => this.getContentWidth(),
 			getSelection: (focus = false) => quill?.getSelection?.(focus) || null,
 			quill,
 			setSelection: (...args) => quill?.setSelection?.(...args),
+			setSelectionWithoutScroll: this.setSelectionWithoutScroll,
 			...extraContext,
 		};
 	}
@@ -259,11 +263,11 @@ export default class EditorInteractionDispatcher {
 	 * Resolves the owner target for a gutter line-selection hit.
 	 *
 	 * @param {string} eventName - Editor interaction event name.
-	 * @param {{index: number, table?: Element} | null} range - Hit range.
+	 * @param {{index: number, sourceElement?: Element} | null} range - Hit range.
 	 * @returns {EditorInteractionTarget | null} Resolved target owner.
 	 */
 	resolveGutterTarget(eventName, range) {
-		const sourceElement = range?.table || this.getLineElement(range);
+		const sourceElement = range?.sourceElement || this.getLineElement(range);
 
 		if (!sourceElement) {
 			return null;
@@ -302,9 +306,9 @@ export default class EditorInteractionDispatcher {
 	}
 
 	/**
-	 * Gets owner candidates from the line/row nearest a gutter interaction.
+	 * Gets owner candidates from the element nearest a gutter interaction.
 	 *
-	 * @param {Element} sourceElement - Line or table element near the gutter hit.
+	 * @param {Element} sourceElement - Element near the gutter hit.
 	 * @param {EditorInteractionHandlerRegistration} handler - Handler registration.
 	 * @returns {{left: number, target: EditorInteractionTarget}[]} Candidate targets.
 	 */
@@ -366,6 +370,10 @@ export default class EditorInteractionDispatcher {
 	 * @returns {boolean} Whether a target is required.
 	 */
 	requiresResolvedTarget(eventName) {
+		if (eventName === 'selection-change') {
+			return false;
+		}
+
 		const handlers = this.getEditorInteractions()?.getHandlers?.(eventName) || [];
 
 		return handlers.some((handler) => handler.selector);

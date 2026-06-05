@@ -61,8 +61,40 @@ Current event behavior:
 Disabled items remain selectable/focusable at the UI layer so their unavailable state can be communicated.
 Selecting a disabled item fires `disabled-item-selected` instead of `item-selected`.
 
-Toolbar icons are resolved through the shared `icon-registry` service.
-Features that add toolbar items should register their icons, including optional state-specific icons and hover text string ids, before or alongside registering toolbar items.
+Toolbar action presentation is resolved through the shared `action-registry` service.
+Features that add toolbar items should register their action presentation components, including optional state-specific components and hover text string ids, before or alongside registering toolbar items.
+
+## Ordering And Feature Ownership
+
+Open architecture question:
+
+- Features should own their own toolbar contributions independently. A feature
+  should not need another feature's implementation details to add, remove, or
+  update its own toolbar controls.
+- The app also needs consistent toolbar grouping and ordering. If every feature
+  invents section ids and priority ranges locally, the toolbar can become
+  accidental and unstable as features are added.
+
+This is a real design tension, not a simple constants cleanup. The current
+`EDITOR_TOOLBAR_SECTIONS` export gives features a shared ordering vocabulary,
+but it does so by making an editor service implementation file act like a
+public contract. That is mechanically workable, but architecturally muddy.
+
+Possible directions:
+
+- Promote toolbar sections and priority ranges into an explicit editor-toolbar
+  contract module.
+- Let features contribute semantic placement metadata, then have the app/editor
+  toolbar service map those semantics to app-wide ordering.
+- Keep numeric sections/priorities, but document reserved ranges and ownership
+  rules as a deliberate app contract.
+- Add service methods that hide section numbers from features, such as
+  `addParagraphItem(...)`, `addInsertItem(...)`, or a more generic named-zone
+  API.
+
+Do not treat this as resolved by moving constants to a different file. The
+decision needs to balance feature independence with a coherent app-level toolbar
+composition policy.
 
 ### Inline Text
 

@@ -69,21 +69,23 @@ Verification:
 
 ### 2. Table Behavior In `EditorPage`
 
-Status: in progress; row/column selection, context menu, column hover cursor,
-and much interaction routing are feature-owned; Quill/TableUp bootstrap,
-runtime module access, debug instrumentation, cell-focus behavior, and some
-table-specific editor helpers still need cleaner seams
+Status: completed; row/column selection, selected-column right-click context,
+context menu commands, column hover cursor, fit-to-width/distribute-columns,
+cell-focus behavior, interaction routing, table CSS, and Quill/TableUp
+bootstrap are feature-owned
 
 Priority: high
 
 Problem:
 
-- `src/mn/features/editor/components/EditorPage.jsx` imports and registers
-  `quill-table-up` directly.
-- `EditorPage` owns table Tab navigation, row/column selection, column pointer
-  behavior, table selection helper calls, and table insertion.
-- The table controller and context menu are feature-owned, but a large amount of
-  table interaction behavior still lives in the editor presentation component.
+- `src/mn/features/editor/components/EditorPage.jsx` no longer imports TableUp
+  modules or registers/configures `quill-table-up` directly.
+- Table overflow width scanning, table cell focus/caret placement, the TableUp
+  mousedown suppression gate, Quill/TableUp bootstrap, and temporary table debug
+  instrumentation have moved out of `EditorPage` or been removed.
+- The table controller and context menu are feature-owned, row/column selection
+  plus table command interpretation have moved out of `EditorPage`, and the
+  remaining native mousedown suppression handshake is generic.
 
 Why this matters:
 
@@ -343,58 +345,79 @@ Quill/TableUp bootstrap and live module seam:
   warning. Repeated registration is acceptable for bootstrap, though module
   static `register(...)` side effects should still be considered when designing
   a shared contribution seam.
-- A cleaner ownership model is for the table feature to contribute its Quill
-  module definition and Quill constructor module options, while the editor
-  applies all Quill registrations during editor setup. This would let the table
-  feature own `TableUp`, `TableSelection`, `TableResizeLine`, their CSS import
-  if desired, and TableUp module options such as selection color. The editor
-  would still own when Quill is initialized.
-- The table feature should probably not call `Quill.register(...)` directly
-  unless Quill becomes an intentional shared platform dependency. Prefer a
-  table-owned Quill contribution that the editor consumes and applies.
-- Table insertion is currently:
+- The cleaner ownership model is now implemented for TableUp. The table feature
+  contributes its Quill module definition and Quill constructor module options
+  through the editor-ready interaction signal. The editor applies all Quill
+  registrations during editor setup and still owns when Quill is initialized.
+  The table feature owns `TableUp`, `TableSelection`, `TableResizeLine`, and
+  TableUp module options such as selection color.
+- Table insertion execution now lives in the table feature:
 
   ```text
   TableController.insertTable()
-  -> editor-surface.insertTable(1, 2)
-  -> active EditorPage surface adapter
-  -> EditorPage.insertTable()
-  -> this.quill.getModule(TableUp.moduleName).insertTable(...)
+  -> editorSurface.getQuillModule(TableUp.moduleName)
+  -> tableModule.insertTable(1, 2, 'user')
+  -> editorSurface.update('user')
   ```
 
-- `EditorPage.insertTable(...)` does not build table DOM. It validates/clamps
-  row and column counts, gets the live TableUp module instance from the active
-  Quill editor, and calls `tableModule.insertTable(rowCount, columnCount,
-  'user')`.
-- A stronger seam would let the table feature say "remember the Quill module I
-  contributed; give me the live instance for the active editor." In practice,
-  add a generic editor surface method such as `getQuillModule(name)` and let
-  `TableController` execute:
+- `EditorPage.insertTable(...)` and `editor-surface.insertTable(...)` were
+  removed. The editor surface now exposes generic live module access instead of
+  a named table command.
+- The table feature now says "give me the live TableUp module for the active
+  editor" and executes:
 
   ```js
   const tableModule = editorSurface.getQuillModule(TableUp.moduleName);
   tableModule?.insertTable?.(rows, columns, 'user');
   ```
 
-- With both a Quill contribution seam and `editorSurface.getQuillModule(name)`,
-  `EditorPage` could drop direct TableUp setup and the table-specific
-  `insertTable(...)` adapter. The editor surface would expose generic access to
-  active editor module instances rather than named table commands.
+- With the editor-ready Quill setup signal and `editorSurface.getQuillModule(name)`,
+  `EditorPage` no longer needs direct TableUp setup. The table-specific
+  insertion adapter is also gone.
 
-What would remain in `EditorPage` after those seams:
+What remains in `EditorPage` after those seams:
 
-- Table cell Tab/Shift+Tab navigation unless moved to `TableController` through
-  `editor-interactions`.
-- Plain table-cell click/caret placement and music-embed click placement unless
-  moved to the table feature with generic selection helpers.
-- TableUp mousedown suppression gate unless the table feature can access the
-  live TableSelection instance and active surface lifecycle.
-- Table overflow width scanning until it is generalized as a wide-content layout
-  contribution.
-- Table debug instrumentation unless moved to a table debug/service layer with
-  access to editor root, TableSelection, and cleanup lifecycle.
-- Table-related editor CSS unless moved into a table feature stylesheet or
-  asset contribution.
+- The native mousedown suppression handshake is now generic:
+  feature handlers can return `suppressNativeSelection`, and `EditorPage` marks
+  the native event with `mnSuppressNativeSelection`. The table feature still
+  owns deciding when plain cell clicks should suppress TableUp's native
+  selection handler.
+- Table insertion execution has moved out of `EditorPage`; `TableController`
+  now calls the live TableUp module through
+  `editorSurface.getQuillModule(TableUp.moduleName)`.
+- Table cell Tab/Shift+Tab navigation now lives in `TableController` through
+  `editor-interactions`. `EditorPage` keeps only a generic leading Tab keyboard
+  binding that dispatches through the interaction service before Quill/TableUp
+  default handlers.
+- Plain table-cell click/caret placement and music-embed click placement now
+  live in `TableController` through `editor-interactions`. The table feature
+  preserves the established hybrid behavior: native caret placement for text
+  hits, deferred Quill range fallback for blank cell space, and cursor-after
+  placement for music embeds inside table cells.
+- TableUp mousedown suppression gate now lives in `TableController`. It uses
+  `editorSurface.getEditorRoot()` and
+  `editorSurface.getQuillModule(TableUp.moduleName)` to wrap the live
+  TableSelection mousedown handler, and restores the original handler on active
+  surface detach or replacement.
+- Temporary TableUp/table-selection debug instrumentation was removed after it
+  served its purpose.
+- Table overflow width scanning now uses a generic `editor-layout`
+  wide-content contribution API. `TableController` registers the TableUp table
+  selectors as the first contributor, while `EditorPage` only asks the layout
+  service for the widest contributed content. The intended edit-view layout is:
+  keep the simple continuous editor surface, show a dotted guide at the
+  available content width, let wide content render beyond that guide, keep
+  ordinary wrappable text constrained to the available width, and clip only at
+  the outer sheet edge so overflow is visible while editing. `Fit to width`
+  now uses the document-format page size and margins as the authoritative
+  content width instead of inferring from editor DOM measurements. Manual
+  browser testing on 2026-06-04 confirmed `Fit to width` visually aligns a
+  TableUp table to the margin-to-margin content width.
+- Table-specific cursor/wrapper/toolbox/focus CSS now lives in the table
+  feature stylesheet; generic editor layout CSS stays in `editor`.
+- Table-named editor view context types are removed. `EditorPage` now passes
+  generic Quill/editor view helpers such as `getModule(name)`, `getSelection`,
+  `getLine`, `getLeaf`, `getIndex`, and `setSelection`.
 
 Current read-view/paged-preview table status:
 
@@ -422,17 +445,17 @@ Current read-view/paged-preview table status:
 
 Current edit-view split-table status:
 
-- The table context menu includes attempted `Split table above` and `Split table
-  below` commands.
-- Manual browser testing shows the command is not usable: the table can appear
-  to split, but the second half is lost or the result is not two durable
-  independent TableUp tables.
-- The attempted implementation tried Parchment/TableUp splitting and
-  re-keying/cloning table ids/columns, but the real TableUp optimizer behavior
-  still does not preserve the trailing half.
-- Do not continue patching this blindly. The next step should be a real
-  Quill/TableUp integration harness that inspects actual DOM and Delta before
-  and after the command.
+- `Split table above` and `Split table below` are back in the feature-owned
+  table context menu.
+- The current implementation avoids the earlier direct Parchment/TableUp
+  wrapper split. It reads the live Quill Delta for the selected TableUp table,
+  partitions whole rows, and replaces the original table with two complete
+  TableUp table Deltas using fresh table/row/column ids.
+- The command refuses boundary splits where one side would be empty and refuses
+  row spans that cross the requested split boundary.
+- Manual edit-view UI testing confirmed the split command works in the browser.
+  The follow-up split-table hardening item has been handled outside this
+  cleanup pass.
 
 Likely seam requirements to move the remaining behavior:
 
@@ -444,9 +467,12 @@ Likely seam requirements to move the remaining behavior:
   feature can install and clean up TableUp gates/instrumentation.
 - Generic editor root/container access and point/range helpers for click focus,
   hover, and debug snapshots.
-- Optional layout contribution support for wide-content selectors.
+- Layout contribution support for wide-content selectors exists through
+  `editor-layout`. Manual browser testing on 2026-06-04 confirmed the
+  margin-based fit-to-width behavior in edit view after switching the command to
+  `document-format.getContentWidth()`.
 
-Cell-click focus investigation:
+Cell focus and keyboard navigation status:
 
 - Desired behavior: a plain click anywhere inside a table cell should focus the
   Quill cursor in that cell, without drawing the cell as selected. Explicit
@@ -462,214 +488,259 @@ Cell-click focus investigation:
 - Current implementation: editor dispatches generic capture-phase
   `mousedown-capture`; table controller treats plain left clicks inside cells as
   caret intent, clears/hides TableUp selection, and returns
-  `suppressTableSelection`. `EditorPage` marks the event so the gated TableUp
-  mousedown handler does not reselect the cell. It then runs a deferred
-  cell-focus fallback: if native Quill/browser selection is already inside the
-  clicked cell, leave it alone; if not, programmatically focus Quill and place
-  the cursor at the start of the cell while preserving scroll. Clicks on text
-  cursor targets are left to native caret placement. Clicks on music embeds in a
-  table cell place the cursor after the embed.
-- Current implication: the behavior is already a hybrid model:
+  `suppressNativeSelection`. `EditorPage` only marks the event with a generic
+  native-suppression flag so the table-owned gated TableUp mousedown handler
+  does not reselect the cell. `TableController`
+  then runs the deferred cell-focus fallback: if native Quill/browser selection
+  is already inside the clicked cell, leave it alone; if not, programmatically
+  focus Quill and place the cursor at the start of the cell while preserving
+  scroll. Clicks on text cursor targets are left to native caret placement.
+  Clicks on music embeds in a table cell place the cursor after the embed.
+- Current implication: the behavior is a table-owned hybrid model:
   native/browser caret placement for text hits, Quill range placement by
   TableUp cell blot for blank cell space, and a music-embed special case. This
-  is enough evidence to treat the desired cell-focus behavior as established.
-  The remaining cleanup is to move this hybrid operation from `EditorPage` into
-  the table feature once `editor-surface` exposes the needed Quill helpers and
-  live TableSelection access.
-- Test coverage: `EditorPageSpec` covers blank-cell fallback focus,
-  music-embed-in-cell cursor placement, text-target skip behavior, scroll
-  preservation during forced selection, and suppression handoff.
-  `TableControllerSpec` covers the table-controller side of simple cell click
-  suppression and preserving right-click selected-column context.
-
+  should remain the expected cell editing behavior.
+- Test coverage: `TableControllerSpec` covers blank-cell fallback focus,
+  music-embed-in-cell cursor placement, text-target skip behavior, simple cell
+  click suppression, and preserving right-click selected-column context.
+  `EditorPageSpec` covers scroll preservation during forced selection and the
+  editor-side suppression handoff.
+- Focus rectangle status: the table feature applies `mn-table-cell-focus` to the
+  active `.ql-table-cell-inner` and its outer `td`/`th`. This is intentionally
+  driven from Quill selection state and controller-owned focus state, not CSS
+  `:focus-within`, because Quill usually keeps DOM focus on the editor root.
+- Selection-change status: `selection-change` is broadcast even without a
+  resolved editor-interaction target. `TableController.handleEditorSelectionChange`
+  derives the active cell from `getLeaf(...)`/`getLine(...)`, applies focus when
+  the Quill selection enters a cell, and clears focus when the selection leaves
+  the table.
+- Scroll status: table-owned focus operations scroll the focused outer table
+  cell into view only when the cell is clipped by the viewport or a scroll
+  ancestor. A follow-up fixed the Tab/Shift+Tab scroll bounce by scheduling the
+  scroll after `setSelectionWithoutScroll(...)` restores scroll snapshots.
+- Keyboard status that currently works in coverage and has been manually useful:
+  Tab/Shift+Tab cell navigation, add-row-at-end on Tab from the last cell,
+  first-cell Shift+Tab swallowing, and ArrowDown from the line immediately above
+  a table into the first cell.
 Cleanup direction:
 
 - Treat this as several smaller seam repairs, not one broad move.
-- Continue removing table-specific fallback helpers from `EditorPage`, but move
-  the full current hybrid cell-focus behavior rather than only the
-  capture-phase TableUp suppression.
-- Defer moving Quill/TableUp registration until the Quill contribution seam is
-  explicit. It is a clean cleanup target, but less urgent than behavior that is
-  still mixed into `EditorPage`.
-- Add `editorSurface.getQuillModule(name)` before trying to remove
-  `EditorPage.insertTable(...)`. Once available, table insertion can become a
-  table-owned command that asks the active editor for the live TableUp instance.
-- Preserve the current cell focus model while moving ownership: native caret
-  placement for text hits, Quill range fallback by TableUp cell blot for blank
-  cell space, and the music-embed cursor-after behavior.
-- Move Tab and Shift+Tab table cell navigation into the table feature through
-  `editor-interactions`; this remains an isolated behavior slice.
-- Continue moving table context-menu context building and selected-table
-  interpretation closer to the table controller.
-- Treat split-table as an unresolved table-controller behavior, not a completed
-  context-menu command. Stabilize it against a real TableUp/Quill harness before
-  calling the table operation surface complete.
-- Continue moving row/column selection interpretation into the table feature
-  where practical.
+- Continue keeping table-specific fallback helpers out of `EditorPage`; the
+  current hybrid cell-focus behavior now belongs to `TableController`.
+- Keep Quill/TableUp registration on the editor-ready contribution seam. The
+  table feature contributes TableUp setup; the editor only applies contributed
+  Quill configuration before construction.
+- Table insertion now uses `editorSurface.getQuillModule(name)` and lives in
+  `TableController`; `EditorPage.insertTable(...)` has been removed. Keep this
+  as the model for future table commands that need the active editor's live
+  TableUp instance.
+- Preserve the current table-owned cell focus model: native caret placement for
+  text hits, Quill range fallback by TableUp cell blot for blank cell space, and
+  the music-embed cursor-after behavior.
+- Tab and Shift+Tab table cell navigation now lives in the table feature
+  through `editor-interactions`; `EditorPage` keeps only the generic leading
+  keyboard binding needed to dispatch before Quill/TableUp defaults.
+- ArrowDown from the line above a table also uses this leading-keyboard path and
+  is table-owned.
+- Keep all table-specific context-menu context building and selected-table
+  interpretation in the table feature. This is a hard ownership rule: cell,
+  row, column, table, TableUp selection, and table command semantics belong to
+  `TableController` or table-owned helpers, not the editor page.
+- Split-table is no longer tracked as active table/editor cleanup debt; the
+  follow-up hardening item has been handled separately.
+- Keep row/column selection interpretation in the table feature.
 - Keep only generic editor context helpers on `EditorPage`, such as access to
   the current Quill instance, root node, and generic blot lookup.
 - Keep generic editor DOM capture in `EditorPage` if needed; the editor page is
   still the natural owner for root/page geometry and raw editor event mounting.
-- Define the table feature's editor adapter needs before moving larger code:
-  current Quill, root node, table module, generic blot lookup, selection helpers,
-  and possibly page-coordinate helpers.
-- Decide whether `quill-table-up` registration is an editor adapter
-  responsibility or should be wrapped behind a table-owned registration module,
-  but do this separately from selection/navigation behavior cleanup.
+- Keep future table/editor integration behind the existing editor interaction,
+  editor surface, editor layout, and editor-ready contribution seams.
 
 Suggested slice order:
 
-1. Expose Quill-aware active editor surface access. The cleanup goal is not
-   Quill agnosticism; it is keeping table semantics out of `EditorPage`.
-   `editor-surface` can expose readonly or controlled Quill helpers such as
+Order these by separation gained per implementation risk/effort. Mark each
+slice complete as it lands.
+
+1. Status: complete. Generic Quill-aware `editor-surface` helpers now expose
+   controlled active-editor access for later table cleanup slices. The cleanup
+   goal is not Quill agnosticism; it is keeping table semantics out of
+   `EditorPage`. `editor-surface` exposes readonly or controlled Quill helpers
+   such as
    `getQuill()`, `getQuillModule(name)`, `getEditorRoot()`,
    `findBlot(node, bubble)`, `getSelection()`, `setSelection(...)`,
    `getIndex(blot)`, `getLine(index)`, and `getLeaf(index)` when that keeps the
-   table feature from inventing a heavier adapter.
-2. Move table insertion execution from `EditorPage.insertTable(...)` into
-   `TableController`. The table feature can call
-   `editorSurface.getQuillModule(TableUp.moduleName).insertTable(...)`, then
-   request a document dirty/update notification through the editor surface if
-   needed.
-3. Move Tab and Shift+Tab table navigation into the table feature through
-   `editor-interactions`. `EditorPage` should keep generic key dispatch and
-   Quill helpers, but the table feature should decide how table cell navigation,
-   wrapping, and add-row-at-end behavior work.
-4. Move TableSelection access and the TableUp mousedown suppression gate out of
-   `EditorPage` once the table feature can reach the live TableUp/TableSelection
-   modules and can clean up on active surface detach.
-5. Move the established cell-focus hybrid into the table feature. Define a
-   table-owned operation for "focus this cell as text editing" separately from
-   "select these cells for table commands", preserving native caret placement
-   for text hits, Quill range fallback for blank cell space, and music-embed
-   cursor-after behavior.
-6. Move or delete table debug instrumentation. After the table feature owns live
-   TableSelection access and surface lifecycle cleanup, relocate `mn.tableDebug`
-   tracing to the table feature or remove pieces that are no longer needed.
-7. Move table layout scanning into a generic wide-content contribution. Assume
-   any feature can eventually render content wider than the available page
-   width. Replace direct `.ql-table-wrapper` overflow scanning in `EditorPage`
-   with a feature contribution API where tables are the first contributor.
-8. Move table CSS intentionally. Keep generic editor layout CSS in the editor
-   feature, but move table-specific cursor/wrapper/toolbox rules and third-party
-   TableUp CSS into a table feature stylesheet or asset contribution when a
-   clean asset path exists.
-9. Add a Quill contribution seam so the table feature can contribute TableUp
-   registration, TableSelection/TableResizeLine module config, and eventually
-   third-party table CSS while the editor still applies the registrations during
-   Quill setup. This is a clean ownership target, but it can follow the behavior
-   moves above.
+   table feature from inventing a heavier adapter. Verification:
+   `npm run test:ui -- --grep EditorSurfaceService` passed with `334 SUCCESS`.
+2. Status: complete. Table insertion execution moved from
+   `EditorPage.insertTable(...)` into `TableController`. The table feature now
+   calls `editorSurface.getQuillModule(TableUp.moduleName).insertTable(...)`
+   and requests `editorSurface.update('user')`; `EditorPage.insertTable(...)`
+   and `editor-surface.insertTable(...)` were removed. Verification:
+   `npm run test:ui -- --grep TableController` passed with `334 SUCCESS`, and
+   manual UI validation confirmed table insertion still works from the app.
+3. Status: complete. Table-named editor view context helpers were replaced
+   with generic Quill/editor helpers. `EditorPage.getEditorViewContext()` no
+   longer exposes `getTableModule`, `getTableSelectionModule`,
+   `getCurrentTableCellInner`, or `selectTableCell`; it now exposes generic
+   helpers such as `getModule(name)`, `getSelection`, `getLine`, `getLeaf`,
+   `getIndex`, and `setSelection`. Verification:
+   `npm run test:ui -- --grep "EditorPage|TableController"` passed with
+   `335 SUCCESS` and covered the `EditorPageSpec` context regression plus
+   table controller/context-menu behavior.
+4. Status: complete. Tab and Shift+Tab table navigation moved into
+   `TableController` through `editor-interactions`. `EditorPage` no longer owns
+   `navigateTableCell(...)` or `appendTableRowAfterCell(...)`; it keeps a
+   generic leading Tab keyboard binding that dispatches `keydown` through
+   `editor-interactions` so table navigation can run before Quill/TableUp
+   default handlers. The leading binding marks the synthetic dispatch with
+   `mnLeadingKeyboardBinding`; the table controller ignores ordinary React Tab
+   `keydown` events so one physical Tab does not move twice. The table feature
+   now owns next/previous cell navigation, add-row-at-end, first-cell Shift+Tab
+   swallowing, and pass-through when the current selection is outside a table.
+   Verification: `npm run test:ui -- --grep "TableController|EditorPage"`
+   passed with `338 SUCCESS`.
+5. Status: complete. The TableUp mousedown suppression gate moved out of
+   `EditorPage` and into `TableController`. The table feature now reaches the
+   active editor root through `editorSurface.getEditorRoot()`, gets the live
+   TableUp/TableSelection module through
+   `editorSurface.getQuillModule(TableUp.moduleName)`, wraps TableUp's root
+   mousedown handler, suppresses it when table interaction routing marks a
+   plain cell click as caret intent, and restores the original handler when the
+   active surface detaches or changes. Remaining `EditorPage` TableSelection
+   access is limited to debug instrumentation.
+   Verification: `npm run test:ui -- --grep "TableController|EditorPage"`
+   passed with `344 SUCCESS`.
+6. Status: complete. The established cell-focus hybrid moved into
+   `TableController`. Plain left-clicks inside table cells clear/hide TableUp
+   selection, suppress TableUp's root mousedown selection, and schedule a
+   table-owned deferred focus operation. The operation preserves native caret
+   placement for text hits, uses Quill range fallback for blank cell space,
+   places the cursor after music embeds inside cells, and asks the editor
+   interaction context to preserve scroll when forcing a selection. `EditorPage`
+   now only dispatches the capture event and marks the native event for TableUp
+   suppression. Verification:
+   `npm run test:ui -- --grep "TableController|EditorPage"` passed with
+   `341 SUCCESS`.
+7. Status: complete. Temporary table debug instrumentation was removed from
+   `EditorPage` rather than moved. The `mn.tableDebug` flag, native event
+   tracing, TableSelection method/listener patching, debug snapshot helpers,
+   and dispatch debug logging are gone. Remaining table cleanup should use
+   focused tests or short-lived instrumentation instead of keeping this in the
+   editor component.
+8. Status: complete. Table layout scanning moved into a generic wide-content
+   contribution. Assume any feature can eventually render content wider than the
+   available page width. `editor-layout` owns wide-content contribution
+   registration and measurement; `TableController` registers TableUp table
+   selectors as `table.wide-content`; `EditorPage` only applies the resulting
+   generic `--mn-editor-overflow-width` value. The edit-view visual model is:
+   the dotted guide marks the available margin-to-margin content width, wide
+   content can visibly overflow past that guide, ordinary wrappable text still
+   wraps to the available width, and the outer sheet clips only the extreme
+   workspace edge. `Fit to width` uses `document-format.getContentWidth()`,
+   which derives the target from page size and left/right document margins
+   rather than DOM inference. If that document-format width is unavailable, the
+   command refuses to run instead of falling back to a guessed width.
+   Verification:
+   - `npm run test:ui -- --grep DocumentFormatService`: `348 SUCCESS`.
+   - `npm run test:ui -- --grep TableController`: `348 SUCCESS`.
+   - Manual browser testing on 2026-06-04 confirmed `Fit to width` visually
+     fits the table to the margin-to-margin document content width.
+9. Status: complete. Remaining table-specific editor CSS moved into
+   `src/mn/features/table/assets/css/table.css`. The table feature build spec
+   now copies feature-local CSS to `table/css` and still copies third-party
+   `quill-table-up` CSS to `table/vendor`. Generic editor layout CSS stays in
+   the editor feature; table-owned column-selection cursor, TableUp wrapper,
+   and TableUp toolbox rules now live with the table feature.
+10. Status: complete. Table cell focus and adjacent keyboard polishing are
+    table-owned now. Focus styling, selection-change focus derivation, focus
+    clearing, scroll-into-view-if-clipped, Tab/Shift+Tab, and ArrowDown into the
+    first cell from the preceding line have coverage.
+11. Status: complete. TableUp Quill bootstrap now uses the editor-ready
+    interaction signal. `TableController` registers for `editorReady`, implements
+    `handleEditorReady(...)`, and contributes TableUp registration plus
+    TableSelection/TableResizeLine module config through editor-owned callbacks.
+    `EditorPage` applies the contributed Quill registrations and merges
+    contributed module options immediately before constructing Quill, without
+    importing `quill-table-up`.
 
 Information needed for the slices:
 
-- Already intended/exposed: active surface lifecycle events
+- Already exposed: active surface lifecycle events
   (`surface-attached` / `surface-detached`), active selection access, editor
   interaction routing with target/point context, generic blot lookup through the
   interaction context, and editor root access through interaction dispatch.
-- Needs to be added to `editor-surface`: Quill-aware live accessors such as
+- Already exposed on `editor-surface`: Quill-aware live accessors such as
   `getQuill()`, `getQuillModule(name)`, `getEditorRoot()`, `findBlot(...)`,
-  `getIndex(...)`, `getLine(...)`, `getLeaf(...)`, `setSelection(...)`, and
-  possibly `focus(...)` / `update(source)`.
+  `getIndex(...)`, `getLine(...)`, `getLeaf(...)`, `setSelection(...)`,
+  `focus(...)`, `update(source)`, and related active-editor helpers.
 - Cell-click behavior and current mechanism are already decided: clicking in a
   table cell should enter that cell for text editing, not select the cell as a
   table-selection region. The table-owned focus operation should preserve the
   existing hybrid of native caret placement for text hits, Quill range placement
   by TableUp cell blot for blank cell space, and music-embed cursor-after
-  placement. The open work is exposing enough editor-surface helpers to move
-  that behavior out of `EditorPage`.
-- Layout direction is decided: use a generic editor wide-content contribution,
-  because any feature can eventually render content wider than the available
-  page width. Tables should be the first contributor, not a one-off hook.
-- Needs an asset decision before implementation: where third-party TableUp CSS
-  and table-owned cursor/toolbox styles should live in the build asset flow.
+  placement. This behavior has moved out of `EditorPage`.
+- Layout seam direction is implemented: use the generic `editor-layout`
+  wide-content contribution service because any feature can eventually render
+  content wider than the available page width. Tables are the first
+  contributor, not a one-off editor hook. Manual testing confirms `Fit to
+  width` now makes a TableUp table visually match the margin-to-margin document
+  content width.
+- Asset decision resolved for third-party CSS: `quill-table-up` CSS is copied
+  from `node_modules` by the table feature build spec. Table-owned cursor,
+  wrapper, toolbox, and focus rules now live in the table feature stylesheet.
 
 Verification:
 
-- Table insertion still works.
+- Table insertion still works; manual UI validation confirmed insertion from
+  the app after moving execution into `TableController`.
 - Row and column selection still works.
-- Tab and Shift+Tab table navigation still works.
-- Row/column/table context menu commands still work; split-table remains open
-  and should not be counted as a completed table command yet.
+- Tab and Shift+Tab table navigation still works in automated coverage after
+  moving the behavior into `TableController`; manual UI spot-check is still
+  useful because Quill keyboard timing is browser-sensitive.
+- ArrowDown from the line above a table into the first cell has automated
+  coverage.
+- Row/column/table context menu commands still work; split-table is available
+  again through Delta-level reconstruction, and its follow-up hardening item has
+  been handled separately.
 - Table controller/component tests pass.
 
 ### 3. Paragraph Formatting Cascade Duplication
 
-Status: open
+Status: moved to [Formatting](../mvp/formatting.md)
 
 Priority: medium-high
 
-Problem:
+Note:
 
-- `paragraph-format/controller.js` resolves style defaults, style inheritance,
-  and normalized paragraph formatting.
-- `EditorPage.jsx` has parallel helper logic for paragraph format extraction,
-  direct-format overrides, style resolution, and generated style rules.
-
-Why this matters:
-
-- Paragraph direct formatting is supposed to override only changed properties.
-- Styles should continue to affect paragraphs that inherit unchanged
-  properties.
-- Duplicated cascade logic risks drift between toolbar/dialog state and editor
-  rendering.
-
-Cleanup direction:
-
-- Extract paragraph format cascade helpers into a shared helper module or
-  service-owned module.
-- Reuse the same helper from `paragraph-format` and the editor adapter.
-- Keep Quill-specific format application in `EditorPage`, but move pure
-  normalization and cascade rules out of the component.
-
-Verification:
-
-- Paragraph format tests still pass.
-- Editor toolbar state still reflects current paragraph formatting.
-- Document style changes still affect inherited paragraph properties.
+- This is part of the larger MVP formatting model rather than a standalone
+  temporary cleanup item. The duplication note and likely helper extraction now
+  live in [Formatting](../mvp/formatting.md).
 
 ### 4. Editor Toolbar Section Constants As Feature API
 
-Status: open
+Status: escalated to [Editor Toolbar](../mvp/editor-toolbar.md)
 
 Priority: medium
 
-Problem:
+Note:
 
-- `paragraph-format` and `music-object` import `EDITOR_TOOLBAR_SECTIONS` from
-  `src/mn/features/editor/services/editor-toolbar.js`.
-- This makes an editor feature implementation file act as a public contract for
-  other features.
-
-Why this matters:
-
-- Feature internals are private unless deliberately promoted.
-- Cross-feature API should be intentional and documented.
-
-Cleanup direction:
-
-- Promote toolbar section ids into a deliberate public contract.
-- Possible homes:
-  - an editor-toolbar contract module
-  - a shared constants module
-  - methods on the `editor-toolbar` service
-- Update feature imports to use the promoted contract.
-
-Verification:
-
-- Toolbar item ordering remains unchanged.
-- Toolbar service tests still pass.
-- Paragraph and music-object toolbar items still register.
+- This is not just a constants cleanup. It raises a larger design tension:
+  features should own their toolbar contributions independently, but the app
+  still needs consistent toolbar grouping and ordering. The open question is now
+  tracked in [Editor Toolbar](../mvp/editor-toolbar.md).
 
 ### 5. Imported CSS In Editor Path
 
-Status: open
+Status: completed
 
 Priority: medium
 
 Problem:
 
-- `EditorPage.jsx` imports `quill/dist/quill.snow.css`.
-- `EditorPage.jsx` imports `quill-table-up/index.css`.
+- Earlier code imported third-party CSS directly from JS components:
+  `EditorPage.jsx` imported `quill/dist/quill.snow.css` and
+  `quill-table-up/index.css`; `MusicPreview.jsx` imported
+  `react-piano/dist/styles.css`.
 - Architecture guidance treats imported CSS as legacy and prefers asset-pipeline
   CSS for shipped styling.
 
@@ -680,17 +751,27 @@ Why this matters:
 
 Cleanup direction:
 
-- Decide the correct asset-pipeline location for third-party editor/table CSS.
-- Move or reference the CSS through the build asset flow rather than component
-  imports where practical.
+- Use feature `build.json` CSS entries with `cwd` pointing into
+  `node_modules` for third-party package styles.
 - Keep editor-owned overrides in the editor feature stylesheet and table-owned
-  styling in the table feature stylesheet if one is added.
+  overrides in the table feature stylesheet.
 
 Verification:
 
-- Quill theme styling still appears in the app and tests.
-- Table plugin styling still appears.
-- Watcher/build behavior is unchanged or documented if a restart is needed.
+- `src/mn/features/editor/build.json` copies
+  `node_modules/quill/dist/quill.snow.css` to
+  `dist/mn/editor/vendor/quill.snow.css`.
+- `src/mn/features/music-object/build.json` copies
+  `node_modules/react-piano/dist/styles.css` to
+  `dist/mn/music-object/vendor/styles.css`.
+- `src/mn/features/table/build.json` copies
+  `node_modules/quill-table-up/dist/index.css` to
+  `dist/mn/table/vendor/index.css`.
+- `npm run build` passed and generated stylesheet links for all three vendor
+  stylesheets.
+- `rg 'import .+\.css' src\mn` has no source hits.
+- Build-spec changes are not reliably picked up by the watcher, so manual app
+  rebuild/restart is still required after changing CSS build entries.
 
 ### 6. Render-Time Registry Fallbacks In React Components
 
@@ -702,25 +783,194 @@ Problem:
 
 - Some React components still subscribe to registry services as render-time
   fallbacks.
-- Example: `AppShell` can subscribe to `document-model` inside `render()`.
+- Some components also resolve services through helper methods used by
+  lifecycle/event/render paths.
 
 Why this matters:
 
-- Presentation should usually receive services and data through props from the
-  owning view.
-- Non-service classes that need registry services should subscribe at a
-  runtime-ready point such as `componentDidMount`, not during render.
+- Views should be stupid wherever practical. Presentation components should
+  usually receive data and callbacks through props from the owning view or
+  controller rather than talking to models or broad app services directly.
+- Sometimes the only available registry is the React context registry. That is
+  acceptable for component boundaries that truly need it, because context is
+  only available through React lifecycle/render/event paths.
+- The localization service and active locale are direct context properties.
+  Components should read `context.localize` and `context.locale`, not resolve
+  localization through `context.registry.subscribe('localize')`.
+- Locale changes should be listened for at the provider/top level. Components
+  that use localized text should rerender from context locale changes rather
+  than subscribing to `changeLocale` themselves.
+- If a component genuinely needs a service from context, subscribe once at a
+  lifecycle point such as `componentWillMount`/`componentDidMount` and keep the
+  reference. That same lifecycle point is where service event subscriptions
+  belong. Components that need services before mount should receive them as
+  props.
+- The more important question is not "did the component use the registry?" but
+  "why does this component need access to that service at all?"
+
+Component checklist:
+
+- [x] `src/mn/features/app/components/AppShell.jsx`
+  - Current pattern: `render()` can subscribe to `document-model` and pass it
+    to `DocumentTabs`.
+  - Decision: this is wrong separation. The view should not talk to a model at
+    all. It should receive tab state/data/actions as props, or at minimum the
+    needed model should be supplied by the owning app view/controller rather than
+    looked up by `AppShell`.
+  - Done when: `AppShell` no longer subscribes to `document-model` and receives
+    tab presentation data/actions through props or a narrower view-owned seam.
+- [x] `src/mn/features/app/components/DocumentTabs.jsx`
+  - Current pattern: helper methods can subscribe to `document-model` and
+    previously fell back through the registry for `localize`.
+  - Decision: document tab UI should receive the data/actions it needs from the
+    owning view/controller. Localization can come from context, but should be
+    resolved once rather than repeatedly through registry fallback helpers.
+  - Done when: `DocumentTabs` no longer subscribes to `document-model`; it
+    receives tab state and tab command callbacks through props. Localization
+    uses direct `context.localize`.
+- [x] `src/mn/components/Markdown.jsx`
+	- Current pattern: `getLocalize()` uses direct `context.localize` and is used
+	  by mount/update/load/unmount paths.
+	- Decision: needing localization is valid, and it should use the direct
+	  context properties. Avoid repeated registry lookups and leaf-level locale
+	  event subscriptions.
+	- Done when: `Markdown` resolves `localize` once during mount, reuses that
+	  reference for markdown loading, refreshes from `context.locale` changes,
+	  and never falls back through the registry or subscribes to locale events.
+	- Completed: `Markdown` caches `context.localize` in `componentWillMount`,
+	  tracks `context.locale`, and reloads markdown from React context updates
+	  rather than listening to localization service events directly.
+- [x] `src/mn/components/LocaleString.jsx` and
+  `src/mn/components/LocalizedTooltip.jsx`
+  - Current pattern: render calls translation helpers that can trigger
+    `setupLocaleService()`, which uses direct `context.localize`.
+  - Decision: these are intentionally context-aware localization primitives, so
+    needing `localize` is valid. They should read `context.localize` and rerender
+    from `context.locale`; they should not subscribe to locale events
+    themselves.
+  - Done when: localization service resolution happens before render-called
+    translation helpers if needed, render output depends on context locale
+    updates, and no registry fallback or locale event subscription exists.
+  - Completed: both components now resolve `context.localize` directly during
+    translation and do not subscribe to `changeLocale` or `updated`; phrase
+    content `updated` is intentionally treated as an unnecessary edge case.
+- [x] `src/mn/features/music-object/components/MusicEmbedFormatDialog.jsx`
+  - Current pattern: the dialog subscribes to `document-model` to read document
+    styles for caption style options/inheritance.
+  - Decision: poor separation of concerns. The dialog should receive available
+    styles, resolved formatting data, or a formatting helper from the owning
+    music-object/session/controller layer. This also overlaps with the larger
+    formatting topic.
+  - Done when: the dialog no longer subscribes to `document-model`; formatting
+    inputs come from props/session/controller-owned formatting helpers.
+  - Completed: the music-object controller/session exposes document styles,
+    `MusicEmbedView` passes them as `documentStyles`, and
+    `MusicEmbedFormatDialog` resolves caption style options/inheritance from
+    props without registry/model access.
+- [x] `src/mn/features/music-object/components/MusicEmbedView.jsx`
+  - Current pattern: the embed view subscribes to `music-object-controller` to
+    attach a controller-owned embed session; it also subscribes to
+    `action-registry` while rendering action icons.
+  - Decision: the detached Quill React-root path may require a narrow context
+    bridge for the controller-owned session, but the current flow is backwards.
+    The session/controller should supply the data/actions/action presentation
+    identity needed by the view, and action registry access should not be
+    resolved from the render path for each action.
+  - Done when: the embed session/controller owns the service flow, and
+    `MusicEmbedView` no longer resolves `action-registry` from render. Any
+    remaining controller lookup is a narrow, documented detached-root bridge.
+  - Completed: `MusicObjectController` resolves registered action components for
+    embed actions, `MusicObjectEmbedSession` supplies those components on the
+    action data, and `MusicEmbedView` only applies presentation props when
+    rendering the supplied component. The remaining
+    `music-object-controller` lookup is the narrow detached Quill React-root
+    bridge for attaching the controller-owned embed session.
 
 Cleanup direction:
 
-- Prefer passing required services from the owning view.
-- If a fallback is still needed, subscribe once during mount and store the
-  result rather than subscribing in `render()`.
+- Prefer passing required data and callbacks from the owning view/controller.
+- If a component truly needs a service, pass the service as a prop when it is
+  needed before mount.
+- If context lookup is unavoidable, subscribe once during
+  `componentWillMount`/`componentDidMount` and store the result rather than
+  subscribing in `render()` or render-called helpers.
+- For each case, first ask whether the component should know the service exists
+  at all. Moving a registry lookup earlier in lifecycle is only a mechanical
+  fix; it does not solve poor ownership.
 
 Verification:
 
 - App shell and document tabs still render.
 - App shell tests still pass.
+- Localization updates still rerender localized text and tooltips through direct
+  `context.localize`.
+- Music embeds still attach controller-owned sessions and render action icons.
+
+### 7. EditorPage Responsibility Split
+
+Status: open
+
+Priority: high
+
+Problem:
+
+- `src/mn/features/editor/components/EditorPage.jsx` is currently much more
+  than a view component. It owns Quill mounting, document-model synchronization,
+  editor-surface adapter registration, toolbar state coordination, paragraph
+  formatting reads/writes, document-format/layout refresh, view-mode preview
+  HTML, editor interactions, feature-owned editor views, object-type context,
+  clipboard setup, and several DOM observers/listeners.
+- The component resolves many services directly: `editor-toolbar`,
+  `editor-surface`, `document-model`, `document-format`, `view-mode`,
+  `editor-interactions`, `editor-layout`, `editor-views`, and
+  `object-type-registry`.
+- The aspiration is still stupid views. Keep Quill-specific DOM/rendering
+  adaptation where necessary, but continue pushing orchestration and
+  service/model coordination out of the React component.
+
+Current immediate issue:
+
+- Render-time fallbacks for `editor-toolbar` and `action-registry` are wrong when
+  these can be resolved before render or supplied as props.
+
+Breakdown for further design:
+
+- Quill adapter responsibilities:
+  - likely belong near `EditorPage` or a dedicated editor-surface adapter
+  - examples: mounting Quill, exposing live Quill helpers, preserving scroll
+    during selection changes, wiring native editor root listeners
+- Controller/model responsibilities:
+  - should move out of `EditorPage`
+  - examples: reacting to active tab/document-model changes, deciding when to
+    write editor content back to the model, coordinating dirty/update behavior
+- Toolbar responsibilities:
+  - should not be a view-side service lookup
+  - controller/editor adapter should connect toolbar selections to editor
+    operations, and the component should receive toolbar dependencies through
+    props or a narrower view seam
+- Formatting responsibilities:
+  - pure paragraph-format cascade belongs in the formatting topic/helper work
+  - Quill line-format application can remain adapter-owned until a cleaner seam
+    exists
+- View-mode responsibilities:
+  - read/split preview orchestration should belong to view-mode/editor
+    controller seams, not generic presentation rendering
+  - `EditorPage` may still provide the live editor root or HTML snapshot as an
+    adapter output
+- Feature extension responsibilities:
+  - `editor-interactions`, `editor-layout`, and `editor-views` are useful seams,
+    but `EditorPage` should ideally mount/dispatch through narrow adapter APIs
+    rather than own broad feature orchestration
+- Object-type/embed responsibilities:
+  - object type context and clipboard matcher setup need a clearer boundary
+    between object registry/controller behavior and Quill adapter mechanics
+
+Done when:
+
+- `EditorPage` has no render-time registry fallbacks.
+- Any remaining service access is explicitly justified as Quill adapter
+  behavior or moved behind a controller/view-owned seam.
+- The next extraction slices are documented before large code movement begins.
 
 ## Tracking Notes
 

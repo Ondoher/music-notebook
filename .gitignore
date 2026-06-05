@@ -22,6 +22,9 @@ lib-cov
 coverage
 *.lcov
 
+# Generated Polylith/Karma UI test bundle output
+tests/
+
 # nyc test coverage
 .nyc_output
 

@@ -51,6 +51,20 @@ describe('LocaleString', function() {
 		expect(result.container.textContent).toBe('Hello world');
 	});
 
+	it('does not subscribe to localization service events', function() {
+		const localize = makeLocalizeMock({
+			listen: jasmine.createSpy('listen'),
+		});
+
+		harness = createTestHarness()
+			.withService('localize', localize)
+			.withContext({ localize });
+
+		harness.render(LocaleString, { phrase: 'greeting' });
+
+		expect(localize.listen).not.toHaveBeenCalled();
+	});
+
 	it('uses the locale-specific translation path when locale is provided', function() {
 		const localize = makeLocalizeMock();
 
@@ -112,7 +126,6 @@ describe('LocaleString', function() {
 
 	it('reports when no localization service is available', function() {
 		const component = new LocaleString({ phrase: 'missing_phrase' });
-		component.setupLocaleService = () => {};
 		spyOn(console, 'error');
 
 		expect(component.getTranslation()).toBe('');

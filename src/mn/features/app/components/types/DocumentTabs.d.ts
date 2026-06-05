@@ -1,21 +1,27 @@
 /** Props for the document tab strip. */
 type DocumentTabsProps = {
-	/** Document-model service that owns tab metadata and active tab state. */
-	documentModel?: DocumentModelService | null;
+	/** Active tab id. */
+	activeTabId?: string;
+	/** Called when the user requests a tab after the active tab. */
+	onAddTab?: (afterTabId: string) => void;
+	/** Called when the user requests a tab move. */
+	onMoveTab?: (tabId: string, targetIndex: number) => void;
+	/** Called when the user commits a tab rename. */
+	onRenameTab?: (tabId: string, title: string) => void;
+	/** Called when the user selects a tab. */
+	onSelectTab?: (tabId: string) => void;
+	/** Sorted document tabs to render. */
+	tabs?: NotebookTab[];
 };
 
 /** Internal document tab strip state. */
 type DocumentTabsState = {
-	/** Active tab id. */
-	activeTabId: string;
 	/** Tab currently being renamed. */
 	editingTabId: string;
 	/** Draft tab title for inline rename. */
 	editingTitle: string;
 	/** Absolute input position over the tab strip. */
 	editorStyle: React.CSSProperties | null;
-	/** Sorted document tabs. */
-	tabs: NotebookTab[];
 };
 
 /** Props for one sortable tab helper. */
@@ -46,6 +52,8 @@ type SortableDocumentTabsRegionProps = {
 	getTabLabel: (tab: NotebookTab, index: number) => string;
 	/** Handles dnd-kit drag completion. */
 	onDragEnd: (event: unknown) => void;
+	/** Handles inline tab rename start. */
+	onEdit: (tab: NotebookTab, tabElement: HTMLElement) => void;
 	/** Handles MUI tab selection. */
 	onSelectTab: (event: React.SyntheticEvent, tabIndex: number) => void;
 	/** Sorted document tabs. */

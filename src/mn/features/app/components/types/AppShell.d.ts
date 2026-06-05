@@ -14,6 +14,8 @@ type AppShellPage = {
 type AppShellStateSnapshot = {
 	/** Active page identifier. */
 	activePageId?: string;
+	/** Document tab strip state. */
+	documentTabs?: DocumentTabsViewState;
 	/** Component currently mounted for the active page. */
 	pageComponent?: React.ReactElement | null;
 	/** Pages available to the shell. */
@@ -38,6 +40,14 @@ type PageMountedEvent = {
 	page: AppShellPage;
 };
 
+/** Document tab state supplied by the app controller. */
+type DocumentTabsViewState = {
+	/** Active tab id. */
+	activeTabId: string;
+	/** Sorted document tabs. */
+	tabs: NotebookTab[];
+};
+
 /** Props for the application shell. */
 type AppShellProps = {
 	/** App-level account dialog component rendered under the normal app root. */
@@ -48,8 +58,8 @@ type AppShellProps = {
 	appTitle?: string;
 	/** App-view service that can drive shell state. */
 	appView?: AppViewService;
-	/** Document-model service that owns notebook tabs. */
-	documentModel?: DocumentModelService | null;
+	/** Document tab strip state. */
+	documentTabs?: DocumentTabsViewState;
 	/** Feature-owned components rendered under the normal app root. */
 	featureComponents?: React.ReactNode;
 	/** Main-menu service used to render the app command surface. */
@@ -58,12 +68,22 @@ type AppShellProps = {
 	pageComponent?: React.ReactElement | null;
 	/** Initial or controlled page list. */
 	pages?: AppShellPage[];
+	/** Called when the user requests a tab after the active tab. */
+	onAddDocumentTab?: (afterTabId: string) => void;
+	/** Called when the user requests a tab move. */
+	onMoveDocumentTab?: (tabId: string, targetIndex: number) => void;
+	/** Called when the user commits a tab rename. */
+	onRenameDocumentTab?: (tabId: string, title: string) => void;
+	/** Called when the user selects a tab. */
+	onSelectDocumentTab?: (tabId: string) => void;
 };
 
 /** Internal app-shell state. */
 type AppShellState = {
 	/** Active page identifier. */
 	activePageId: string;
+	/** Document tab strip state. */
+	documentTabs: DocumentTabsViewState;
 	/** Component rendered for the active page. */
 	pageComponent: React.ReactElement | null;
 	/** Pages available to the shell. */

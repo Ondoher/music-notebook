@@ -20,7 +20,7 @@ import './models/_tests/AccountModelSpec.js';
 import './models/_tests/MarkdownModelSpec.js';
 import './services/_tests/CssVarsSpec.js';
 import './services/_tests/DocumentFormatServiceSpec.js';
-import './services/_tests/IconRegistrySpec.js';
+import './services/_tests/ActionRegistrySpec.js';
 import './services/_tests/IoServiceSpec.js';
 import './services/_tests/ObjectTypeRegistrySpec.js';
 import './shared/_tests/ChordBuilderSpec.js';

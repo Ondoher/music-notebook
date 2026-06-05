@@ -14,14 +14,18 @@ type EditorViewContext = {
 	editorRoot?: HTMLElement | null;
 	/** Resolves a Quill blot from a DOM node. */
 	findBlot?: (node: Node, bubble?: boolean) => unknown;
-	/** Gets the current table cell inner, when the selection is in a table. */
-	getCurrentTableCellInner?: () => HTMLElement | null;
-	/** Gets the active table module from the editor. */
-	getTableModule?: () => unknown;
-	/** Gets the active TableUp selection module from the editor. */
-	getTableSelectionModule?: () => unknown;
-	/** Selects a table cell through editor-owned selection plumbing. */
-	selectTableCell?: (cell: HTMLElement) => boolean;
+	/** Gets the document index for an editor blot. */
+	getIndex?: (blot: unknown) => number | null;
+	/** Gets the editor leaf at a document index. */
+	getLeaf?: (index: number) => unknown;
+	/** Gets the editor line at a document index. */
+	getLine?: (index: number) => unknown;
+	/** Gets a live editor module by module name. */
+	getModule?: (name: string) => unknown | null;
+	/** Gets the active editor selection. */
+	getSelection?: (focus?: boolean) => unknown | null;
+	/** Sets the active editor selection. */
+	setSelection?: (...args: unknown[]) => unknown;
 	/** Additional editor-owned context values. */
 	[key: string]: unknown;
 };

@@ -104,6 +104,16 @@ type NotebookDocumentSnapshot = {
 	objects: NotebookDocumentObject[];
 };
 
+/** Summary record for a persisted notebook document. */
+type PersistedNotebookDocumentListItem = {
+	id: string;
+	name: string;
+	size?: number;
+	createdAt?: string | number | null;
+	modifiedAt?: string | number | null;
+	lockedAt?: string | number | null;
+};
+
 /** Document-model registry service. */
 type DocumentModelService = {
 	/** Gets the current document id. */
@@ -162,6 +172,16 @@ type DocumentModelService = {
 	updateObject: (objectId: string, patch: Partial<NotebookDocumentObject>) => NotebookDocumentObject | null;
 	/** Removes a generic document object. */
 	removeObject: (objectId: string) => boolean;
+	/** Loads the authenticated user's persisted document list. */
+	loadDocumentList: () => Promise<PersistedNotebookDocumentListItem[]>;
+	/** Loads one persisted server document into the local document model. */
+	loadServerDocument: (documentId: string) => Promise<IoResult>;
+	/** Saves the current local document as a new persisted server document. */
+	saveNewDocument: (name: string, options?: {allowNameConflict?: boolean}) => Promise<IoResult>;
+	/** Saves the current local document to its existing persisted server document. */
+	saveExistingDocument: (options?: {id?: string | null, name?: string}) => Promise<IoResult>;
+	/** Renames the current persisted server document without saving local content changes. */
+	renameServerDocument: (name: string, options?: {allowNameConflict?: boolean, id?: string | null}) => Promise<IoResult>;
 	/** Serializes the current notebook document. */
 	toJSON: () => NotebookDocumentSnapshot;
 	/** Loads a notebook document snapshot. */

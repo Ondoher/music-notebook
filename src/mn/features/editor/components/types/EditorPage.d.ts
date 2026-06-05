@@ -26,8 +26,10 @@ type EditorPageProps = {
 	editorToolbar?: EditorToolbarService | null;
 	/** Editor surface service used to expose editor operations. */
 	editorSurface?: EditorSurfaceService | null;
-	/** Icon registry used to resolve toolbar item icons. */
-	iconRegistry?: IconRegistryService | null;
+	/** Editor layout service used to resolve feature-owned layout contributions. */
+	editorLayout?: EditorLayoutService | null;
+	/** Action registry used to resolve toolbar item presentation components. */
+	actionRegistry?: ActionRegistryService | null;
 	/** Document model used to load active tab content and update embedded object state. */
 	documentModel?: DocumentModelService | null;
 	/** Object type registry used to map document objects to editor embeds. */

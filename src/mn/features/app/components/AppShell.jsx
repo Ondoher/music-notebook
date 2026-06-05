@@ -1,6 +1,5 @@
 import React from 'react';
 import LocaleString from '../../../components/LocaleString.jsx';
-import MusicNotebookContext from '../../../common/MusicNotebookContext.js';
 import DocumentTabs from './DocumentTabs.jsx';
 import MainMenu from './MainMenu.jsx';
 
@@ -10,8 +9,6 @@ import MainMenu from './MainMenu.jsx';
  * @extends {React.Component<AppShellProps, AppShellState>}
  */
 export default class AppShell extends React.Component {
-	static contextType = MusicNotebookContext;
-
 	/**
 	 * Initializes app shell state from props.
 	 *
@@ -22,6 +19,7 @@ export default class AppShell extends React.Component {
 
 		this.state = {
 			activePageId: props.activePageId || '',
+			documentTabs: props.documentTabs || { activeTabId: '', tabs: [] },
 			pageComponent: props.pageComponent || null,
 			pages: props.pages || [],
 		};
@@ -45,7 +43,19 @@ export default class AppShell extends React.Component {
 			'page-mounted',
 			this.onPageMounted.bind(this),
 		);
+		this.documentTabsUpdatedListener = this.props.appView.listen(
+			'document-tabs-updated',
+			this.onDocumentTabsUpdated.bind(this),
+		);
 		this.syncFromView();
+	}
+
+	componentDidUpdate(prevProps) {
+		if (prevProps.documentTabs !== this.props.documentTabs) {
+			this.setState({
+				documentTabs: this.props.documentTabs || { activeTabId: '', tabs: [] },
+			});
+		}
 	}
 
 	/**
@@ -60,6 +70,10 @@ export default class AppShell extends React.Component {
 
 		if (this.props.appView && this.pageMountedListener) {
 			this.props.appView.unlisten('page-mounted', this.pageMountedListener);
+		}
+
+		if (this.props.appView && this.documentTabsUpdatedListener) {
+			this.props.appView.unlisten('document-tabs-updated', this.documentTabsUpdatedListener);
 		}
 	}
 
@@ -86,6 +100,12 @@ export default class AppShell extends React.Component {
 		});
 	}
 
+	onDocumentTabsUpdated(documentTabs) {
+		this.setState({
+			documentTabs: documentTabs || { activeTabId: '', tabs: [] },
+		});
+	}
+
 	/**
 	 * Synchronizes shell state from the app-view snapshot.
 	 *
@@ -100,6 +120,7 @@ export default class AppShell extends React.Component {
 
 		this.setState({
 			activePageId: shellState.activePageId || '',
+			documentTabs: shellState.documentTabs || { activeTabId: '', tabs: [] },
 			pageComponent: shellState.pageComponent || null,
 			pages: shellState.pages || [],
 		});
@@ -131,10 +152,6 @@ export default class AppShell extends React.Component {
 	 * @returns {React.ReactElement}
 	 */
 	render() {
-		const documentModel = this.props.documentModel
-			|| this.context?.registry?.subscribe?.('document-model')
-			|| null;
-
 		return (
 			<div className="mn-shell">
 				<header className="mn-shell-topbar">
@@ -149,7 +166,14 @@ export default class AppShell extends React.Component {
 				<main className="mn-shell-editor" aria-label={this.props.appTitle || 'Music Notebook'}>
 					{this.renderPageRegion()}
 				</main>
-				<DocumentTabs documentModel={documentModel} />
+				<DocumentTabs
+					activeTabId={this.state.documentTabs.activeTabId}
+					onAddTab={this.props.onAddDocumentTab}
+					onMoveTab={this.props.onMoveDocumentTab}
+					onRenameTab={this.props.onRenameDocumentTab}
+					onSelectTab={this.props.onSelectDocumentTab}
+					tabs={this.state.documentTabs.tabs}
+				/>
 				{this.props.featureComponents || null}
 			</div>
 		);

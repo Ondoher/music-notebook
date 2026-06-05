@@ -26,7 +26,7 @@ export default class ParagraphFormatController extends Service {
 		this.mainMenu = this.registry.subscribe('main-menu');
 		this.editorToolbar = this.registry.subscribe('editor-toolbar');
 		this.editorSurface = this.registry.subscribe('editor-surface');
-		this.iconRegistry = this.registry.subscribe('icon-registry');
+		this.actionRegistry = this.registry.subscribe('action-registry');
 		this.documentModel = this.registry.subscribe('document-model');
 		this.formatMenuItemsRegistered = false;
 		this.insertMenuItemsRegistered = false;
@@ -51,16 +51,16 @@ export default class ParagraphFormatController extends Service {
 			this.onDocumentChanged.bind(this),
 		);
 
-		this.registerToolbarIcons();
+		this.registerToolbarActions();
 		this.registerToolbarItems();
 		this.registerMenuItems();
 	}
 
-	registerToolbarIcons() {
-		this.iconRegistry.registerIcon('paragraph.align.left', FormatAlignLeftIcon, 'default', 'paragraph_format.alignment.left');
-		this.iconRegistry.registerIcon('paragraph.align.center', FormatAlignCenterIcon, 'default', 'paragraph_format.alignment.center');
-		this.iconRegistry.registerIcon('paragraph.align.right', FormatAlignRightIcon, 'default', 'paragraph_format.alignment.right');
-		this.iconRegistry.registerIcon('paragraph.align.justify', FormatAlignJustifyIcon, 'default', 'paragraph_format.alignment.justify');
+	registerToolbarActions() {
+		this.actionRegistry.registerAction('paragraph.align.left', FormatAlignLeftIcon, 'default', 'paragraph_format.alignment.left');
+		this.actionRegistry.registerAction('paragraph.align.center', FormatAlignCenterIcon, 'default', 'paragraph_format.alignment.center');
+		this.actionRegistry.registerAction('paragraph.align.right', FormatAlignRightIcon, 'default', 'paragraph_format.alignment.right');
+		this.actionRegistry.registerAction('paragraph.align.justify', FormatAlignJustifyIcon, 'default', 'paragraph_format.alignment.justify');
 	}
 
 	registerToolbarItems() {

@@ -1,8 +1,6 @@
 import React from 'react';
 import { act } from 'react';
-import { Registry } from '@polylith/core';
 import { createTestHarness } from '../../../../testing/TestHarness.js';
-import DocumentModelService from '../../../../models/document-model.js';
 import DocumentTabs from '../DocumentTabs.jsx';
 
 function makeLocalizeMock() {
@@ -36,25 +34,26 @@ describe('DocumentTabs', function() {
 		harness = null;
 	});
 
-	function createModel() {
-		const registry = new Registry();
-		const documentModel = new DocumentModelService(registry);
-
-		documentModel.start();
-		documentModel.addTab({ title: 'Bridge' });
-		documentModel.addTab({ title: 'Chorus' });
-		return documentModel;
+	function createTabs() {
+		return [
+			{ id: 'intro', order: 0, title: '' },
+			{ id: 'bridge', order: 1, title: 'Bridge' },
+			{ id: 'chorus', order: 2, title: 'Chorus' },
+		];
 	}
 
-	it('renders document tabs from the document model', function() {
+	it('renders document tabs from props', function() {
 		const localize = makeLocalizeMock();
-		const documentModel = createModel();
+		const tabs = createTabs();
 
 		harness = createTestHarness()
 			.withService('localize', localize)
 			.withContext({ localize });
 
-		const result = harness.render(DocumentTabs, { documentModel });
+		const result = harness.render(DocumentTabs, {
+			activeTabId: 'intro',
+			tabs,
+		});
 
 		expect(result.container.querySelector('.mn-document-tabs').getAttribute('aria-label')).toBe('Document tabs');
 		expect(result.container.textContent).toContain('Tab 1');
@@ -64,68 +63,72 @@ describe('DocumentTabs', function() {
 
 	it('adds a tab after the active tab and moves tabs with action buttons', function() {
 		const localize = makeLocalizeMock();
-		const documentModel = createModel();
+		const calls = [];
 
 		harness = createTestHarness()
 			.withService('localize', localize)
 			.withContext({ localize });
 
-		const result = harness.render(DocumentTabs, { documentModel });
+		const result = harness.render(DocumentTabs, {
+			activeTabId: 'chorus',
+			onAddTab: (afterTabId) => calls.push(['add', afterTabId]),
+			onMoveTab: (tabId, targetIndex) => calls.push(['move', tabId, targetIndex]),
+			tabs: createTabs(),
+		});
 
 		act(() => {
 			result.container.querySelector('[aria-label="Add tab"]').click();
 		});
 
-		expect(documentModel.getTabs().map((tab) => tab.title)).toEqual([
-			'',
-			'Bridge',
-			'Chorus',
-			'',
-		]);
+		expect(calls).toEqual([['add', 'chorus']]);
 
 		act(() => {
 			result.container.querySelector('[aria-label="Move tab left"]').click();
 		});
 
-		expect(documentModel.getTabs().map((tab) => tab.title)).toEqual([
-			'',
-			'Bridge',
-			'',
-			'Chorus',
+		expect(calls).toEqual([
+			['add', 'chorus'],
+			['move', 'chorus', 1],
 		]);
 	});
 
 	it('selects a tab when it is clicked', function() {
 		const localize = makeLocalizeMock();
-		const documentModel = createModel();
+		const selected = [];
 
 		harness = createTestHarness()
 			.withService('localize', localize)
 			.withContext({ localize });
 
-		const result = harness.render(DocumentTabs, { documentModel });
+		const result = harness.render(DocumentTabs, {
+			activeTabId: 'intro',
+			onSelectTab: (tabId) => selected.push(tabId),
+			tabs: createTabs(),
+		});
 		const bridgeTab = Array.from(result.container.querySelectorAll('.mn-document-tabs__tab'))
 			.find((tab) => tab.textContent === 'Bridge');
-		const bridgeId = documentModel.getTabs()
-			.find((tab) => tab.title === 'Bridge')
-			.id;
 
 		act(() => {
 			bridgeTab.click();
 		});
 
-		expect(documentModel.getActiveTabId()).toBe(bridgeId);
+		expect(selected).toEqual(['bridge']);
 	});
 
 	it('renames a tab with an inline editor', function() {
 		const localize = makeLocalizeMock();
-		const documentModel = createModel();
+		const renamed = [];
 
 		harness = createTestHarness()
 			.withService('localize', localize)
 			.withContext({ localize });
 
-		const result = harness.render(DocumentTabs, { documentModel });
+		const result = harness.render(DocumentTabs, {
+			activeTabId: 'intro',
+			onRenameTab: (tabId, title) => renamed.push([tabId, title]),
+			onSelectTab: () => {},
+			tabs: createTabs(),
+		});
 		const bridgeTab = Array.from(result.container.querySelectorAll('.mn-document-tabs__tab'))
 			.find((tab) => tab.textContent === 'Bridge');
 
@@ -143,7 +146,7 @@ describe('DocumentTabs', function() {
 			input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 		});
 
-		expect(documentModel.getTabs().map((tab) => tab.title)).toContain('Verse');
+		expect(renamed).toEqual([['bridge', 'Verse']]);
 		expect(result.container.querySelector('[aria-label="Rename tab"]')).toBeNull();
 	});
 });

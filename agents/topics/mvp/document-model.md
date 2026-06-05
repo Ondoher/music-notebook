@@ -21,6 +21,7 @@ The model currently owns:
 - persisted server document name mapping
 - revision
 - dirty state
+- persistence transport for document save/load/list/rename operations
 - document settings
 - document typography defaults
 - document paragraph styles
@@ -31,7 +32,6 @@ The model currently owns:
 
 The model does not yet own:
 
-- persistence transport
 - account or ownership checks
 - export rendering
 - object-type-specific validation
@@ -300,6 +300,15 @@ The document feature owns client-side document commands and dialogs:
 - `src/mn/features/document/components/DocumentOpenDialog.jsx`
 - `src/mn/features/document/components/DocumentMessageDialog.jsx`
 
+The persistence boundary is intentionally split:
+
+- `document-model` owns the actual client transport calls for persisted
+  document data.
+- the document feature controller owns user-facing flow only: menu commands,
+  dialogs, prompting, conflict confirmation state, and last-open coordination.
+- document feature controllers must not call `io` or encode document API URLs
+  directly.
+
 Current document menu commands:
 
 - New
@@ -401,6 +410,11 @@ The service currently implements:
 - `upsertObject(object)`
 - `updateObject(objectId, patch)`
 - `removeObject(objectId)`
+- `loadDocumentList()`
+- `loadServerDocument(documentId)`
+- `saveNewDocument(name, options)`
+- `saveExistingDocument(options)`
+- `renameServerDocument(name, options)`
 - `toJSON()`
 - `load(snapshot)`
 

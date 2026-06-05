@@ -1,5 +1,6 @@
 import { Service } from '@polylith/core';
-import TableUp, { TableSelection } from 'quill-table-up';
+import Quill from 'quill';
+import TableUp, { blotName, randomId, TableResizeLine, TableSelection } from 'quill-table-up';
 import {
 	getRenderedTableCellInnerFromBlot,
 	getTableSelectionShape,
@@ -9,7 +10,10 @@ import { TABLE_CONTEXT_MENU_VIEW } from './table-context-menu-view.js';
 const INSERT_TABLE_ITEM_ID = 'table.menu.insert';
 const TABLE_SELECTOR = '.ql-table, .table-up-table, table';
 const TABLE_CELL_INNER_SELECTOR = '.ql-table-cell-inner, .table-up-cell-inner';
+const TABLE_CELL_FOCUS_CLASS = 'mn-table-cell-focus';
 const TABLE_COLUMN_CURSOR_CLASS = 'mn-table-column-selection-cursor';
+const TABLE_WIDE_CONTENT_SELECTOR = '.ql-table-wrapper, .table-up, .ql-table';
+const Delta = Quill.import('delta');
 
 /** Registers table commands and routes them to the active editor surface. */
 export default class TableController extends Service {
@@ -19,16 +23,24 @@ export default class TableController extends Service {
 			'ready',
 			'registerMenuItems',
 			'insertTable',
+			'handleEditorReady',
 			'handleEditorEvent',
 			'handleContextMenuCommand',
 		]);
 		this.lastContextMenuCommand = null;
+		this.focusedTableCell = null;
+		this.focusedTableCellBoundary = null;
+		this.documentFormat = null;
+		this.tableSelectionMouseDownGate = null;
+		this.unregisterEditorLayout = null;
 	}
 
 	ready() {
 		this.editorSurface = this.registry.subscribe('editor-surface');
 		this.editorInteractions = this.registry.subscribe('editor-interactions');
+		this.editorLayout = this.registry.subscribe('editor-layout');
 		this.editorViews = this.registry.subscribe('editor-views');
+		this.documentFormat = this.registry.subscribe('document-format');
 		this.mainMenu = this.registry.subscribe('main-menu');
 		this.menuSelectedListener = this.mainMenu.listen(
 			'item-selected',
@@ -38,7 +50,8 @@ export default class TableController extends Service {
 			'main-item-added',
 			this.onMainMenuItemAdded.bind(this),
 		);
-
+		this.surfaceAttachedListener = null;
+		this.surfaceDetachedListener = null;
 		this.unregisterEditorInteractions = this.editorInteractions?.registerHandler?.({
 			events: [
 				'contextmenu',
@@ -53,7 +66,9 @@ export default class TableController extends Service {
 				'pointermove',
 				'pointerup',
 				'pointercancel',
+				'selection-change',
 			],
+			editorReady: true,
 			gutterSelectable: true,
 			id: 'table.editor-region',
 			idAttribute: 'data-table-id',
@@ -66,7 +81,90 @@ export default class TableController extends Service {
 			selector: TABLE_SELECTOR,
 			serviceName: 'table-controller',
 		});
+		this.unregisterEditorLayout = this.editorLayout?.registerWideContentContributor?.({
+			id: 'table.wide-content',
+			padding: 24,
+			selector: TABLE_WIDE_CONTENT_SELECTOR,
+		});
+		this.attachTableSelectionMouseDownGate();
 		this.registerMenuItems();
+	}
+
+	handleEditorReady(context = {}) {
+		context.registerQuillModule?.(`modules/${TableUp.moduleName}`, TableUp, true);
+		context.addQuillModuleOptions?.(TableUp.moduleName, {
+			modules: [
+				{
+					module: TableSelection,
+					options: {
+						selectColor: 'var(--mn-selection-color)',
+					},
+				},
+				{ module: TableResizeLine },
+			],
+		});
+		return true;
+	}
+
+	attachTableSelectionMouseDownGate() {
+		const tableSelection = this.getActiveTableSelectionModule();
+		const root = this.editorSurface?.getEditorRoot?.();
+		const original = tableSelection?.tableSelectMouseDownHandler;
+
+		if (!tableSelection || !root || typeof original !== 'function') {
+			return false;
+		}
+
+		if (
+			this.tableSelectionMouseDownGate?.tableSelection === tableSelection
+			&& this.tableSelectionMouseDownGate?.root === root
+		) {
+			return true;
+		}
+
+		this.detachTableSelectionMouseDownGate();
+		const gated = function(event) {
+			if (event?.mnSuppressNativeSelection === true) {
+				return;
+			}
+
+			return original.call(tableSelection, event);
+		};
+
+		tableSelection.tableSelectMouseDownHandler = gated;
+		root.removeEventListener?.('mousedown', original);
+		root.addEventListener?.('mousedown', gated);
+		this.tableSelectionMouseDownGate = {
+			gated,
+			original,
+			root,
+			tableSelection,
+		};
+		return true;
+	}
+
+	detachTableSelectionMouseDownGate() {
+		this.clearFocusedTableCell();
+		const gate = this.tableSelectionMouseDownGate;
+
+		if (!gate) {
+			return false;
+		}
+
+		if (gate.tableSelection?.tableSelectMouseDownHandler === gate.gated) {
+			gate.tableSelection.tableSelectMouseDownHandler = gate.original;
+		}
+
+		gate.root?.removeEventListener?.('mousedown', gate.gated);
+		gate.root?.addEventListener?.('mousedown', gate.original);
+		this.tableSelectionMouseDownGate = null;
+		return true;
+	}
+
+	getActiveTableSelectionModule() {
+		const tableModule = this.editorSurface?.getQuillModule?.(TableUp.moduleName);
+
+		return tableModule?.getModule?.(TableSelection.moduleName) || null;
 	}
 
 	registerMenuItems() {
@@ -79,7 +177,15 @@ export default class TableController extends Service {
 	}
 
 	insertTable() {
-		return this.editorSurface?.insertTable?.(1, 2) || false;
+		const tableModule = this.editorSurface?.getQuillModule?.(TableUp.moduleName);
+
+		if (typeof tableModule?.insertTable !== 'function') {
+			return false;
+		}
+
+		tableModule.insertTable(1, 2, 'user');
+		this.editorSurface?.update?.('user');
+		return true;
 	}
 
 	handleEditorEvent(eventName, event, context) {
@@ -88,11 +194,15 @@ export default class TableController extends Service {
 		}
 
 		if (eventName === 'keydown') {
-			return this.handleTableContextMenuKeyDown(event, context);
+			return this.handleTableKeyDown(event, context);
 		}
 
 		if (eventName === 'mousedown-capture') {
 			return this.handleTableMouseDownCapture(event, context);
+		}
+
+		if (eventName === 'selection-change') {
+			return this.handleEditorSelectionChange(context);
 		}
 
 		if (eventName === 'pointerdown') {
@@ -124,6 +234,31 @@ export default class TableController extends Service {
 		}
 
 		return false;
+	}
+
+	handleTableKeyDown(event, context) {
+		return this.handleTableNavigationKeyDown(event, context)
+			|| this.handleTableContextMenuKeyDown(event, context);
+	}
+
+	handleTableNavigationKeyDown(event, context) {
+		if (event.mnLeadingKeyboardBinding !== true) {
+			return false;
+		}
+
+		if (event?.key !== 'Tab' || !this.navigateTableCell(event.shiftKey === true, context)) {
+			return false;
+		}
+
+		event.preventDefault?.();
+		event.stopPropagation?.();
+		return {
+			handled: true,
+			result: {
+				preventDefault: true,
+				stopPropagation: true,
+			},
+		};
 	}
 
 	handleTableContextMenu(event, context) {
@@ -216,7 +351,7 @@ export default class TableController extends Service {
 			return {
 				handled: true,
 				suppressBlankTableCellFocus: true,
-				suppressTableSelection: true,
+				suppressNativeSelection: true,
 			};
 		}
 
@@ -225,9 +360,14 @@ export default class TableController extends Service {
 		}
 
 		this.clearTableSelection(context);
+		const focusedCell = this.getTableCellInnerFromNode(event?.target);
+
+		this.setFocusedTableCell(focusedCell);
+		this.scheduleFocusedTableCellScroll(focusedCell);
+		this.scheduleBlankTableCellFocus(event, context);
 		return {
 			handled: true,
-			suppressTableSelection: true,
+			suppressNativeSelection: true,
 		};
 	}
 
@@ -468,12 +608,98 @@ export default class TableController extends Service {
 			return null;
 		}
 
-		const [line] = context.getLine?.(range.index) || [];
-		const lineNode = line?.domNode;
-		const leafNode = context.getLeaf?.(range.index)?.[0]?.domNode;
-		const node = lineNode || leafNode;
+		const currentCell = this.getTableCellInnerAtIndex(context, range.index);
 
-		return node?.closest?.(TABLE_CELL_INNER_SELECTOR) || null;
+		if (currentCell || range.length) {
+			return currentCell;
+		}
+
+		return this.getTableCellInnerAtIndex(context, range.index - 1);
+	}
+
+	getTableCellInnerAtIndex(context, index) {
+		if (!Number.isInteger(index) || index < 0) {
+			return null;
+		}
+
+		const [line] = context.getLine?.(index) || [];
+		const lineNode = line?.domNode;
+		const leafNode = context.getLeaf?.(index)?.[0]?.domNode;
+		const nodes = [leafNode, lineNode].filter(Boolean);
+
+		for (const node of nodes) {
+			const cell = this.getTableCellInnerFromNode(node);
+
+			if (cell) {
+				return cell;
+			}
+		}
+		return null;
+	}
+
+	getFirstTableCellAfterCurrentLine(context) {
+		const range = context?.getSelection?.();
+
+		if (!range || range.length) {
+			return null;
+		}
+
+		const [line] = context.getLine?.(range.index) || [];
+		const lineElement = getElementFromNode(line?.domNode);
+
+		if (!lineElement || lineElement.closest?.(TABLE_SELECTOR)) {
+			return null;
+		}
+
+		const nextElement = lineElement.nextElementSibling;
+		const table = nextElement?.matches?.(TABLE_SELECTOR)
+			? nextElement
+			: nextElement?.querySelector?.(TABLE_SELECTOR) || null;
+
+		return table?.querySelector?.(TABLE_CELL_INNER_SELECTOR) || null;
+	}
+
+	navigateTableCell(backwards = false, context) {
+		const currentCell = this.getCurrentTableCellInner(context);
+		const table = currentCell?.closest?.('table');
+
+		if (!currentCell || !table) {
+			return false;
+		}
+
+		const cells = Array.from(table.querySelectorAll(TABLE_CELL_INNER_SELECTOR));
+		const currentIndex = cells.indexOf(currentCell);
+		const nextIndex = currentIndex + (backwards ? -1 : 1);
+		const targetCell = cells[nextIndex];
+
+		if (targetCell) {
+			this.selectTableCell(targetCell, context);
+			return true;
+		}
+
+		if (!backwards && this.appendTableRowAfterCell(currentCell, context)) {
+			const updatedCells = Array.from(table.querySelectorAll(TABLE_CELL_INNER_SELECTOR));
+			const appendedTargetCell = updatedCells[currentIndex + 1];
+
+			if (appendedTargetCell) {
+				this.selectTableCell(appendedTargetCell, context);
+			}
+		}
+
+		return true;
+	}
+
+	appendTableRowAfterCell(cell, context) {
+		const blot = context?.findBlot?.(cell, true);
+		const tableModule = this.getTableModule(context);
+
+		if (!blot || !tableModule?.appendRow) {
+			return false;
+		}
+
+		tableModule.appendRow([blot], true);
+		context?.quill?.update?.('user');
+		return true;
 	}
 
 	selectTableCell(cell, context) {
@@ -485,9 +711,228 @@ export default class TableController extends Service {
 		}
 
 		this.getTableSelectionModule(context)?.hide?.();
-		context?.quill?.focus?.();
-		context?.setSelection?.(index, 0, 'user');
+		this.setFocusedTableCell(cell);
+		if (typeof context?.setSelectionWithoutScroll === 'function') {
+			context.setSelectionWithoutScroll(index, 0, 'user', cell);
+			this.scheduleFocusedTableCellScroll(cell);
+		} else {
+			context?.quill?.focus?.({ preventScroll: true });
+			context?.setSelection?.(index, 0, 'user');
+			this.scrollTableCellIntoViewIfNeeded(cell);
+		}
 		return true;
+	}
+
+	scheduleBlankTableCellFocus(event, context) {
+		const target = getElementFromNode(event?.target);
+		const cell = this.getTableCellInnerFromNode(target);
+		const musicEmbed = this.getMusicEmbedFromNode(target);
+
+		if (!cell || this.isTableTextCursorTarget(event?.target)) {
+			return false;
+		}
+
+		this.schedulePostMouseGestureTask(() => {
+			if (!cell.isConnected) {
+				return;
+			}
+
+			if (musicEmbed?.isConnected && this.selectAfterMusicEmbed(musicEmbed, context)) {
+				return;
+			}
+
+			if (this.isQuillSelectionInTableCell(cell, context)) {
+				return;
+			}
+
+			this.selectTableCell(cell, context);
+		});
+		return true;
+	}
+
+	schedulePostMouseGestureTask(task) {
+		window.setTimeout(() => {
+			if (typeof window.requestAnimationFrame === 'function') {
+				window.requestAnimationFrame(task);
+				return;
+			}
+
+			window.setTimeout(task, 0);
+		}, 0);
+	}
+
+	getMusicEmbedFromNode(node) {
+		const element = getElementFromNode(node);
+
+		return element?.closest?.('.music-keyboard-embed') || null;
+	}
+
+	selectAfterMusicEmbed(embed, context) {
+		const blot = embed ? (context?.findBlot?.(embed, false) || context?.findBlot?.(embed, true)) : null;
+
+		if (!blot) {
+			return false;
+		}
+
+		const index = context?.getIndex?.(blot);
+		const length = Number(blot.length?.());
+
+		if (!Number.isInteger(index)) {
+			return false;
+		}
+
+		this.getTableSelectionModule(context)?.hide?.();
+		const cell = embed.closest?.(TABLE_CELL_INNER_SELECTOR);
+
+		this.setFocusedTableCell(cell);
+		if (typeof context?.setSelectionWithoutScroll === 'function') {
+			context.setSelectionWithoutScroll(
+				index + (Number.isFinite(length) && length > 0 ? length : 1),
+				0,
+				'user',
+				embed,
+			);
+			this.scheduleFocusedTableCellScroll(cell);
+		} else {
+			context?.quill?.focus?.({ preventScroll: true });
+			context?.setSelection?.(
+				index + (Number.isFinite(length) && length > 0 ? length : 1),
+				0,
+				'user',
+			);
+			this.scrollTableCellIntoViewIfNeeded(cell);
+		}
+		return true;
+	}
+
+	isTableTextCursorTarget(target) {
+		const element = getElementFromNode(target);
+
+		if (element?.closest?.('.music-keyboard-embed, [contenteditable="false"]')) {
+			return false;
+		}
+
+		if (target?.nodeType === getNodeType('TEXT_NODE')) {
+			return true;
+		}
+
+		if (!element) {
+			return false;
+		}
+
+		const textBlock = element.closest?.('p, li, h1, h2, h3, h4, h5, h6, blockquote');
+
+		return Boolean(textBlock && element !== textBlock);
+	}
+
+	isQuillSelectionInTableCell(cell, context) {
+		const currentCell = this.getCurrentTableCellInner(context);
+
+		return currentCell === cell || Boolean(currentCell && cell.contains(currentCell));
+	}
+
+	handleEditorSelectionChange(context) {
+		const currentCell = this.getCurrentTableCellInner(context);
+
+		if (currentCell) {
+			this.setFocusedTableCell(currentCell);
+			return false;
+		}
+
+		this.clearFocusedTableCell();
+		return false;
+	}
+
+	setFocusedTableCell(cell) {
+		const nextCell = cell?.matches?.(TABLE_CELL_INNER_SELECTOR) ? cell : null;
+
+		if (this.focusedTableCell === nextCell) {
+			return Boolean(nextCell);
+		}
+
+		this.clearFocusedTableCell();
+		this.focusedTableCell = nextCell;
+		this.focusedTableCell?.classList?.add(TABLE_CELL_FOCUS_CLASS);
+		this.focusedTableCellBoundary = this.getTableCellFocusBoundary(this.focusedTableCell);
+		this.focusedTableCellBoundary?.classList?.add(TABLE_CELL_FOCUS_CLASS);
+		return Boolean(this.focusedTableCell);
+	}
+
+	getTableCellFocusBoundary(cell) {
+		return cell?.closest?.('td, th') || cell || null;
+	}
+
+	clearFocusedTableCell() {
+		this.focusedTableCell?.classList?.remove(TABLE_CELL_FOCUS_CLASS);
+		this.focusedTableCellBoundary?.classList?.remove(TABLE_CELL_FOCUS_CLASS);
+		this.focusedTableCell = null;
+		this.focusedTableCellBoundary = null;
+		return true;
+	}
+
+	scheduleFocusedTableCellScroll(cell) {
+		this.schedulePostMouseGestureTask(() => this.scrollTableCellIntoViewIfNeeded(cell));
+		return Boolean(cell);
+	}
+
+	scrollTableCellIntoViewIfNeeded(cell) {
+		const boundary = this.getTableCellFocusBoundary(cell);
+
+		if (!boundary || this.isElementFullyVisible(boundary)) {
+			return false;
+		}
+
+		boundary.scrollIntoView?.({
+			block: 'nearest',
+			inline: 'nearest',
+		});
+		return true;
+	}
+
+	isElementFullyVisible(element) {
+		const rect = element?.getBoundingClientRect?.();
+
+		if (!rect) {
+			return true;
+		}
+
+		const ownerWindow = element.ownerDocument?.defaultView || window;
+		const viewport = {
+			bottom: ownerWindow.innerHeight ?? Number.POSITIVE_INFINITY,
+			left: 0,
+			right: ownerWindow.innerWidth ?? Number.POSITIVE_INFINITY,
+			top: 0,
+		};
+
+		return this.isRectInside(rect, viewport)
+			&& this.getScrollAncestors(element).every((ancestor) => (
+				this.isRectInside(rect, ancestor.getBoundingClientRect())
+			));
+	}
+
+	getScrollAncestors(element) {
+		const ancestors = [];
+		let current = element?.parentElement || null;
+
+		while (current) {
+			if (this.canScroll(current)) {
+				ancestors.push(current);
+			}
+			current = current.parentElement;
+		}
+		return ancestors;
+	}
+
+	canScroll(element) {
+		return Boolean(element
+			&& (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth));
+	}
+
+	isRectInside(inner, outer) {
+		return inner.top >= outer.top
+			&& inner.left >= outer.left
+			&& inner.bottom <= outer.bottom
+			&& inner.right <= outer.right;
 	}
 
 	clearTableSelection(context) {
@@ -691,6 +1136,7 @@ export default class TableController extends Service {
 	}
 
 	applyTableSelection(tableSelection, table, cells, context) {
+		this.clearFocusedTableCell();
 		tableSelection.setSelectionTable(table);
 		tableSelection.setSelectedTds(cells);
 
@@ -775,6 +1221,10 @@ export default class TableController extends Service {
 			return this.distributeTableColumns(context);
 		}
 
+		if (commandId === 'split-table-above' || commandId === 'split-table-below') {
+			return this.splitTable(commandId, context);
+		}
+
 		const selectedCells = this.getCommandCells(context);
 
 		if (!selectedCells.length) {
@@ -790,14 +1240,6 @@ export default class TableController extends Service {
 			'insert-row-above': ['appendRow', selectedCells, false],
 			'insert-row-below': ['appendRow', selectedCells, true],
 		};
-
-		if (commandId === 'split-table-above') {
-			return this.splitTableAtSelection(context, false);
-		}
-
-		if (commandId === 'split-table-below') {
-			return this.splitTableAtSelection(context, true);
-		}
 
 		const [methodName, ...args] = commandById[commandId] || [];
 		const command = tableModule[methodName];
@@ -861,38 +1303,55 @@ export default class TableController extends Service {
 		return true;
 	}
 
-	getAvailableTableWidth(table, context = {}) {
-		const contentHost = table?.closest?.('.mn-document-content');
-		const cssWidth = this.getCssPixelValue(contentHost, '--mn-content-width');
+	splitTable(commandId, context = {}) {
+		const quill = context.quill;
+		const table = context.table || context.cell?.closest?.('table') || null;
+		const splitRowIndex = this.getTableSplitRowIndex(table, context);
+		const tableId = this.getTableId(table, context);
 
-		if (Number.isFinite(cssWidth) && cssWidth > 0) {
-			return cssWidth;
+		if (!quill || !tableId || splitRowIndex < 0) {
+			return false;
 		}
 
-		const editorRoot = context.editorRoot || context.quill?.root || null;
-		const rootStyle = editorRoot?.getBoundingClientRect ? getComputedStyle(editorRoot) : null;
-		const rootWidth = Number(editorRoot?.getBoundingClientRect?.().width) || Number(editorRoot?.clientWidth);
-		const paddingLeft = Number.parseFloat(rootStyle?.paddingLeft || '0') || 0;
-		const paddingRight = Number.parseFloat(rootStyle?.paddingRight || '0') || 0;
-		const rootContentWidth = rootWidth - paddingLeft - paddingRight;
+		const tableDelta = this.getTableDeltaParts(quill, tableId);
 
-		if (Number.isFinite(rootContentWidth) && rootContentWidth > 0) {
-			return rootContentWidth;
+		if (!tableDelta || !tableDelta.columns.length || tableDelta.rows.length < 2) {
+			return false;
 		}
 
-		return this.getTableWidth(table, this.getColumnWidths(this.getTableColumns(table)));
+		const splitIndex = commandId === 'split-table-above'
+			? splitRowIndex
+			: splitRowIndex + 1;
+
+		if (splitIndex <= 0 || splitIndex >= tableDelta.rows.length) {
+			return false;
+		}
+
+		if (!this.canSplitRowsAt(tableDelta.rows, splitIndex)) {
+			return false;
+		}
+
+		const replacement = new Delta()
+			.concat(this.createTableDelta(tableDelta.columns, tableDelta.rows.slice(0, splitIndex)))
+			.insert('\n')
+			.concat(this.createTableDelta(tableDelta.columns, tableDelta.rows.slice(splitIndex)));
+		const change = new Delta()
+			.retain(tableDelta.index)
+			.delete(tableDelta.length)
+			.concat(replacement);
+
+		quill.updateContents(change, 'user');
+		quill.update?.('user');
+		return true;
 	}
 
-	getCssPixelValue(element, propertyName) {
-		if (!element?.getBoundingClientRect) {
-			return NaN;
+	getAvailableTableWidth(table, context = {}) {
+		const documentWidth = Number(this.documentFormat?.getContentWidth?.());
+
+		if (Number.isFinite(documentWidth) && documentWidth > 0) {
+			return documentWidth;
 		}
-
-		const value = getComputedStyle(element).getPropertyValue(propertyName);
-		const trimmedValue = String(value || '').trim();
-		const number = Number.parseFloat(value);
-
-		return trimmedValue.endsWith('px') && Number.isFinite(number) ? number : NaN;
+		return null;
 	}
 
 	getTableColumns(table) {
@@ -962,151 +1421,195 @@ export default class TableController extends Service {
 		return rounded;
 	}
 
-	splitTableAtSelection(context = {}, below = false) {
-		const selectedCells = this.getCommandCells(context);
-		const rows = this.getSelectedTableRows(selectedCells);
-		const tableBlot = this.getTableBlotFromRows(rows);
-		const tableRows = tableBlot?.getRows?.() || [];
+	getTableSplitRowIndex(table, context = {}) {
+		const cell = context.cell || getRenderedTableCellInnerFromBlot(context.cellBlot) || null;
+		const row = cell?.closest?.('tr') || null;
+		const rows = Array.from(table?.querySelectorAll?.('tr') || []);
 
-		if (!tableBlot || !rows.length || !tableRows.length) {
-			return false;
-		}
-
-		const selectedIndexes = rows
-			.map((row) => tableRows.indexOf(row))
-			.filter((index) => index >= 0);
-
-		if (!selectedIndexes.length) {
-			return false;
-		}
-
-		const firstIndex = Math.min(...selectedIndexes);
-		const lastIndex = Math.max(...selectedIndexes);
-		const splitIndex = below ? lastIndex + 1 : firstIndex;
-		const tableWrapper = this.getTableWrapperFromTableBlot(tableBlot);
-		const splitRow = tableRows[splitIndex];
-
-		if (!splitRow || !tableWrapper || splitIndex <= 0 || splitIndex >= tableRows.length) {
-			return false;
-		}
-
-		const newTableBlot = tableBlot.split(splitRow.offset(tableBlot));
-
-		if (!newTableBlot || newTableBlot === tableBlot) {
-			return false;
-		}
-
-		this.copyColumnGroupToSplitTable(tableBlot, newTableBlot);
-		const newTableWrapper = tableWrapper.split(newTableBlot.offset(tableWrapper));
-
-		if (!newTableWrapper || newTableWrapper === tableWrapper) {
-			return false;
-		}
-
-		this.assignNewTableId(newTableWrapper);
-		this.insertBlockBetweenTables(tableWrapper, newTableWrapper);
-		context.quill?.update?.('user');
-		return true;
+		return row ? rows.indexOf(row) : -1;
 	}
 
-	getSelectedTableRows(selectedCells = []) {
-		return Array.from(new Set(
-			selectedCells
-				.map((cell) => cell?.getTableRow?.())
-				.filter(Boolean),
+	getTableId(table, context = {}) {
+		return table?.dataset?.tableId
+			|| context.cell?.dataset?.tableId
+			|| getRenderedTableCellInnerFromBlot(context.cellBlot)?.dataset?.tableId
+			|| context.cellBlot?.formats?.()?.[blotName.tableCellInner]?.tableId
+			|| null;
+	}
+
+	getTableDeltaParts(quill, tableId) {
+		const ops = quill.getContents?.()?.ops || [];
+		let index = 0;
+		let tableIndex = null;
+		let tableLength = 0;
+		const columns = [];
+		const rows = [];
+		let currentRowId = null;
+		let currentRow = [];
+		let currentCell = [];
+		let inTable = false;
+
+		for (let opIndex = 0; opIndex < ops.length; opIndex++) {
+			const op = ops[opIndex];
+			const length = this.getDeltaOpLength(op);
+			const columnValue = op.insert?.[blotName.tableCol];
+			const cellValue = op.attributes?.[blotName.tableCellInner];
+			const isTableColumn = columnValue?.tableId === tableId;
+			const isTableCellEnd = cellValue?.tableId === tableId;
+
+			if (!inTable && (isTableColumn || isTableCellEnd)) {
+				inTable = true;
+				tableIndex = index;
+			}
+
+			if (
+				inTable
+				&& !isTableColumn
+				&& !isTableCellEnd
+				&& currentCell.length === 0
+				&& rows.length > 0
+				&& !this.hasUpcomingTableCellEnd(ops, opIndex + 1, tableId)
+			) {
+				break;
+			}
+
+			if (inTable) {
+				tableLength += length;
+			}
+
+			if (isTableColumn) {
+				columns.push(this.cloneDeltaOp(op));
+			}
+			else if (inTable) {
+				currentCell.push(this.cloneDeltaOp(op));
+
+				if (isTableCellEnd) {
+					if (currentRowId !== null && cellValue.rowId !== currentRowId) {
+						rows.push(currentRow);
+						currentRow = [];
+					}
+					currentRowId = cellValue.rowId;
+					currentRow.push(currentCell);
+					currentCell = [];
+				}
+			}
+
+			index += length;
+		}
+
+		if (currentRow.length) {
+			rows.push(currentRow);
+		}
+
+		if (tableIndex === null || currentCell.length) {
+			return null;
+		}
+
+		return {
+			columns,
+			index: tableIndex,
+			length: tableLength,
+			rows,
+		};
+	}
+
+	hasUpcomingTableCellEnd(ops, startIndex, tableId) {
+		return ops.slice(startIndex).some((op) => (
+			op.attributes?.[blotName.tableCellInner]?.tableId === tableId
 		));
 	}
 
-	getTableBlotFromRows(rows = []) {
-		const row = rows[0];
-		let parent = row?.parent || null;
+	canSplitRowsAt(rows, splitIndex) {
+		return rows.every((row, rowIndex) => row.every((cell) => {
+			const value = this.getCellValueFromSegment(cell);
+			const rowspan = Number(value?.rowspan) || 1;
 
-		while (parent) {
-			if (typeof parent.getRows === 'function') {
-				return parent;
+			return rowIndex >= splitIndex || rowIndex + rowspan <= splitIndex;
+		}));
+	}
+
+	createTableDelta(columns, rows) {
+		const tableId = randomId();
+		const columnIdMap = new Map();
+		const rowIdMap = new Map();
+		const delta = new Delta();
+
+		columns.forEach((column) => {
+			const value = column.insert?.[blotName.tableCol] || {};
+			const colId = value.colId || randomId();
+
+			if (!columnIdMap.has(colId)) {
+				columnIdMap.set(colId, randomId());
 			}
+			delta.push(this.rewriteTableOp(column, tableId, rowIdMap, columnIdMap));
+		});
 
-			parent = parent.parent || null;
-		}
+		rows.forEach((row) => {
+			row.forEach((cell) => {
+				cell.forEach((op) => {
+					delta.push(this.rewriteTableOp(op, tableId, rowIdMap, columnIdMap));
+				});
+			});
+		});
 
-		return null;
+		return delta;
 	}
 
-	getTableWrapperFromTableBlot(tableBlot) {
-		let parent = tableBlot?.parent || null;
+	rewriteTableOp(op, tableId, rowIdMap, columnIdMap) {
+		const next = this.cloneDeltaOp(op);
+		const columnValue = next.insert?.[blotName.tableCol];
+		const cellValue = next.attributes?.[blotName.tableCellInner];
 
-		while (parent) {
-			if (parent.domNode?.classList?.contains('ql-table-wrapper')) {
-				return parent;
+		if (columnValue) {
+			const colId = columnValue.colId || randomId();
+
+			if (!columnIdMap.has(colId)) {
+				columnIdMap.set(colId, randomId());
 			}
-
-			parent = parent.parent || null;
+			next.insert[blotName.tableCol] = {
+				...columnValue,
+				colId: columnIdMap.get(colId),
+				tableId,
+			};
 		}
 
-		return null;
-	}
+		if (cellValue) {
+			const rowId = cellValue.rowId || randomId();
+			const colId = cellValue.colId || randomId();
 
-	assignNewTableId(tableWrapper) {
-		const tableId = createTableId();
-		const nodes = [tableWrapper?.domNode]
-			.concat(Array.from(tableWrapper?.domNode?.querySelectorAll?.('[data-table-id]') || []))
-			.filter(Boolean);
-
-		nodes.forEach((node) => {
-			node.dataset.tableId = tableId;
-		});
-		return tableId;
-	}
-
-	copyColumnGroupToSplitTable(sourceTableBlot, targetTableBlot) {
-		const sourceColgroup = this.getFirstChildBlot(sourceTableBlot, (child) => (
-			child?.domNode?.tagName?.toLowerCase?.() === 'colgroup'
-		));
-		const targetColgroup = this.getFirstChildBlot(targetTableBlot, (child) => (
-			child?.domNode?.tagName?.toLowerCase?.() === 'colgroup'
-		));
-
-		if (!sourceColgroup || !targetTableBlot || targetColgroup) {
-			return false;
-		}
-
-		targetTableBlot.insertBefore(this.cloneBlotTree(sourceColgroup), targetTableBlot.children?.head || null);
-		return true;
-	}
-
-	getFirstChildBlot(parent, predicate) {
-		let result = null;
-
-		parent?.children?.forEach?.((child) => {
-			if (!result && predicate(child)) {
-				result = child;
+			if (!rowIdMap.has(rowId)) {
+				rowIdMap.set(rowId, randomId());
 			}
-		});
-		return result;
-	}
-
-	cloneBlotTree(blot) {
-		const clone = blot.clone();
-
-		blot.children?.forEach?.((child) => {
-			clone.appendChild(this.cloneBlotTree(child));
-		});
-		return clone;
-	}
-
-	insertBlockBetweenTables(tableWrapper, newTableWrapper) {
-		if (!tableWrapper?.parent || !newTableWrapper || tableWrapper.next !== newTableWrapper) {
-			return false;
+			if (!columnIdMap.has(colId)) {
+				columnIdMap.set(colId, randomId());
+			}
+			next.attributes[blotName.tableCellInner] = {
+				...cellValue,
+				colId: columnIdMap.get(colId),
+				rowId: rowIdMap.get(rowId),
+				tableId,
+			};
 		}
 
-		const block = tableWrapper.scroll?.create?.('block');
+		return next;
+	}
 
-		if (!block) {
-			return false;
+	getCellValueFromSegment(segment) {
+		return segment.find((op) => op.attributes?.[blotName.tableCellInner])
+			?.attributes?.[blotName.tableCellInner]
+			|| null;
+	}
+
+	cloneDeltaOp(op) {
+		return JSON.parse(JSON.stringify(op));
+	}
+
+	getDeltaOpLength(op) {
+		if (typeof op.insert === 'string') {
+			return op.insert.length;
 		}
 
-		tableWrapper.parent.insertBefore(block, newTableWrapper);
-		return true;
+		return op.insert ? 1 : Number(op.retain || op.delete || 0);
 	}
 
 	getCommandCells(context = {}) {
@@ -1163,10 +1666,6 @@ function getNodeType(name) {
 		ELEMENT_NODE: 1,
 		TEXT_NODE: 3,
 	}[name];
-}
-
-function createTableId() {
-	return `table-${Math.random().toString(36).slice(2)}`;
 }
 
 new TableController();

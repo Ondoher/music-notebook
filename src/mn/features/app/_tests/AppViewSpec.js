@@ -19,29 +19,30 @@ class EmptyService extends Service {
 
 class AppControllerMock extends EmptyService {
 	constructor(registry) {
-		super('app-controller', registry, ['listen']);
-	}
-}
-
-class DocumentModelMock extends Service {
-	constructor(registry) {
-		super('document-model', registry);
-		this.implement(['getId', 'getTitle', 'isDirty']);
-		this.id = null;
-		this.title = 'Untitled notebook';
-		this.dirty = false;
+		super('app-controller', registry, [
+			'getDocumentTabsState',
+			'getPageTitle',
+			'listen',
+		]);
+		this.listeners = {};
+		this.pageTitle = 'untitled';
 	}
 
-	getId() {
-		return this.id;
+	getDocumentTabsState() {
+		return { activeTabId: '', tabs: [] };
 	}
 
-	getTitle() {
-		return this.title;
+	getPageTitle() {
+		return this.pageTitle;
 	}
 
-	isDirty() {
-		return this.dirty;
+	listen(eventName, listener) {
+		this.listeners[eventName] = listener;
+		return listener;
+	}
+
+	emit(eventName, payload) {
+		this.listeners[eventName]?.(payload);
 	}
 }
 
@@ -56,7 +57,7 @@ class LocalizeMock extends EmptyService {
 }
 
 describe('AppView', function() {
-	let documentModel;
+	let appController;
 	let originalTitle;
 	let registry;
 	let view;
@@ -64,11 +65,10 @@ describe('AppView', function() {
 	beforeEach(function() {
 		originalTitle = document.title;
 		registry = new Registry();
-		new AppControllerMock(registry);
+		appController = new AppControllerMock(registry);
 		new EmptyService('accounts-controller', registry, ['getComponent']);
 		new EmptyService('document-controller', registry, ['getComponent']);
 		new EmptyService('document-format-controller', registry, ['getComponent']);
-		documentModel = new DocumentModelMock(registry);
 		new LocalizeMock(registry);
 		new EmptyService('main-menu', registry, []);
 		new EmptyService('paragraph-format-controller', registry, ['getComponent']);
@@ -84,18 +84,17 @@ describe('AppView', function() {
 
 		expect(document.title).toBe('untitled');
 
-		documentModel.title = 'Lesson 1';
-		documentModel.fire('document-loaded', documentModel);
+		appController.pageTitle = 'Lesson 1';
+		appController.emit('page-title-updated', 'Lesson 1');
 		expect(document.title).toBe('Lesson 1');
 
-		documentModel.dirty = true;
-		documentModel.fire('document-changed', documentModel);
+		appController.pageTitle = '*Lesson 1';
+		appController.emit('page-title-updated', '*Lesson 1');
 		expect(document.title).toBe('*Lesson 1');
 	});
 
 	it('uses a saved document title even when it matches the default title', function() {
-		documentModel.id = 'doc-1';
-		documentModel.title = 'Untitled notebook';
+		appController.pageTitle = 'Untitled notebook';
 
 		view.ready();
 

@@ -28,6 +28,14 @@ type DocumentFormatSettings = {
 	margins: DocumentFormatMargins;
 };
 
+/** Page dimensions in inches. */
+type DocumentFormatPageDimensions = {
+	/** Page width in inches. */
+	width: number;
+	/** Page height in inches. */
+	height: number;
+};
+
 /** Service for reusable document formatting rules and document-model updates. */
 type DocumentFormatService = {
 	/** Normalizes one margin value in points. */
@@ -38,6 +46,10 @@ type DocumentFormatService = {
 	normalizeFormat: (format?: Partial<DocumentFormatSettings>) => DocumentFormatSettings;
 	/** Returns the current document formatting settings. */
 	getFormat: () => DocumentFormatSettings;
+	/** Gets normalized page dimensions in inches. */
+	getPageDimensions: (format?: Partial<DocumentFormatSettings>) => DocumentFormatPageDimensions;
+	/** Gets the page content width between document margins in CSS pixels. */
+	getContentWidth: (format?: Partial<DocumentFormatSettings>) => number | null;
 	/** Applies document-format settings to the document model. */
 	applyFormat: (format: Partial<DocumentFormatSettings>) => DocumentFormatSettings;
 	/** Returns true when a document-format change can be undone. */

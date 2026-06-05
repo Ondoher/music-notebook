@@ -20,13 +20,13 @@ export default class EditorToolbar extends React.Component {
 
 		this.state = {
 			toolbar: props.editorToolbar?.getToolbar?.() || [],
-			iconVersion: 0,
+			actionVersion: 0,
 		};
 	}
 
 	componentDidMount() {
 		this.subscribeToToolbar();
-		this.subscribeToIconRegistry();
+		this.subscribeToActionRegistry();
 		this.syncFromToolbar();
 	}
 
@@ -37,16 +37,16 @@ export default class EditorToolbar extends React.Component {
 			this.syncFromToolbar();
 		}
 
-		if (prevProps.iconRegistry !== this.props.iconRegistry) {
-			this.unsubscribeFromIconRegistry(prevProps.iconRegistry);
-			this.subscribeToIconRegistry();
-			this.setState((state) => ({ iconVersion: state.iconVersion + 1 }));
+		if (prevProps.actionRegistry !== this.props.actionRegistry) {
+			this.unsubscribeFromActionRegistry(prevProps.actionRegistry);
+			this.subscribeToActionRegistry();
+			this.setState((state) => ({ actionVersion: state.actionVersion + 1 }));
 		}
 	}
 
 	componentWillUnmount() {
 		this.unsubscribeFromToolbar();
-		this.unsubscribeFromIconRegistry();
+		this.unsubscribeFromActionRegistry();
 	}
 
 	subscribeToToolbar() {
@@ -73,28 +73,28 @@ export default class EditorToolbar extends React.Component {
 		this.toolbarListeners = null;
 	}
 
-	subscribeToIconRegistry() {
-		if (!this.props.iconRegistry?.listen) {
+	subscribeToActionRegistry() {
+		if (!this.props.actionRegistry?.listen) {
 			return;
 		}
 
-		this.iconListeners = [
-			['icon-registered', this.props.iconRegistry.listen('icon-registered', this.onIconsUpdated.bind(this))],
-			['icon-hover-text-updated', this.props.iconRegistry.listen('icon-hover-text-updated', this.onIconsUpdated.bind(this))],
-			['icon-removed', this.props.iconRegistry.listen('icon-removed', this.onIconsUpdated.bind(this))],
+		this.actionListeners = [
+			['action-registered', this.props.actionRegistry.listen('action-registered', this.onActionsUpdated.bind(this))],
+			['action-hover-text-updated', this.props.actionRegistry.listen('action-hover-text-updated', this.onActionsUpdated.bind(this))],
+			['action-removed', this.props.actionRegistry.listen('action-removed', this.onActionsUpdated.bind(this))],
 		];
 	}
 
-	unsubscribeFromIconRegistry(iconRegistry = this.props.iconRegistry) {
-		if (!iconRegistry?.unlisten || !this.iconListeners) {
-			this.iconListeners = null;
+	unsubscribeFromActionRegistry(actionRegistry = this.props.actionRegistry) {
+		if (!actionRegistry?.unlisten || !this.actionListeners) {
+			this.actionListeners = null;
 			return;
 		}
 
-		this.iconListeners.forEach(([eventName, listener]) => {
-			iconRegistry.unlisten(eventName, listener);
+		this.actionListeners.forEach(([eventName, listener]) => {
+			actionRegistry.unlisten(eventName, listener);
 		});
-		this.iconListeners = null;
+		this.actionListeners = null;
 	}
 
 	onToolbarUpdated(event) {
@@ -103,8 +103,8 @@ export default class EditorToolbar extends React.Component {
 		});
 	}
 
-	onIconsUpdated() {
-		this.setState((state) => ({ iconVersion: state.iconVersion + 1 }));
+	onActionsUpdated() {
+		this.setState((state) => ({ actionVersion: state.actionVersion + 1 }));
 	}
 
 	syncFromToolbar() {
@@ -121,9 +121,9 @@ export default class EditorToolbar extends React.Component {
 		this.props.editorToolbar?.selectItem?.(item.id, commandPayload);
 	}
 
-	getIcon(item) {
+	getActionComponent(item) {
 		const iconState = item.pressed ? 'pressed' : 'default';
-		const Icon = this.props.iconRegistry?.getIcon?.(item.iconId, iconState);
+		const Icon = this.props.actionRegistry?.getActionComponent?.(item.iconId, iconState);
 
 		if (!Icon) {
 			return <span className="mn-editor-toolbar__fallback-icon">{item.stringId}</span>;
@@ -132,13 +132,13 @@ export default class EditorToolbar extends React.Component {
 		return <Icon aria-hidden="true" fontSize="small" size={18} stroke={1.8} />;
 	}
 
-	getIconState(item) {
+	getActionState(item) {
 		return item.pressed ? 'pressed' : 'default';
 	}
 
 	getTooltipPhrase(item) {
 		return item.tooltipStringId
-			|| this.props.iconRegistry?.getIconHoverTextStringId?.(item.iconId, this.getIconState(item))
+			|| this.props.actionRegistry?.getActionHoverTextStringId?.(item.iconId, this.getActionState(item))
 			|| item.stringId;
 	}
 
@@ -173,7 +173,7 @@ export default class EditorToolbar extends React.Component {
 					size="small"
 					type="button"
 				>
-					{this.getIcon(item)}
+					{this.getActionComponent(item)}
 				</IconButton>
 			</Tooltip>
 		);

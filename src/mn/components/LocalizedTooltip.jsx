@@ -13,85 +13,12 @@ export default class LocalizedTooltip extends Component {
 	static contextType = MusicNotebookContext;
 
 	/**
-	 * Initializes refresh state for locale updates.
-	 *
-	 * @param {LocalizedTooltipProps} props
-	 */
-	constructor(props) {
-		super(props);
-
-		this.state = {
-			updated: 0,
-		};
-	}
-
-	/**
 	 * Gets the typed Music Notebook context value.
 	 *
 	 * @returns {MusicNotebookContextValue}
 	 */
 	getMusicNotebookContext() {
-		return /** @type {MusicNotebookContextValue} */ (this.context);
-	}
-
-	/**
-	 * Handles locale service changes.
-	 *
-	 * @param {string} locale
-	 * @returns {void}
-	 */
-	newLocale(locale) {
-		if (locale !== this.locale) {
-			this.setState({ locale });
-		}
-	}
-
-	/**
-	 * Forces a refresh when translation content updates.
-	 *
-	 * @returns {void}
-	 */
-	updated() {
-		this.setState({ updated: this.state.updated + 1 });
-	}
-
-	/**
-	 * Lazily connects to the localization service.
-	 *
-	 * @returns {void}
-	 */
-	setupLocaleService() {
-		if (this.localize) {
-			return;
-		}
-
-		const context = this.getMusicNotebookContext();
-
-		this.registry = context.registry;
-		this.localize = context.localize || this.registry?.subscribe?.('localize');
-
-		if (!this.localize) {
-			return;
-		}
-
-		this.localeListener = this.localize.listen?.('changeLocale', this.newLocale.bind(this));
-		this.updatedListener = this.localize.listen?.('updated', this.updated.bind(this));
-		this.locale = this.localize.getLocale?.();
-	}
-
-	/**
-	 * Removes localization service listeners before unmount.
-	 *
-	 * @returns {void}
-	 */
-	componentWillUnmount() {
-		if (this.localize && this.localeListener) {
-			this.localize.unlisten('changeLocale', this.localeListener);
-		}
-
-		if (this.localize && this.updatedListener) {
-			this.localize.unlisten('updated', this.updatedListener);
-		}
+		return /** @type {MusicNotebookContextValue} */ (this.context || {});
 	}
 
 	/**
@@ -100,9 +27,9 @@ export default class LocalizedTooltip extends Component {
 	 * @returns {string}
 	 */
 	getTranslation() {
-		this.setupLocaleService();
+		const localize = this.getMusicNotebookContext().localize;
 
-		if (!this.localize) {
+		if (!localize) {
 			console.error('LocalizedTooltip cannot render without a localize service.');
 			return '';
 		}
@@ -120,8 +47,8 @@ export default class LocalizedTooltip extends Component {
 		}
 
 		const translation = this.props.locale
-			? this.localize.translateLocale(this.props.locale, phrase, replacements, cardinal)
-			: this.localize.translate(phrase, replacements, cardinal);
+			? localize.translateLocale(this.props.locale, phrase, replacements, cardinal)
+			: localize.translate(phrase, replacements, cardinal);
 
 		if (!translation && !this.props.hideEmpty) {
 			console.error(`Missing translation for phrase "${phrase}".`);

@@ -8,7 +8,7 @@ type EditorToolbarItem = {
 	priority: number;
 	/** Phrase key used for the accessible label. */
 	stringId: string;
-	/** Registered icon id resolved through the icon-registry service. */
+	/** Registered action presentation id resolved through the action-registry service. */
 	iconId: string;
 	/** Toolbar rendering control type. */
 	controlType?: 'button' | 'font-size' | 'select';

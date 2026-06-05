@@ -3,13 +3,17 @@ import { act } from 'react';
 import { Registry } from '@polylith/core';
 import Quill from 'quill';
 import { createTestHarness } from '../../../../testing/TestHarness.js';
-import IconRegistryService from '../../../../services/icon-registry.js';
+import ActionRegistryService from '../../../../services/action-registry.js';
 import ObjectTypeRegistryService from '../../../../services/object-type-registry.js';
+import MainMenuService from '../../../app/main-menu.js';
 import DocumentModelService from '../../../../models/document-model.js';
 import EditorPage from '../../../editor/components/EditorPage.jsx';
+import EditorInteractionsService from '../../../editor/services/editor-interactions.js';
 import EditorSurfaceService from '../../../editor/services/editor-surface.js';
 import EditorToolbarService, { EDITOR_TOOLBAR_SECTIONS } from '../../../editor/services/editor-toolbar.js';
+import EditorViewsService from '../../../editor/services/editor-views.js';
 import { registerParagraphFormats } from '../../../paragraph-format/quill/paragraph-formats.js';
+import TableController from '../../../table/controller.js';
 import { getKeyboardEmbedHeight } from '../../../../shared/music-object-layout.js';
 import {
 	DEFAULT_KEYBOARD_PAYLOAD,
@@ -28,10 +32,12 @@ describe('EditorToolbar', function() {
 	it('loads editor content from the active document tab', function() {
 		const {
 			documentModel,
+			editorInteractions,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
+			mainMenu,
 			objectTypes,
 		} = makeToolbarServices();
 		const firstTabId = documentModel.getActiveTabId();
@@ -55,9 +61,10 @@ describe('EditorToolbar', function() {
 		const result = harness.render(EditorPage, {
 			pageView: makePageView(),
 			documentModel,
+			editorInteractions,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			objectTypes,
 		});
 		const editor = result.container.querySelector('.ql-editor');
@@ -93,7 +100,7 @@ describe('EditorToolbar', function() {
 				documentModel,
 				editorSurface,
 				editorToolbar,
-				iconRegistry,
+				actionRegistry,
 				localize,
 				objectTypes,
 			} = makeToolbarServices();
@@ -106,7 +113,7 @@ describe('EditorToolbar', function() {
 				documentModel,
 				editorSurface,
 				editorToolbar,
-				iconRegistry,
+				actionRegistry,
 				objectTypes,
 			});
 			const button = result.container.querySelector(buttonSelector);
@@ -143,10 +150,12 @@ describe('EditorToolbar', function() {
 	it('inserts the first music object without forcing a leading blank line', function() {
 		const {
 			documentModel,
+			editorInteractions,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
+			mainMenu,
 			objectTypes,
 		} = makeToolbarServices();
 
@@ -156,9 +165,10 @@ describe('EditorToolbar', function() {
 		const result = harness.render(EditorPage, {
 			pageView: makePageView(),
 			documentModel,
+			editorInteractions,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			objectTypes,
 		});
 		const button = result.container.querySelector('[data-toolbar-item-id="music-object.insert.keyboard"]');
@@ -181,8 +191,9 @@ describe('EditorToolbar', function() {
 			documentModel,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
+			mainMenu,
 			objectTypes,
 		} = makeToolbarServices();
 		const insertedObject = documentModel.createObject('music-object', {
@@ -206,7 +217,7 @@ describe('EditorToolbar', function() {
 			documentModel,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			objectTypes,
 		});
 		const quill = Quill.find(result.container.querySelector('.ql-container'));
@@ -235,7 +246,7 @@ describe('EditorToolbar', function() {
 			documentModel,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
 			objectTypes,
 		} = makeToolbarServices();
@@ -275,7 +286,7 @@ describe('EditorToolbar', function() {
 			documentModel,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			objectTypes,
 		});
 		const quill = Quill.find(result.container.querySelector('.ql-container'));
@@ -297,10 +308,12 @@ describe('EditorToolbar', function() {
 	it('spikes music objects inside table cells', function() {
 		const {
 			documentModel,
+			editorInteractions,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
+			mainMenu,
 			objectTypes,
 		} = makeToolbarServices();
 		const staffObject = documentModel.createObject('music-object', {
@@ -322,9 +335,10 @@ describe('EditorToolbar', function() {
 		const result = harness.render(EditorPage, {
 			pageView: makePageView(),
 			documentModel,
+			editorInteractions,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			objectTypes,
 		});
 		const quill = Quill.find(result.container.querySelector('.ql-container'));
@@ -332,7 +346,7 @@ describe('EditorToolbar', function() {
 		act(() => {
 			quill.focus();
 			quill.setSelection(0, 0, 'user');
-			editorSurface.insertTable(1, 2);
+			mainMenu.selectItem('insert', 'table.menu.insert');
 		});
 
 		const cellInners = result.container.querySelectorAll('.ql-table-cell-inner');
@@ -398,7 +412,7 @@ describe('EditorToolbar', function() {
 			documentModel,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
 			objectTypes,
 		} = makeToolbarServices();
@@ -411,7 +425,7 @@ describe('EditorToolbar', function() {
 			documentModel,
 			editorSurface,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			objectTypes,
 		});
 		const button = result.container.querySelector('[data-toolbar-item-id="music-object.insert.keyboard"]');
@@ -458,9 +472,13 @@ function makeToolbarServices() {
 	const registry = new Registry();
 	const documentModel = new DocumentModelService(registry);
 	const editorSurface = new EditorSurfaceService(registry);
+	const editorInteractions = new EditorInteractionsService(registry);
 	const editorToolbar = new EditorToolbarService(registry);
-	const iconRegistry = new IconRegistryService(registry);
+	const editorViews = new EditorViewsService(registry);
+	const actionRegistry = new ActionRegistryService(registry);
+	const mainMenu = new MainMenuService(registry);
 	const objectTypes = new ObjectTypeRegistryService(registry);
+	const tableController = new TableController(registry);
 	const localize = {
 		translate(phrase) {
 			const phrases = {
@@ -477,11 +495,16 @@ function makeToolbarServices() {
 
 	documentModel.start();
 	editorSurface.start();
+	editorInteractions.start();
 	editorToolbar.start();
-	iconRegistry.start();
+	editorViews.start();
+	actionRegistry.start();
+	mainMenu.start();
 	objectTypes.start();
-	iconRegistry.registerIcon('music-object.insert.keyboard', TestIcon, 'default', 'editor.insert_keyboard_object');
-	iconRegistry.registerIcon('music-object.insert.staff', TestIcon, 'default', 'editor.insert_staff_object');
+	mainMenu.addMainItem(200, 'insert', 'app.menu.insert');
+	tableController.ready();
+	actionRegistry.registerAction('music-object.insert.keyboard', TestIcon, 'default', 'editor.insert_keyboard_object');
+	actionRegistry.registerAction('music-object.insert.staff', TestIcon, 'default', 'editor.insert_staff_object');
 	objectTypes.registerType('music-object', {
 		blotName: KEYBOARD_EMBED_BLOT,
 		createDefaultObject: (options = {}) => ({
@@ -519,7 +542,17 @@ function makeToolbarServices() {
 		editorSurface.insertObject(object);
 	});
 
-	return { documentModel, editorSurface, editorToolbar, iconRegistry, localize, objectTypes };
+	return {
+		documentModel,
+		editorInteractions,
+		editorSurface,
+		editorToolbar,
+		actionRegistry,
+		localize,
+		mainMenu,
+		objectTypes,
+		tableController,
+	};
 }
 
 function getLatestDialog() {

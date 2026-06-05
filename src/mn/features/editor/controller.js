@@ -20,10 +20,10 @@ export default class EditorController extends Service {
 		this.localize = this.registry.subscribe('localize');
 		this.editorToolbar = this.registry.subscribe('editor-toolbar');
 		this.editorSurface = this.registry.subscribe('editor-surface');
-		this.iconRegistry = this.registry.subscribe('icon-registry');
+		this.actionRegistry = this.registry.subscribe('action-registry');
 		this.state = this.initialState();
 
-		this.registerToolbarIcons();
+		this.registerToolbarActions();
 		this.registerToolbarItems();
 		this.toolbarSelectedListener = this.editorToolbar.listen(
 			'item-selected',
@@ -39,14 +39,14 @@ export default class EditorController extends Service {
 		});
 	}
 
-	registerToolbarIcons() {
-		this.iconRegistry.registerIcon('editor.bold', FormatBoldIcon, 'default', 'editor.toolbar.bold');
-		this.iconRegistry.registerIcon('editor.italic', FormatItalicIcon, 'default', 'editor.toolbar.italic');
-		this.iconRegistry.registerIcon('editor.underline', FormatUnderlinedIcon, 'default', 'editor.toolbar.underline');
-		this.iconRegistry.registerIcon('editor.list.bullet', FormatListBulletedIcon, 'default', 'editor.toolbar.list_bullet');
-		this.iconRegistry.registerIcon('editor.list.ordered', FormatListNumberedIcon, 'default', 'editor.toolbar.list_ordered');
-		this.iconRegistry.registerIcon('editor.clean', FormatClearIcon, 'default', 'editor.toolbar.clean');
-		this.iconRegistry.registerIcon('editor.see-white-space', SpaceBarIcon, 'default', 'editor.toolbar.see_white_space');
+	registerToolbarActions() {
+		this.actionRegistry.registerAction('editor.bold', FormatBoldIcon, 'default', 'editor.toolbar.bold');
+		this.actionRegistry.registerAction('editor.italic', FormatItalicIcon, 'default', 'editor.toolbar.italic');
+		this.actionRegistry.registerAction('editor.underline', FormatUnderlinedIcon, 'default', 'editor.toolbar.underline');
+		this.actionRegistry.registerAction('editor.list.bullet', FormatListBulletedIcon, 'default', 'editor.toolbar.list_bullet');
+		this.actionRegistry.registerAction('editor.list.ordered', FormatListNumberedIcon, 'default', 'editor.toolbar.list_ordered');
+		this.actionRegistry.registerAction('editor.clean', FormatClearIcon, 'default', 'editor.toolbar.clean');
+		this.actionRegistry.registerAction('editor.see-white-space', SpaceBarIcon, 'default', 'editor.toolbar.see_white_space');
 	}
 
 	registerToolbarItems() {

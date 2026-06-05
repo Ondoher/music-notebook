@@ -5,6 +5,12 @@
 			"cwd": "assets/css",
 			"glob": "**/*.css",
 			"keepNest": true
+		},
+		{
+			"dest": "music-object/vendor",
+			"cwd": "../../../../node_modules/react-piano/dist",
+			"glob": "styles.css",
+			"keepNest": false
 		}
 	],
 	"index": "index.js"

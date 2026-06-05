@@ -41,8 +41,6 @@ type ParagraphFormatSettings = {
 type EditorSurfaceAdapter = {
 	/** Inserts a document object into the editor at the current selection. */
 	insertObject?: (object: NotebookDocumentObject, options?: Record<string, unknown>) => unknown;
-	/** Inserts a table into the editor at the current selection. */
-	insertTable?: (rows?: number, columns?: number) => boolean;
 	/** Inserts a manual page break at the current selection. */
 	insertPageBreak?: () => boolean;
 	/** Updates an object already known to the editor. */
@@ -53,6 +51,26 @@ type EditorSurfaceAdapter = {
 	getContentWidth?: () => number | null;
 	/** Gets the current editor selection. */
 	getSelection?: () => unknown;
+	/** Gets the active Quill instance when available. */
+	getQuill?: () => unknown | null;
+	/** Gets a live Quill module by module name. */
+	getQuillModule?: (name: string) => unknown | null;
+	/** Gets the active editor root element. */
+	getEditorRoot?: () => HTMLElement | null;
+	/** Resolves an editor blot from a DOM node. */
+	findBlot?: (node: Node, bubble?: boolean) => unknown | null;
+	/** Gets the document index for an editor blot. */
+	getIndex?: (blot: unknown) => number | null;
+	/** Gets the editor line at a document index. */
+	getLine?: (index: number) => unknown | null;
+	/** Gets the editor leaf at a document index. */
+	getLeaf?: (index: number) => unknown | null;
+	/** Sets the active editor selection. */
+	setSelection?: (index: number, length?: number, source?: string) => boolean;
+	/** Focuses the active editor. */
+	focus?: (options?: Record<string, unknown>) => boolean;
+	/** Requests an active editor update. */
+	update?: (source?: string) => boolean;
 	/** Gets paragraph formatting for the current selection. */
 	getParagraphFormat?: () => ParagraphFormatSettings | null;
 	/** Applies an editor formatting command. */
@@ -73,8 +91,6 @@ type EditorSurfaceService = {
 	detachSurface: (surface?: EditorSurfaceAdapter) => boolean;
 	/** Inserts a document object into the editor. */
 	insertObject: (object: NotebookDocumentObject, options?: Record<string, unknown>) => unknown;
-	/** Inserts a table into the editor. */
-	insertTable: (rows?: number, columns?: number) => boolean;
 	/** Inserts a manual page break into the editor. */
 	insertPageBreak: () => boolean;
 	/** Updates an object already known to the editor. */
@@ -85,6 +101,26 @@ type EditorSurfaceService = {
 	getContentWidth: () => number | null;
 	/** Gets the active editor selection. */
 	getSelection: () => unknown;
+	/** Gets the active Quill instance when available. */
+	getQuill: () => unknown | null;
+	/** Gets a live Quill module by module name. */
+	getQuillModule: (name: string) => unknown | null;
+	/** Gets the active editor root element. */
+	getEditorRoot: () => HTMLElement | null;
+	/** Resolves an editor blot from a DOM node. */
+	findBlot: (node: Node, bubble?: boolean) => unknown | null;
+	/** Gets the document index for an editor blot. */
+	getIndex: (blot: unknown) => number | null;
+	/** Gets the editor line at a document index. */
+	getLine: (index: number) => unknown | null;
+	/** Gets the editor leaf at a document index. */
+	getLeaf: (index: number) => unknown | null;
+	/** Sets the active editor selection. */
+	setSelection: (index: number, length?: number, source?: string) => boolean;
+	/** Focuses the active editor. */
+	focus: (options?: Record<string, unknown>) => boolean;
+	/** Requests an active editor update. */
+	update: (source?: string) => boolean;
 	/** Gets paragraph formatting for the current selection. */
 	getParagraphFormat: () => ParagraphFormatSettings | null;
 	/** Applies an editor formatting command. */

@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react';
 import { Registry } from '@polylith/core';
 import { createTestHarness } from '../../../../testing/TestHarness.js';
-import IconRegistryService from '../../../../services/icon-registry.js';
+import ActionRegistryService from '../../../../services/action-registry.js';
 import EditorToolbarService from '../../services/editor-toolbar.js';
 import EditorToolbar from '../EditorToolbar.jsx';
 
@@ -39,12 +39,12 @@ describe('EditorToolbar component', function() {
 	function createServices() {
 		const registry = new Registry();
 		const editorToolbar = new EditorToolbarService(registry);
-		const iconRegistry = new IconRegistryService(registry);
+		const actionRegistry = new ActionRegistryService(registry);
 
 		editorToolbar.start();
-		iconRegistry.start();
-		iconRegistry.registerIcon('editor.bold', TestIcon);
-		iconRegistry.registerIcon('editor.italic', TestIcon, 'default', 'editor.toolbar.italic_icon');
+		actionRegistry.start();
+		actionRegistry.registerAction('editor.bold', TestIcon);
+		actionRegistry.registerAction('editor.italic', TestIcon, 'default', 'editor.toolbar.italic_icon');
 		editorToolbar.addItem(10, 100, 'editor.bold', 'editor.toolbar.bold', 'editor.bold', { pressed: false });
 		editorToolbar.addItem(10, 200, 'editor.italic', 'editor.toolbar.italic', 'editor.italic');
 		editorToolbar.addItem(30, 50, 'paragraph.style', 'paragraph_format.style', '', {
@@ -62,18 +62,18 @@ describe('EditorToolbar component', function() {
 			value: 12,
 		});
 
-		return { editorToolbar, iconRegistry };
+		return { editorToolbar, actionRegistry };
 	}
 
 	it('renders toolbar items from the editor toolbar service', function() {
-		const { editorToolbar, iconRegistry } = createServices();
+		const { editorToolbar, actionRegistry } = createServices();
 
 		harness = createTestHarness()
 			.withContext({ localize: makeLocalizeMock() });
 
 		const result = harness.render(EditorToolbar, {
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 		});
 
 		const buttons = result.container.querySelectorAll('.mn-editor-toolbar__button');
@@ -89,7 +89,7 @@ describe('EditorToolbar component', function() {
 	});
 
 	it('can use icon hover text when the toolbar item does not override it', function() {
-		const { editorToolbar, iconRegistry } = createServices();
+		const { editorToolbar, actionRegistry } = createServices();
 
 		editorToolbar.updateItem('editor.italic', { tooltipStringId: '' });
 		harness = createTestHarness()
@@ -97,7 +97,7 @@ describe('EditorToolbar component', function() {
 
 		const result = harness.render(EditorToolbar, {
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 		});
 		const button = result.container.querySelector('[data-toolbar-item-id="editor.italic"]');
 
@@ -105,7 +105,7 @@ describe('EditorToolbar component', function() {
 	});
 
 	it('selects toolbar items through the editor toolbar service', function() {
-		const { editorToolbar, iconRegistry } = createServices();
+		const { editorToolbar, actionRegistry } = createServices();
 		const selected = [];
 
 		editorToolbar.listen('item-selected', (event) => selected.push(event));
@@ -114,7 +114,7 @@ describe('EditorToolbar component', function() {
 
 		const result = harness.render(EditorToolbar, {
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 		});
 
 		act(() => {
@@ -128,7 +128,7 @@ describe('EditorToolbar component', function() {
 	});
 
 	it('selects font size controls with the chosen value', function() {
-		const { editorToolbar, iconRegistry } = createServices();
+		const { editorToolbar, actionRegistry } = createServices();
 		const selected = [];
 
 		editorToolbar.listen('item-selected', (event) => selected.push(event));
@@ -137,7 +137,7 @@ describe('EditorToolbar component', function() {
 
 		const result = harness.render(EditorToolbar, {
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 		});
 		const input = result.container.querySelector('[data-toolbar-item-id="paragraph.font-size"] input');
 

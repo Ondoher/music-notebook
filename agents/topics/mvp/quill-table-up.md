@@ -1,15 +1,15 @@
-# Quill Table Up Spike
+# Quill TableUp Implementation
 
 ## Purpose
 
-Track the MVP investigation and current implementation status for using
+Track the MVP product decision and current implementation status for using
 `quill-table-up` as the notebook table implementation.
 
 Tables are an MVP feature, but table support can stay intentionally limited. The goal is useful notebook tables, not a full spreadsheet or desktop word-processor table editor.
 
-This topic now tracks the decision to use `quill-table-up` for the first MVP
-editing slice and the remaining evidence needed before the table path is
-considered hardened for MVP:
+This topic tracks the decision to use `quill-table-up` for the MVP table path
+and the remaining hardening work before the implementation is considered durable
+across the full MVP workflow:
 
 - editing simple notebook tables
 - preserving a stable document representation
@@ -18,7 +18,7 @@ considered hardened for MVP:
 - exporting to `PDF`
 - meeting accessibility expectations
 
-## Candidate Library
+## Chosen Library
 
 Package:
 
@@ -36,11 +36,11 @@ Current known metadata as of May 30, 2026:
 - dependency: `@floating-ui/dom`
 - repository: `https://github.com/zzxming/quill-table-up`
 
-Initial impression:
+Decision basis:
 
 - more active than older Quill table plugins such as `quill-better-table`
 - explicitly targets Quill 2.x
-- broad enough feature claims to deserve a focused spike
+- broad enough feature surface for the MVP table direction
 - has local verification for the first MVP editing slice, but still needs
   hardening around save/reload depth, paste, read view, export, and advanced
   accessibility behavior
@@ -110,9 +110,9 @@ Current implemented slice:
 - insert row above/below, insert column left/right, delete row, delete column,
   and delete table operations
 - table arrangement context-menu commands: fit to width and distribute columns
-- attempted split-table above/below context menu commands are present but not
-  yet reliable; manual testing still loses the second half or fails to leave
-  two durable TableUp tables
+- split-table above/below context-menu commands are present again using
+  Delta-level reconstruction; command-level coverage passes, manual edit-view
+  testing works, and the follow-up hardening item has been handled separately
 - music objects can render inside table cells; keyboard previews fit to the
   table cell width and preserve aspect ratio
 - music-object resize handles are disabled inside table cells
@@ -121,7 +121,18 @@ Current implemented slice:
 - selected-column context-menu behavior preserves the selected column when
   right-clicking in the selected column/top selection area
 
-## Spike Questions
+Known open behavior:
+
+- Arrow-left exit from the first table cell fails when the cell begins with a
+  Quill embed such as an image or music object and has no preceding text leaf.
+  Manual testing on June 5, 2026 reproduced the issue with ordinary pasted
+  images in both inserted tables and externally pasted tables, so this is not
+  specific to the music-object embed. A zero-width text prefix confirms the
+  boundary needs a text leaf, but that adds an extra caret stop and should not
+  be treated as the final fix. Keep this as a generic TableUp/Quill embed
+  boundary issue to address later.
+
+## Implementation Questions
 
 ### Package And Build Compatibility
 
@@ -223,7 +234,7 @@ Original prototype behavior:
 7. Test copy/paste within the editor.
 8. Test paste from one or two external table sources.
 
-Keep the spike isolated.
+Keep high-risk table experiments isolated.
 The first pass has now committed to a small `quill-table-up` based MVP editing
 slice. Do not treat this as final table paste, pagination, export, or advanced
 formatting behavior.
@@ -258,9 +269,9 @@ Optional checks:
 - read-only rendering
 - keyboard-only navigation
 
-## Decision Criteria
+## Hardening Criteria
 
-Keep `quill-table-up` as the MVP table implementation if:
+The chosen `quill-table-up` implementation is MVP-hardened when:
 
 - it works with Quill 2.0.3 and the Polylith build
 - its Delta representation is stable enough for `document-model`
@@ -272,7 +283,7 @@ Keep `quill-table-up` as the MVP table implementation if:
 - read view/export can render the saved representation
 - the UI can be made accessible enough for MVP
 
-Reject or defer it if:
+Revisit the implementation decision only if:
 
 - it breaks the build or watcher
 - it requires brittle global DOM hacks
@@ -282,9 +293,9 @@ Reject or defer it if:
 - it cannot be rendered outside a live editor for read view/export
 - its UI is too complex or inaccessible for the MVP surface
 
-## Expected Output
+## Historical Expected Output
 
-The spike should produce:
+The early verification work was expected to produce:
 
 - a short recommendation: use `quill-table-up`, use built-in Quill tables, try another library, or defer table richness
 - example Deltas for simple and formatted tables
@@ -302,7 +313,7 @@ The spike should produce:
 - Should header row support be semantic or just visual styling?
 - Should table paste be allowed before the table model is fully hardened?
 
-## Spike Log
+## Implementation Log
 
 ### 2026-06-01 First Local Integration
 
@@ -317,7 +328,7 @@ Local package facts:
   `table-creator.css`
 - direct dependency: `@floating-ui/dom`
 
-Temporary editor-surface spike API:
+Historical temporary editor-surface API:
 
 - `editorSurface.insertTable(rows, columns)`
 - `EditorPage.insertTable(rows, columns)` delegates to
@@ -347,21 +358,22 @@ Historical result from the first local integration:
 Observed risk/noise:
 
 - installing the package added four npm packages and npm reported the current
-  audit state as `16 vulnerabilities`; this was not triaged during the spike
+  audit state as `16 vulnerabilities`; this was not triaged during the initial
+  verification
 - test output now includes non-failing React `flushSync was called from inside
   a lifecycle method` warnings associated with `EditorPage`, likely triggered
   by `quill-table-up` internal DOM/selection behavior during editor mount
-- the spike has not yet verified table save/reload across a fresh editor
-  instance, keyboard navigation inside cells, undo/redo, resize behavior,
+- the initial verification had not yet covered table save/reload across a fresh
+  editor instance, keyboard navigation inside cells, undo/redo, resize behavior,
   read-view rendering, or export behavior
 - table insertion is intentionally minimal for now: a fixed two-column command
   is enough to test the side-by-side music-object workflow before designing the
   final table size picker and formatting controls
 
-Initial recommendation:
+Initial recommendation, now adopted:
 
-- continue the table spike
-- treat tables as the likely answer for intentional side-by-side music layouts
+- continue with `quill-table-up` as the MVP table implementation
+- treat tables as the product answer for intentional side-by-side music layouts
 - do not rely on adjacent floated embeds for structured side-by-side editing
 - update the prior MVP caveat about excluding music embeds inside table cells
   if the next save/reload and interaction tests remain stable
@@ -420,8 +432,8 @@ Recent verification:
 Remaining risks:
 
 - save/reload coverage should be broadened now that more table behavior is real
-- edit-view split-table behavior is not solved; current attempts to split the
-  TableUp/Parchment structure lose the second half in manual browser testing
+- edit-view split-table is reintroduced through Delta-level reconstruction; the
+  follow-up hardening item has been handled separately
 - external table paste remains a policy and compatibility question
 - read-view and `PDF` export behavior are not final
 - header row/column semantics, border presets, and richer table formatting are
@@ -429,7 +441,8 @@ Remaining risks:
 - remaining table cleanup details live in
   [Temporary Architecture Cleanup Tracker](../architecture/temporary-cleanup.md);
   the current direction is Quill-aware editor-surface helpers, table-owned
-  behavior, and generic wide-content layout contributions
+  behavior, generic wide-content layout contributions, and removal of all
+  table-specific semantics from `EditorPage`
 
 ### 2026-06-03 Paged Preview Table Pagination Investigation
 
@@ -496,7 +509,7 @@ Explicitly avoided for now:
 - no `display: contents` wrapper trick without a new instrumented pagination
   failure
 
-Next investigation step:
+Next hardening step:
 
 - instrument the cloned preview DOM and/or Paged layout hooks for any remaining
   table pagination/export failure
@@ -562,13 +575,40 @@ Next step:
   Delta-level or controlled HTML/import reconstruction strategy over direct DOM
   surgery.
 
+### 2026-06-04 Split-Table Reintroduced
+
+Implemented:
+
+- Re-added `Split table above` and `Split table below` to the feature-owned
+  table context menu.
+- Replaced the failed wrapper/Parchment split strategy with a Delta-level
+  reconstruction strategy:
+  - read the selected TableUp table from `quill.getContents()`
+  - partition whole rows above/below the selected row
+  - replace the original table range with two complete TableUp table Deltas
+  - assign fresh table, row, and column ids to both resulting tables
+- Guardrails:
+  - boundary splits that would create an empty table are refused
+  - row spans that cross the split boundary are refused for now
+
+Verification:
+
+- `npm run test:ui -- --grep TableController` passed with `351 SUCCESS`.
+- Manual edit-view UI testing confirms the split command works in the browser.
+
+Follow-up:
+
+- Split-table hardening was handled separately after the initial Delta-level
+  reconstruction work.
+
 ### 2026-06-04 Table Context Menu Arrangement And Cleanup Direction
 
 Implemented:
 
 - Added `Fit to width` and `Distribute columns` table context-menu commands.
-- `Fit to width` forces the current table width to the available page/editor
-  content width and spreads the added or removed space equally across columns.
+- `Fit to width` forces the current table width to the document-format
+  margin-to-margin content width and spreads the added or removed space equally
+  across columns.
 - `Distribute columns` keeps the current table width but makes every column the
   same width.
 - Reordered the context menu sections into row, column, split, arrange, and
@@ -598,3 +638,62 @@ Verification:
 
 - Continuous Karma watcher passed after the selected-column right-click
   regression: `334 SUCCESS`.
+
+### 2026-06-04 Edit-View Wide Layout And Fit-To-Width Status
+
+Current state:
+
+- The editor now has a generic `editor-layout` wide-content contribution
+  service. The table feature registers TableUp table selectors as the first
+  contributor, and `EditorPage` applies the resulting
+  `--mn-editor-overflow-width` without scanning specifically for tables.
+- The intended edit-view model is a simple continuous editor surface with the
+  normal left editing gutter, a dotted right-side guide representing the
+  margin-to-margin output content width, ordinary wrappable text constrained to
+  that guide, and wide content visible past the guide until the outer workspace
+  clips it.
+- `Fit to width` now gets its target from `document-format.getContentWidth()`,
+  derived from page size and left/right document margins rather than editor DOM
+  inference. If that width is unavailable, the command does not run instead of
+  guessing from wrapper or editor-root measurements.
+
+Verification:
+
+- `npm run test:ui -- --grep DocumentFormatService` passed with `348 SUCCESS`.
+- `npm run test:ui -- --grep TableController` passed with `348 SUCCESS`.
+- Manual browser testing on 2026-06-04 confirmed `Fit to width` visually fits a
+  TableUp table to the real margin-to-margin document content width.
+
+### 2026-06-04 Table Cell Focus And Keyboard Navigation Status
+
+Current state:
+
+- Table-cell focus styling is table-owned. The controller applies
+  `mn-table-cell-focus` to the active `.ql-table-cell-inner` and its outer
+  `td`/`th`.
+- Focus is driven from Quill selection state rather than CSS `:focus-within`,
+  because DOM focus generally remains on the Quill editor root while the caret
+  moves through table content.
+- Click-in-cell behavior remains text editing, not TableUp table selection:
+  text hits use native caret placement, blank cell space uses a Quill range
+  fallback by TableUp cell blot, and music embeds place the cursor after the
+  embed.
+- Focus scrolls the outer cell into view only when clipped.
+- Tab/Shift+Tab navigation, add-row-at-end on Tab from the last cell,
+  first-cell Shift+Tab swallowing, focus clearing when selection leaves a
+  table, and ArrowDown from the line above a table into the first cell have
+  controller coverage.
+
+Open:
+
+- ArrowLeft/back-arrow out of the first cell is still broken in manual UI
+  testing. Current code attempted to handle it through a leading `ArrowLeft`
+  binding plus table-owned selection movement, but static controller tests were
+  not enough to catch the browser behavior. Resume this with live Quill/TableUp
+  inspection of the actual selection before/after the handler, not with more
+  guessed Delta indices.
+
+Verification:
+
+- Latest focused `npm run test:ui -- --grep TableController` run passed with
+  `362 SUCCESS`, but this does not prove the ArrowLeft browser behavior.

@@ -6,7 +6,7 @@ import EditorInteractionsService from '../services/editor-interactions.js';
 class EditorInteractionTestHandler extends Service {
 	constructor(registry, serviceName, calls = [], result = false) {
 		super(serviceName, registry);
-		this.implement(['handleEditorEvent']);
+		this.implement(['handleEditorEvent', 'handleEditorReady']);
 		this.calls = calls;
 		this.result = result;
 		this.serviceName = serviceName;
@@ -14,6 +14,11 @@ class EditorInteractionTestHandler extends Service {
 
 	handleEditorEvent(eventName, _event, context) {
 		this.calls.push(`${this.serviceName}:${eventName}:${context.eventName}`);
+		return this.result;
+	}
+
+	handleEditorReady(context) {
+		this.calls.push(`${this.serviceName}:editor-ready:${context.handler.id}`);
 		return this.result;
 	}
 }
@@ -68,5 +73,34 @@ describe('EditorInteractionsService', function() {
 		expect(service.getHandlers('keydown').length).toBe(1);
 		expect(unregister()).toBeTrue();
 		expect(service.getHandlers('keydown').length).toBe(0);
+	});
+
+	it('notifies editor-ready handlers before editor construction', function() {
+		const service = createService();
+		const calls = [];
+		const registry = service.registry;
+
+		new EditorInteractionTestHandler(registry, 'ready-handler', calls, { registered: true });
+		new EditorInteractionTestHandler(registry, 'event-only-handler', calls, true);
+
+		service.registerHandler({
+			editorReady: true,
+			events: ['contextmenu'],
+			id: 'ready',
+			serviceName: 'ready-handler',
+		});
+		service.registerHandler({
+			events: ['contextmenu'],
+			id: 'event-only',
+			serviceName: 'event-only-handler',
+		});
+
+		expect(service.notifyEditorReady({})).toEqual([{
+			handled: true,
+			handlerId: 'ready',
+			result: { registered: true },
+			serviceName: 'ready-handler',
+		}]);
+		expect(calls).toEqual(['ready-handler:editor-ready:ready']);
 	});
 });

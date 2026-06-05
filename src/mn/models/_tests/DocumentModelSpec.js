@@ -1,4 +1,4 @@
-import { Registry } from '@polylith/core';
+import { Registry, Service } from '@polylith/core';
 import DocumentModelService from '../document-model.js';
 
 describe('DocumentModelService', function() {
@@ -8,6 +8,106 @@ describe('DocumentModelService', function() {
 
 		model.start();
 		return model;
+	}
+
+	class IoMock extends Service {
+		constructor(registry) {
+			super('io', registry);
+			this.implement(['get', 'post', 'send']);
+			this.documents = [];
+			this.gets = [];
+			this.posts = [];
+			this.sends = [];
+		}
+
+		get(url) {
+			this.gets.push(url);
+
+			if (url === 'api/documents') {
+				return Promise.resolve({
+					success: true,
+					data: {
+						success: true,
+						documents: this.documents,
+					},
+				});
+			}
+
+			if (url === 'api/documents/doc-1') {
+				return Promise.resolve({
+					success: true,
+					data: {
+						success: true,
+						document: {
+							id: 'doc-1',
+							name: 'Loaded document',
+							content: {
+								title: 'Ignored title',
+								revision: 2,
+								tabs: [],
+								objects: [],
+							},
+						},
+					},
+				});
+			}
+
+			return Promise.resolve({ success: false });
+		}
+
+		post(url, body) {
+			this.posts.push({ url, body });
+			return Promise.resolve({
+				success: true,
+				data: {
+					success: true,
+					document: {
+						id: 'doc-new',
+						name: body.name,
+						content: body.content,
+					},
+				},
+			});
+		}
+
+		send(options) {
+			this.sends.push(options);
+
+			if (options.method === 'PATCH') {
+				return Promise.resolve({
+					success: true,
+					data: {
+						success: true,
+						document: {
+							id: 'doc-1',
+							name: options.body.name,
+						},
+					},
+				});
+			}
+
+			return Promise.resolve({
+				success: true,
+				data: {
+					success: true,
+					document: {
+						id: options.url.split('/').pop(),
+						name: options.body.name,
+						content: options.body.content,
+					},
+				},
+			});
+		}
+	}
+
+	function createPersistenceHarness() {
+		const registry = new Registry();
+		const io = new IoMock(registry);
+		const model = new DocumentModelService(registry);
+
+		model.start();
+		model.ready();
+		return { io, model };
 	}
 
 	it('starts with a continuous notebook document and one editable tab', function() {
@@ -202,6 +302,87 @@ describe('DocumentModelService', function() {
 		expect(model.getSettings().page.margins.top).toBe(36);
 		expect(model.getTab('tab-a').title).toBe('A');
 		expect(model.isDirty()).toBeFalse();
+	});
+
+	it('loads persisted document lists through the io service', async function() {
+		const { io, model } = createPersistenceHarness();
+		io.documents = [{
+			id: 'doc-1',
+			name: 'Lesson 1',
+		}];
+
+		const documents = await model.loadDocumentList();
+
+		expect(io.gets).toEqual(['api/documents']);
+		expect(documents).toEqual(io.documents);
+	});
+
+	it('loads persisted server documents into the local snapshot', async function() {
+		const { io, model } = createPersistenceHarness();
+
+		const result = await model.loadServerDocument('doc-1');
+
+		expect(result.success).toBeTrue();
+		expect(io.gets).toEqual(['api/documents/doc-1']);
+		expect(model.getId()).toBe('doc-1');
+		expect(model.getTitle()).toBe('Loaded document');
+		expect(model.isDirty()).toBeFalse();
+	});
+
+	it('saves new and existing documents through the io service', async function() {
+		const { io, model } = createPersistenceHarness();
+
+		model.setTitle('Draft');
+		await model.saveNewDocument('Lesson 1', { allowNameConflict: true });
+
+		expect(io.posts[0]).toEqual(jasmine.objectContaining({
+			url: 'api/documents',
+			body: jasmine.objectContaining({
+				allowNameConflict: true,
+				name: 'Lesson 1',
+				content: jasmine.objectContaining({
+					title: 'Lesson 1',
+				}),
+			}),
+		}));
+		expect(model.getId()).toBe('doc-new');
+
+		await model.saveExistingDocument({ id: 'doc-new', name: 'Lesson 1' });
+
+		expect(io.sends[0]).toEqual(jasmine.objectContaining({
+			method: 'PUT',
+			url: 'api/documents/doc-new',
+			body: jasmine.objectContaining({
+				name: 'Lesson 1',
+			}),
+		}));
+	});
+
+	it('renames persisted documents through the io service without mutating local content', async function() {
+		const { io, model } = createPersistenceHarness();
+
+		model.load({
+			id: 'doc-1',
+			title: 'Lesson 1',
+		});
+		model.setEditorContent({ ops: [{ insert: 'Unsaved\n' }] });
+
+		const result = await model.renameServerDocument('Lesson 2', {
+			allowNameConflict: true,
+			id: 'doc-1',
+		});
+
+		expect(result.success).toBeTrue();
+		expect(io.sends[0]).toEqual(jasmine.objectContaining({
+			method: 'PATCH',
+			url: 'api/documents/doc-1/name',
+			body: {
+				allowNameConflict: true,
+				name: 'Lesson 2',
+			},
+		}));
+		expect(model.getTitle()).toBe('Lesson 1');
+		expect(model.isDirty()).toBeTrue();
 	});
 
 	it('normalizes document paragraph styles and parent references', function() {

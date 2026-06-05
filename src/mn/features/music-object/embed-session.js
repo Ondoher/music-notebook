@@ -24,7 +24,7 @@ export default class MusicObjectEmbedSession {
 	getState() {
 		return {
 			...this.state,
-			actions: this.getActions(),
+			actions: this.getActions().map((action) => this.withIconComponent(action)),
 		};
 	}
 
@@ -75,6 +75,17 @@ export default class MusicObjectEmbedSession {
 			},
 			...actions,
 		];
+	}
+
+	getDocumentStyles() {
+		return this.controller.getDocumentStyles?.() || [];
+	}
+
+	withIconComponent(action) {
+		return {
+			...action,
+			iconComponent: this.controller.getEmbedActionComponent?.(action) || null,
+		};
 	}
 
 	setHovered(hovered) {

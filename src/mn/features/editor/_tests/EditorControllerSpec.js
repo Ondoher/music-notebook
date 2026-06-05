@@ -1,7 +1,7 @@
 import { Registry, Service } from '@polylith/core';
 
 import AppPagesService from '../../../services/app-pages.js';
-import IconRegistryService from '../../../services/icon-registry.js';
+import ActionRegistryService from '../../../services/action-registry.js';
 import ViewsService from '../../../services/views.js';
 import EditorController from '../controller.js';
 import EditorSurfaceService from '../services/editor-surface.js';
@@ -26,20 +26,20 @@ describe('EditorController', function() {
 		const localize = new LocalizeMock(registry);
 		const editorToolbar = new EditorToolbarService(registry);
 		const editorSurface = new EditorSurfaceService(registry);
-		const iconRegistry = new IconRegistryService(registry);
+		const actionRegistry = new ActionRegistryService(registry);
 		const controller = new EditorController(registry);
 
 		pages.start();
 		views.start();
 		editorToolbar.start();
 		editorSurface.start();
-		iconRegistry.start();
+		actionRegistry.start();
 		controller.ready();
 
 		return {
 			controller,
 			editorToolbar,
-			iconRegistry,
+			actionRegistry,
 			localize,
 			pages,
 			registry,
@@ -48,12 +48,12 @@ describe('EditorController', function() {
 	}
 
 	it('registers and toggles the see-white-space toolbar item as an editor view mode', function() {
-		const { controller, editorToolbar, iconRegistry } = createController();
+		const { controller, editorToolbar, actionRegistry } = createController();
 		const updates = [];
 
 		controller.listen('updated', (state) => updates.push(state));
 
-		expect(iconRegistry.getIcon('editor.see-white-space')).toBeTruthy();
+		expect(actionRegistry.getActionComponent('editor.see-white-space')).toBeTruthy();
 		expect(editorToolbar.getToolbar()[0].items.map((item) => item.id)).toContain('editor.see-white-space');
 		expect(controller.getState().seeWhiteSpace).toBeFalse();
 
